@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="0">
+
+        <!--
+            Record rules for hospital.patient.evaluation.
+
+            hospital_management ships ACLs but no record rules whatsoever, so
+            before this module every role holding a read ACL saw every
+            evaluation in the hospital. These rules give each of those roles a
+            deliberate scope.
+
+            HOW ODOO COMBINES THESE
+            =======================
+            For one operation, Odoo collects the rules whose matching perm_*
+            flag is set and whose groups intersect the user's groups, then ORs
+            their domains together. Global rules (no groups) would be ANDed on
+            top; this module defines none.
+
+            The OR is the important part: rules attached to groups can only
+            WIDEN access for a user who holds several of those groups. A group
+            rule can therefore never deny anything to a user who also holds a
+            more permissive group. Genuine denial lives in the ACL layer, or in
+            a global rule.
+
+            group_hospital_manager implies receptionist + doctor + nurse, and
+            group_hospital_system_administrator implies manager + DPO, so both
+            match the unrestricted rule below and keep full visibility.
+        -->
+
+        <!-- ============================================================
+             Clinical roles
+             ============================================================ -->
+
+        <record id="rule_patient_evaluation_nurse" model="ir.rule">
+            <field name="name">Patient Evaluation: assigned to me, or unassigned in my department (nurse)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_patient_evaluation"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_nurse'))]"/>
+            <!--
+                assigned_nurse_id = me
+                OR (unassigned AND has an appointment AND that appointment's
+                    department is one of mine)
+
+                An evaluation with no appointment carries no department, so it
+                is reachable only through explicit assignment.
+            -->
+            <field name="domain_force">
+                ['|',
+                    ('assigned_nurse_id', '=', user.id),
+                    '&amp;', '&amp;',
+                        ('assigned_nurse_id', '=', False),
+                        ('appointment_id', '!=', False),
+                        ('appointment_id.department_id', 'in', user.yoya_permitted_department_ids.ids)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_patient_evaluation_doctor" model="ir.rule">
+            <field name="name">Patient Evaluation: my patients (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_patient_evaluation"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">
+                ['|',
+                    ('physician_id.user_id', '=', user.id),
+                    ('appointment_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_patient_evaluation_manager" model="ir.rule">
+            <field name="name">Patient Evaluation: all (manager / system administrator)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_patient_evaluation"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <!-- ============================================================
+             Administrative / oversight roles (read ACL only)
+             ============================================================ -->
+
+        <record id="rule_patient_evaluation_receptionist" model="ir.rule">
+            <field name="name">Patient Evaluation: appointment-linked only (receptionist)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_patient_evaluation"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_receptionist'))]"/>
+            <!--
+                Front desk schedules appointments, so evaluations that hang off
+                an appointment are in scope. An appointment-less evaluation is
+                a purely clinical artefact and is not.
+
+                Read-only: the receptionist ACL is 1,0,0,0 and this module adds
+                no write/create/unlink permission.
+            -->
+            <field name="domain_force">[('appointment_id', '!=', False)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_patient_evaluation_dpo" model="ir.rule">
+            <field name="name">Patient Evaluation: full read for oversight (data protection officer)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_patient_evaluation"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_data_protection_officer'))]"/>
+            <!--
+                Deliberately unrestricted, not unrestricted by omission. The DPO
+                exists to audit clinical record handling, which requires sight
+                of every record. The ACL (1,0,0,0) keeps this strictly read-only.
+            -->
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <!-- ============================================================
+             Roles with no clinical evaluation mandate
+             ============================================================
+
+             Pharmacist, laboratory technician and accountant hold NO ACL row
+             for hospital.patient.evaluation in any installed module, so they
+             already have no access at all. This rule grants nothing and
+             changes nothing today.
+
+             They are declared anyway as a standing default: should any future
+             module add a read ACL for these groups, the evaluation set is
+             clamped to empty rather than silently opening to the whole
+             hospital. All four perm_* flags are set so the clamp covers every
+             operation.
+
+             This is safe for multi-role users. Because group rules OR, a user
+             who is both pharmacist and nurse still gets the full nurse scope.
+        -->
+
+        <record id="rule_patient_evaluation_no_clinical_access" model="ir.rule">
+            <field name="name">Patient Evaluation: no access (pharmacist / lab technician / accountant)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_patient_evaluation"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_pharmacist')), (4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_accountant'))]"/>
+            <field name="domain_force">[(0, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+    </data>
+</odoo>

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_users_form_yoya_clinical_bridge" model="ir.ui.view">
+        <field name="name">res.users.form.yoya.clinical.bridge</field>
+        <field name="model">res.users</field>
+        <field name="inherit_id" ref="base.view_users_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//notebook" position="inside">
+                <page string="Clinical Access"
+                      name="yoya_clinical_access"
+                      groups="hospital_management.group_hospital_manager">
+                    <group>
+                        <field name="yoya_permitted_department_ids"
+                               widget="many2many_tags"
+                               options="{'no_create': True}"/>
+                    </group>
+                    <div class="text-muted">
+                        Determines which unassigned patient evaluations a nurse may
+                        open. Evaluations already assigned to the user are always
+                        visible regardless of this list.
+                    </div>
+                </page>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

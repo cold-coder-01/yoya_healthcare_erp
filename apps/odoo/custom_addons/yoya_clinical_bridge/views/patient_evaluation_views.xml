@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_hospital_patient_evaluation_form_yoya" model="ir.ui.view">
+        <field name="name">hospital.patient.evaluation.form.yoya.clinical.bridge</field>
+        <field name="model">hospital.patient.evaluation</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_patient_evaluation_form"/>
+        <field name="arch" type="xml">
+
+            <xpath expr="//header/button[@name='action_done']" position="before">
+                <button name="action_start_evaluation"
+                        string="Start Evaluation"
+                        type="object"
+                        class="btn-primary"
+                        invisible="state != 'draft' or started_at"/>
+            </xpath>
+
+            <xpath expr="//header/field[@name='state']" position="before">
+                <button name="action_reopen"
+                        string="Reopen"
+                        type="object"
+                        class="btn-secondary"
+                        confirm="Reopening unlocks the clinical content of a completed evaluation. Continue?"
+                        invisible="state != 'done'"
+                        groups="hospital_management.group_hospital_manager"/>
+            </xpath>
+
+            <xpath expr="//notebook" position="inside">
+                <page string="Triage" name="yoya_triage">
+                    <group>
+                        <group string="Triage">
+                            <field name="triage_priority"/>
+                            <field name="assigned_nurse_id"
+                                   options="{'no_create': True}"/>
+                            <!-- Editable until it is set, frozen afterwards, which
+                                 mirrors the guard in write(). -->
+                            <field name="encounter_id"
+                                   options="{'no_create': True}"
+                                   readonly="encounter_id != False"/>
+                        </group>
+                        <group string="Timing">
+                            <field name="started_at"/>
+                            <field name="completed_at"/>
+                        </group>
+                    </group>
+                    <group string="Chief Complaint">
+                        <field name="chief_complaint"
+                               nolabel="1"
+                               placeholder="Presenting complaint in the patient's own words..."/>
+                    </group>
+                    <group string="Triage Notes">
+                        <field name="triage_notes"
+                               nolabel="1"
+                               placeholder="Assessment notes recorded at triage..."/>
+                    </group>
+                </page>
+            </xpath>
+
+        </field>
+    </record>
+
+    <record id="view_hospital_patient_evaluation_list_yoya" model="ir.ui.view">
+        <field name="name">hospital.patient.evaluation.list.yoya.clinical.bridge</field>
+        <field name="model">hospital.patient.evaluation</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_patient_evaluation_list"/>
+        <field name="arch" type="xml">
+
+            <xpath expr="//list" position="attributes">
+                <attribute name="decoration-danger">triage_priority == 'emergency'</attribute>
+                <attribute name="decoration-warning">triage_priority == 'urgent'</attribute>
+            </xpath>
+
+            <xpath expr="//field[@name='physician_id']" position="after">
+                <field name="triage_priority"/>
+                <field name="assigned_nurse_id" optional="show"/>
+            </xpath>
+
+        </field>
+    </record>
+
+    <record id="view_hospital_patient_evaluation_search_yoya" model="ir.ui.view">
+        <field name="name">hospital.patient.evaluation.search.yoya.clinical.bridge</field>
+        <field name="model">hospital.patient.evaluation</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_patient_evaluation_search"/>
+        <field name="arch" type="xml">
+
+            <xpath expr="//field[@name='physician_id']" position="after">
+                <field name="assigned_nurse_id"/>
+                <field name="encounter_id"/>
+            </xpath>
+
+            <xpath expr="//filter[@name='state_draft']" position="before">
+                <filter string="Assigned to Me"
+                        name="yoya_my_evaluations"
+                        domain="[('assigned_nurse_id', '=', uid)]"/>
+                <filter string="Unassigned"
+                        name="yoya_unassigned"
+                        domain="[('assigned_nurse_id', '=', False)]"/>
+                <filter string="Not Started"
+                        name="yoya_not_started"
+                        domain="[('started_at', '=', False)]"/>
+                <separator/>
+                <filter string="Emergency"
+                        name="yoya_priority_emergency"
+                        domain="[('triage_priority', '=', 'emergency')]"/>
+                <filter string="Urgent"
+                        name="yoya_priority_urgent"
+                        domain="[('triage_priority', '=', 'urgent')]"/>
+                <separator/>
+            </xpath>
+
+            <xpath expr="//filter[@name='group_by_state']" position="after">
+                <filter string="Triage Priority"
+                        name="yoya_group_by_priority"
+                        context="{'group_by': 'triage_priority'}"/>
+                <filter string="Assigned Nurse"
+                        name="yoya_group_by_nurse"
+                        context="{'group_by': 'assigned_nurse_id'}"/>
+            </xpath>
+
+        </field>
+    </record>
+
+</odoo>
