@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <menuitem id="menu_yoya_emr_demo_root" name="YOYA EMR Demo" sequence="10"/>
+    <menuitem
+        id="menu_yoya_emr_demo_patients"
+        name="Patients"
+        parent="menu_yoya_emr_demo_root"
+        action="action_yoya_emr_patient"
+        sequence="10"
+    />
+    <menuitem
+        id="menu_yoya_emr_demo_appointments"
+        name="Appointments"
+        parent="menu_yoya_emr_demo_root"
+        action="action_yoya_emr_appointment"
+        sequence="20"
+    />
+</odoo>

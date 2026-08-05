@@ -1,0 +1,5 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_yoya_emr_patient_user,yoya.emr.patient.user,model_yoya_emr_patient,yoya_emr_demo.group_yoya_emr_user,1,1,1,0
+access_yoya_emr_appointment_user,yoya.emr.appointment.user,model_yoya_emr_appointment,yoya_emr_demo.group_yoya_emr_user,1,1,1,0
+access_yoya_emr_patient_manager,yoya.emr.patient.manager,model_yoya_emr_patient,yoya_emr_demo.group_yoya_emr_manager,1,1,1,1
+access_yoya_emr_appointment_manager,yoya.emr.appointment.manager,model_yoya_emr_appointment,yoya_emr_demo.group_yoya_emr_manager,1,1,1,1

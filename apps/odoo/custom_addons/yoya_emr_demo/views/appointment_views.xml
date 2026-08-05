@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_yoya_emr_appointment_list" model="ir.ui.view">
+        <field name="name">yoya.emr.appointment.list</field>
+        <field name="model">yoya.emr.appointment</field>
+        <field name="arch" type="xml">
+            <list>
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="appointment_date"/>
+                <field name="doctor_name"/>
+                <field name="state"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_yoya_emr_appointment_form" model="ir.ui.view">
+        <field name="name">yoya.emr.appointment.form</field>
+        <field name="model">yoya.emr.appointment</field>
+        <field name="arch" type="xml">
+            <form>
+                <header>
+                    <button name="action_confirm" type="object" string="Confirm" class="btn-primary" invisible="state != 'draft'"/>
+                    <button name="action_start_consultation" type="object" string="Start Consultation" class="btn-primary" invisible="state != 'waiting'"/>
+                    <button name="action_complete" type="object" string="Complete" class="btn-primary" invisible="state != 'in_consultation'"/>
+                    <button name="action_cancel" type="object" string="Cancel" invisible="state == 'completed' or state == 'cancelled'"/>
+                    <button name="action_reset_to_draft" type="object" string="Reset to Draft" invisible="state != 'cancelled'"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,waiting,in_consultation,completed"/>
+                </header>
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="name"/>
+                            <field name="patient_id"/>
+                            <field name="appointment_date"/>
+                            <field name="doctor_name"/>
+                        </group>
+                        <group>
+                            <field name="started_at"/>
+                            <field name="completed_at"/>
+                        </group>
+                    </group>
+                    <group>
+                        <field name="reason"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_yoya_emr_appointment" model="ir.actions.act_window">
+        <field name="name">Appointments</field>
+        <field name="res_model">yoya.emr.appointment</field>
+        <field name="view_mode">list,form</field>
+    </record>
+</odoo>

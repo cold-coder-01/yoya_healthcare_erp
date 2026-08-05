@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="seq_yoya_emr_patient" model="ir.sequence">
+        <field name="name">YOYA EMR Patient</field>
+        <field name="code">yoya.emr.patient</field>
+        <field name="prefix">DEMO-PAT-</field>
+        <field name="padding">5</field>
+        <field name="number_next">1</field>
+        <field name="number_increment">1</field>
+    </record>
+
+    <record id="seq_yoya_emr_appointment" model="ir.sequence">
+        <field name="name">YOYA EMR Appointment</field>
+        <field name="code">yoya.emr.appointment</field>
+        <field name="prefix">DEMO-APT-</field>
+        <field name="padding">5</field>
+        <field name="number_next">1</field>
+        <field name="number_increment">1</field>
+    </record>
+</odoo>
