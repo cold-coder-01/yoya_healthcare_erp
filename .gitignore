@@ -1,0 +1,44 @@
+# Next.js / Node.js
+node_modules/
+.next/
+out/
+dist/
+coverage/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Odoo / Python
+__pycache__/
+*.py[cod]
+*.log
+*.pid
+*.pot
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Local Odoo runtime data
+apps/odoo/data/
+apps/odoo/logs/
+
+# Odoo generated files
+*.session
+*.dump
+*.backup
+
+# Editors
+.vscode/
+.idea/
+
+# Operating systems
+.DS_Store
+Thumbs.db
+desktop.ini
