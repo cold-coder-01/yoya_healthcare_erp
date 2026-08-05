@@ -8,11 +8,11 @@ export default function Home() {
           YOYA General Hospital
         </p>
         <h1 className="mt-4 text-4xl font-semibold tracking-tight">
-          EMR integration proof of concept
+          Clinical evaluation UAT
         </h1>
         <p className="mt-4 max-w-2xl text-base leading-7 text-slate-600">
-          Sign in with Odoo, view demo appointments, and start a consultation
-          through the Next.js server-side bridge.
+          Sign in with Odoo and open the real clinical evaluation queue for
+          triage, vitals, billing clearance awareness, and consultation start.
         </p>
         <div className="mt-8 flex flex-col gap-3 sm:flex-row">
           <Link
@@ -22,10 +22,10 @@ export default function Home() {
             Login
           </Link>
           <Link
-            href="/appointments"
+            href="/triage"
             className="inline-flex h-11 items-center justify-center rounded-md border border-slate-300 bg-white px-5 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
           >
-            Appointments
+            Evaluation Queue
           </Link>
         </div>
       </section>

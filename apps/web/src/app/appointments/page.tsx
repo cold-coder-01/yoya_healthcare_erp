@@ -1,5 +1,5 @@
-import AppointmentsClient from "./appointments-client";
+import { redirect } from "next/navigation";
 
-export default function AppointmentsPage() {
-  return <AppointmentsClient />;
+export default function LegacyAppointmentsPage() {
+  redirect("/triage");
 }

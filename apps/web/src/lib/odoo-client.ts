@@ -1,5 +1,15 @@
 import "server-only";
 
+import type {
+  ApiEnvelope,
+  ApiErrorShape,
+  ClinicalEvaluation,
+  ClinicalSession,
+  EvaluationDetail,
+  EvaluationQueueResponse,
+  EvaluationSavePayload,
+} from "@/types/clinical";
+
 const ODOO_BASE_URL = process.env.ODOO_BASE_URL?.replace(/\/+$/, "");
 const ODOO_DATABASE = process.env.ODOO_DATABASE;
 
@@ -12,20 +22,30 @@ export type OdooUser = {
   partnerId?: number;
 };
 
-export type OdooApiResult = {
+export type OdooApiResult<T> = {
   status: number;
-  body: unknown;
+  body: ApiEnvelope<T>;
 };
 
 export class OdooClientError extends Error {
   status: number;
   code: string;
+  details?: unknown;
 
-  constructor(code: string, message: string, status = 500) {
+  constructor(code: string, message: string, status = 500, details?: unknown) {
     super(message);
     this.name = "OdooClientError";
     this.code = code;
     this.status = status;
+    this.details = details;
+  }
+
+  toApiError(): ApiErrorShape {
+    return {
+      code: this.code,
+      message: this.message,
+      ...(this.details === undefined ? {} : { details: this.details }),
+    };
   }
 }
 
@@ -54,6 +74,57 @@ async function readJson(response: Response): Promise<unknown> {
   } catch {
     return null;
   }
+}
+
+function normalizeError(value: unknown, fallbackStatus: number): ApiErrorShape {
+  if (isRecord(value)) {
+    const message =
+      typeof value.message === "string" && value.message.trim()
+        ? value.message
+        : "The clinical service returned an error.";
+    const code =
+      typeof value.code === "string" && value.code.trim()
+        ? value.code
+        : `odoo_http_${fallbackStatus}`;
+    return { ...value, code, message };
+  }
+
+  return {
+    code: `odoo_http_${fallbackStatus}`,
+    message: "The clinical service returned an error.",
+  };
+}
+
+function normalizeEnvelope<T>(payload: unknown, status: number): ApiEnvelope<T> {
+  if (isRecord(payload) && payload.success === true && "data" in payload) {
+    return {
+      success: true,
+      data: payload.data as T,
+    };
+  }
+
+  if (isRecord(payload) && payload.success === false) {
+    return {
+      success: false,
+      error: normalizeError(payload.error, status),
+    };
+  }
+
+  if (status >= 400) {
+    return {
+      success: false,
+      error: normalizeError(isRecord(payload) ? payload.error : null, status),
+    };
+  }
+
+  return {
+    success: false,
+    error: {
+      code: "invalid_response",
+      message: "The clinical service returned an invalid response.",
+      details: payload,
+    },
+  };
 }
 
 function extractSessionId(headers: Headers) {
@@ -138,11 +209,12 @@ export async function authenticateOdoo(login: string, password: string) {
   };
 }
 
-async function callOdooApi(
+async function callOdooApi<T>(
   sessionId: string,
   path: string,
   method: "GET" | "POST",
-): Promise<OdooApiResult> {
+  body?: unknown,
+): Promise<OdooApiResult<T>> {
   const { baseUrl } = getOdooConfig();
 
   let response: Response;
@@ -151,7 +223,9 @@ async function callOdooApi(
       method,
       headers: {
         Cookie: `session_id=${sessionId}`,
+        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
       },
+      body: body === undefined ? undefined : JSON.stringify(body),
       cache: "no-store",
     });
   } catch {
@@ -162,19 +236,98 @@ async function callOdooApi(
     );
   }
 
-  const body = await readJson(response);
   return {
     status: response.status,
-    body,
+    body: normalizeEnvelope<T>(await readJson(response), response.status),
   };
 }
 
+function withQuery(path: string, params: Record<string, string | undefined>) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value) {
+      query.set(key, value);
+    }
+  }
+  const queryString = query.toString();
+  return queryString ? `${path}?${queryString}` : path;
+}
+
+export type EvaluationQueueFilters = {
+  date?: string;
+  state?: string;
+  department_id?: string;
+  doctor_id?: string;
+};
+
+export function fetchClinicalSession(sessionId: string) {
+  return callOdooApi<ClinicalSession>(
+    sessionId,
+    "/yoya-emr/api/v1/clinical/session",
+    "GET",
+  );
+}
+
+export function fetchEvaluationQueue(
+  sessionId: string,
+  filters: EvaluationQueueFilters = {},
+) {
+  return callOdooApi<EvaluationQueueResponse>(
+    sessionId,
+    withQuery("/yoya-emr/api/v1/clinical/evaluation-queue", filters),
+    "GET",
+  );
+}
+
+export function fetchEvaluationDetail(sessionId: string, appointmentId: number) {
+  return callOdooApi<EvaluationDetail>(
+    sessionId,
+    `/yoya-emr/api/v1/clinical/evaluations/by-appointment/${appointmentId}`,
+    "GET",
+  );
+}
+
+export function saveEvaluation(
+  sessionId: string,
+  appointmentId: number,
+  payload: EvaluationSavePayload,
+) {
+  return callOdooApi<{ evaluation: NonNullable<ClinicalEvaluation> }>(
+    sessionId,
+    `/yoya-emr/api/v1/clinical/evaluations/${appointmentId}/save`,
+    "POST",
+    payload,
+  );
+}
+
+export function completeEvaluation(sessionId: string, evaluationId: number) {
+  return callOdooApi<{ evaluation: NonNullable<ClinicalEvaluation> }>(
+    sessionId,
+    `/yoya-emr/api/v1/clinical/evaluations/${evaluationId}/complete`,
+    "POST",
+  );
+}
+
+export function startClinicalConsultation(
+  sessionId: string,
+  appointmentId: number,
+) {
+  return callOdooApi<{
+    appointment: EvaluationDetail["appointment"];
+    encounter: EvaluationDetail["encounter"];
+  }>(
+    sessionId,
+    `/yoya-emr/api/v1/clinical/appointments/${appointmentId}/start-consultation`,
+    "POST",
+  );
+}
+
 export function fetchAppointments(sessionId: string) {
-  return callOdooApi(sessionId, "/yoya-emr/api/v1/appointments", "GET");
+  return callOdooApi<unknown>(sessionId, "/yoya-emr/api/v1/appointments", "GET");
 }
 
 export function startConsultation(sessionId: string, appointmentId: number) {
-  return callOdooApi(
+  return callOdooApi<unknown>(
     sessionId,
     `/yoya-emr/api/v1/appointments/${appointmentId}/start`,
     "POST",

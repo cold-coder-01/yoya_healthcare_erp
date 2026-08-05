@@ -47,7 +47,7 @@ export default function LoginPage() {
       }
 
       setPassword("");
-      router.push("/appointments");
+      router.push("/triage");
       router.refresh();
     } catch {
       setError("Unable to reach the YOYA EMR gateway.");
