@@ -1,8 +1,22 @@
 {
     "name": "YOYA EMR API",
-    "version": "18.0.1.0.0",
+    "version": "18.0.1.1.0",
     "license": "LGPL-3",
-    "depends": ["base", "web", "yoya_emr_demo"],
+    "depends": [
+        "base",
+        "web",
+        # Demo workflow. Kept so the existing /yoya-emr/api/v1/appointments
+        # routes continue to resolve against yoya.emr.appointment.
+        "yoya_emr_demo",
+        # Real UAT clinical schema.
+        "hospital_management",
+        # Supplies appointment.billing_blocked / billing_clearance_message and
+        # the financial clearance gate on action_start_consultation.
+        "hospital_billing",
+        # Supplies the triage fields, the encounter link and the evaluation
+        # record rules the clinical endpoints depend on.
+        "yoya_clinical_bridge",
+    ],
     "data": [],
     "installable": True,
     "application": False,
