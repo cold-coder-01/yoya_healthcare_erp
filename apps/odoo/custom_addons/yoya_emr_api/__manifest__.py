@@ -16,6 +16,10 @@
         # Supplies the triage fields, the encounter link and the evaluation
         # record rules the clinical endpoints depend on.
         "yoya_clinical_bridge",
+        # Supplies hospital.reception.workflow, hospital.patient.card.issue,
+        # the encounter reception_* clearance fields and the cashier /
+        # emergency-authorizer groups the reception endpoints depend on.
+        "yoya_reception_bridge",
     ],
     "data": [],
     "installable": True,
