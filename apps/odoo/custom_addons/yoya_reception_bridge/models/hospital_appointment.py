@@ -8,10 +8,14 @@ below closes that at model level, not in the API.
 from odoo import api, fields, models
 from odoo.exceptions import AccessError, UserError
 
+from .reception_capability import has_reception_workflow_capability
+
 G_MANAGER = "hospital_management.group_hospital_manager"
 G_ADMIN = "hospital_management.group_hospital_system_administrator"
+G_RECEPTIONIST = "hospital_management.group_hospital_receptionist"
 
 CONSULTATION_OVERRIDE_GROUPS = (G_MANAGER, G_ADMIN)
+DIRECT_CREATE_GROUPS = (G_MANAGER, G_ADMIN)
 
 # Exact operator-facing wording for the triage gate.
 TRIAGE_REQUIRED_MESSAGE = (
@@ -159,6 +163,44 @@ class HospitalAppointment(models.Model):
         # No encounter yet (never confirmed): fall back to the appointment's own
         # signal, which is all that exists at that point.
         return bool(self.billing_blocked)
+
+    # ------------------------------------------------------------------
+    # Reception-workflow-only creation
+    # ------------------------------------------------------------------
+    @api.model_create_multi
+    def create(self, vals_list):
+        self._assert_appointment_creation_allowed()
+        return super().create(vals_list)
+
+    @api.model
+    def _assert_appointment_creation_allowed(self):
+        """Receptionists open appointments through the workflow, not the ORM.
+
+        Scoped to Receptionist specifically: hospital_management's ACL grants
+        perm_create=1 on hospital.appointment to exactly receptionist,
+        manager and system administrator; doctor and nurse hold read/write
+        only (create=0). This guard changes nothing for doctor or nurse --
+        they were already blocked at the ACL layer, and remain blocked there.
+
+        Creating an appointment outside create_visit() skips clearance
+        persistence, the reception_workflow_managed marker and encounter
+        check-in, so a receptionist bypassing it here would silently produce
+        a visit the triage gate and queue-stage logic do not understand.
+        """
+        if self.env.su:
+            return
+        if has_reception_workflow_capability():
+            return
+        user = self.env.user
+        if any(user.has_group(group) for group in DIRECT_CREATE_GROUPS):
+            return
+        if user.has_group(G_RECEPTIONIST):
+            raise AccessError(
+                "Appointments cannot be created directly. Use "
+                "hospital.reception.workflow.create_visit(), which opens the "
+                "appointment, encounter and billing together and checks the "
+                "patient in correctly."
+            )
 
     # ------------------------------------------------------------------
     # Reception-managed marker

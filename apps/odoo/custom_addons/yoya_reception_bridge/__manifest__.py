@@ -48,6 +48,7 @@ idempotency, the commercial snapshot and audit stay in one place.
         "views/billing_service_views.xml",
         "views/hospital_appointment_views.xml",
         "views/hospital_encounter_views.xml",
+        "views/hospital_patient_views.xml",
         "views/reception_menus.xml",
     ],
     "installable": True,

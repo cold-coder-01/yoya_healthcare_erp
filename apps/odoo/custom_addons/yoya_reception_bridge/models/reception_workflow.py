@@ -16,6 +16,8 @@ import logging
 from odoo import api, fields, models
 from odoo.exceptions import AccessError, UserError
 
+from .reception_capability import reception_workflow_capability
+
 _logger = logging.getLogger(__name__)
 
 G_RECEPTIONIST = "hospital_management.group_hospital_receptionist"
@@ -148,7 +150,8 @@ class HospitalReceptionWorkflow(models.AbstractModel):
         if not (values.get("name") or "").strip():
             raise UserError("A patient name is required.")
 
-        return self.env["hospital.patient"].create(dict(values))
+        with reception_workflow_capability():
+            return self.env["hospital.patient"].create(dict(values))
 
     # ------------------------------------------------------------------
     # Visit creation
@@ -212,7 +215,8 @@ class HospitalReceptionWorkflow(models.AbstractModel):
         elif department:
             appointment_values["triage_destination_id"] = department.id
 
-        appointment = self.env["hospital.appointment"].create(appointment_values)
+        with reception_workflow_capability():
+            appointment = self.env["hospital.appointment"].create(appointment_values)
 
         # THE check-in event. hospital_billing hooks this to open the encounter,
         # the billing account and the consultation charge. Never duplicated here.
@@ -266,13 +270,14 @@ class HospitalReceptionWorkflow(models.AbstractModel):
         if not requirement["required"] and not issue_card:
             return CardIssue.browse()
 
-        card_issue = CardIssue.create(
-            {
-                "patient_id": patient.id,
-                "encounter_id": encounter.id,
-                "issue_reason": "first",
-            }
-        )
+        with reception_workflow_capability():
+            card_issue = CardIssue.create(
+                {
+                    "patient_id": patient.id,
+                    "encounter_id": encounter.id,
+                    "issue_reason": "first",
+                }
+            )
         card_issue.action_create_charge()
         return card_issue
 

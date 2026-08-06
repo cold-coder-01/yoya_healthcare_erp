@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!--
+        Hide the "New" button on the Patients list for receptionists, while
+        leaving it untouched for everyone else, specifically including
+        managers and system administrators, even though they hold the
+        Receptionist group TOO (group_hospital_manager's implied_ids include
+        it, and system administrator implies manager).
+
+        That implication is exactly why this needs two views layered by
+        priority rather than one:
+
+          1. RESTRICTIVE (priority 32, groups_id=[receptionist]) sets
+             create="0". It applies to every user holding the Receptionist
+             group, which includes managers and admins.
+          2. OVERRIDE (priority 40, groups_id=[manager, admin], applied
+             AFTER the restrictive view because it has the higher priority)
+             sets create="1" again, for exactly the two groups that must
+             keep full access.
+
+        A plain receptionist matches only view 1: create stays 0. A manager
+        matches both; view 2 is combined after view 1 and its create="1"
+        wins. Doctor, nurse and every other role hold neither group, so
+        neither view applies to them and the base hospital_management view
+        is completely unaffected.
+
+        This is a UI convenience only. The authoritative control is
+        hospital.patient's create() override in
+        models/hospital_patient.py, which blocks the same action server-side
+        regardless of what any view shows or what a raw RPC call sends.
+    -->
+
+    <record id="view_hospital_patient_list_receptionist_no_create" model="ir.ui.view">
+        <field name="name">hospital.patient.list.receptionist.no.create</field>
+        <field name="model">hospital.patient</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_patient_list"/>
+        <field name="priority">32</field>
+        <field name="groups_id" eval="[(6, 0, [ref('hospital_management.group_hospital_receptionist')])]"/>
+        <field name="arch" type="xml">
+            <xpath expr="//list" position="attributes">
+                <attribute name="create">0</attribute>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_hospital_patient_list_manager_create_override" model="ir.ui.view">
+        <field name="name">hospital.patient.list.manager.create.override</field>
+        <field name="model">hospital.patient</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_patient_list"/>
+        <field name="priority">40</field>
+        <field name="groups_id" eval="[(6, 0, [
+            ref('hospital_management.group_hospital_manager'),
+            ref('hospital_management.group_hospital_system_administrator')
+        ])]"/>
+        <field name="arch" type="xml">
+            <xpath expr="//list" position="attributes">
+                <attribute name="create">1</attribute>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

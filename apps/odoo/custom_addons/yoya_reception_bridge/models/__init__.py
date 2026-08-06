@@ -1,3 +1,4 @@
+from . import reception_capability
 from . import billing_service
 from . import emergency_danger_sign
 from . import hospital_patient

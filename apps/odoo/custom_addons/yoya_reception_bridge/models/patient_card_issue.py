@@ -11,12 +11,20 @@ while a retried request never does.
 from odoo import api, fields, models
 from odoo.exceptions import AccessError, UserError, ValidationError
 
+from .reception_capability import has_reception_workflow_capability
+
 G_MANAGER = "hospital_management.group_hospital_manager"
 G_ADMIN = "hospital_management.group_hospital_system_administrator"
+G_RECEPTIONIST = "hospital_management.group_hospital_receptionist"
 G_EMERGENCY_AUTHORIZER = "yoya_reception_bridge.group_hospital_emergency_authorizer"
 
 WAIVER_GROUPS = (G_MANAGER, G_ADMIN)
 DEFERRAL_GROUPS = (G_EMERGENCY_AUTHORIZER, G_MANAGER, G_ADMIN)
+# Managers and system administrators may still create a card issuance
+# directly -- a corrective entry, or a replacement/lost/damaged/upgrade card,
+# none of which the reception workflow raises today. Receptionists reach this
+# model only through the workflow's own capability-wrapped create call.
+DIRECT_CREATE_GROUPS = (G_MANAGER, G_ADMIN)
 
 # States in which a first card already exists as a commitment. A patient holding
 # any of these must never be charged a second first-card fee.
@@ -224,6 +232,7 @@ class HospitalPatientCardIssue(models.Model):
     # ------------------------------------------------------------------
     @api.model_create_multi
     def create(self, vals_list):
+        self._assert_card_issue_creation_allowed()
         for vals in vals_list:
             if not vals.get("name") or vals["name"] == "New":
                 vals["name"] = (
@@ -241,6 +250,30 @@ class HospitalPatientCardIssue(models.Model):
         for card in cards:
             card._log_audit("create", "Patient card issuance %s created." % card.name)
         return cards
+
+    @api.model
+    def _assert_card_issue_creation_allowed(self):
+        """Receptionists get a card issued only through the reception workflow.
+
+        Reachability today already makes most of this moot: the
+        administrative menu that lists this model is manager/admin only (see
+        views/reception_menus.xml), so a receptionist has no UI path to this
+        form at all. This guard is the actual control regardless -- it holds
+        even against a direct RPC call that never goes near any menu.
+        """
+        if self.env.su:
+            return
+        if has_reception_workflow_capability():
+            return
+        user = self.env.user
+        if any(user.has_group(group) for group in DIRECT_CREATE_GROUPS):
+            return
+        if user.has_group(G_RECEPTIONIST):
+            raise AccessError(
+                "Patient card issuances cannot be created directly. Routine "
+                "first-card issuance happens automatically inside "
+                "hospital.reception.workflow.create_visit()."
+            )
 
     def write(self, vals):
         stamped = SYSTEM_STAMPED.intersection(vals)
