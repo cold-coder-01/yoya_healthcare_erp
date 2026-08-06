@@ -3,7 +3,12 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import BillingWarning from "@/components/clinical/billing-warning";
+import ErrorBanner from "@/components/clinical/error-banner";
 import StatusBadge from "@/components/clinical/status-badge";
+import {
+  formatBloodGroup,
+  formatHospitalDateTime,
+} from "@/lib/clinical-format";
 import type {
   ApiEnvelope,
   ApiErrorShape,
@@ -123,14 +128,15 @@ function getError(payload: unknown): ApiErrorShape | null {
   return null;
 }
 
-function formatDateTime(value: string | null | undefined) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
+/** True when Odoo signalled a billing-clearance block rather than a plain failure. */
+function isBillingClearanceError(status: number, apiError: ApiErrorShape | null) {
+  if (status !== 409 || !apiError) {
+    return false;
+  }
+  return (
+    apiError.code === "billing_clearance_required" ||
+    typeof apiError.billing_clearance_message === "string"
+  );
 }
 
 function buildPayload(form: FormState): EvaluationSavePayload {
@@ -204,6 +210,56 @@ export default function EvaluationClient({ appointmentId }: { appointmentId: str
 
   const numericAppointmentId = useMemo(() => Number(appointmentId), [appointmentId]);
 
+  /**
+   * The single source of truth for the billing banner.
+   *
+   * A live 409 from Start Consultation is the most specific signal and wins;
+   * otherwise the billing fields returned in the evaluation detail are used.
+   * A malformed or empty error object yields null, so no empty banner renders.
+   */
+  const billingNotice = useMemo<
+    { blocked: boolean; message: string | null; detail: string | null } | null
+  >(() => {
+    if (billingError) {
+      const odooMessage =
+        typeof billingError.message === "string" ? billingError.message.trim() : "";
+      const clearanceMessage =
+        typeof billingError.billing_clearance_message === "string"
+          ? billingError.billing_clearance_message.trim()
+          : "";
+
+      if (!odooMessage && !clearanceMessage) {
+        return null;
+      }
+
+      return {
+        blocked: true,
+        message: odooMessage || clearanceMessage,
+        detail: odooMessage ? clearanceMessage || null : null,
+      };
+    }
+
+    const appointment = detail?.appointment;
+    if (!appointment) {
+      return null;
+    }
+
+    const clearanceMessage =
+      typeof appointment.billing_clearance_message === "string"
+        ? appointment.billing_clearance_message.trim()
+        : "";
+
+    if (!appointment.billing_blocked && !clearanceMessage) {
+      return null;
+    }
+
+    return {
+      blocked: Boolean(appointment.billing_blocked),
+      message: clearanceMessage || null,
+      detail: null,
+    };
+  }, [billingError, detail]);
+
   const loadDetail = useCallback(async () => {
     if (!Number.isInteger(numericAppointmentId) || numericAppointmentId <= 0) {
       setError("Appointment ID is invalid.");
@@ -219,6 +275,9 @@ export default function EvaluationClient({ appointmentId }: { appointmentId: str
       const nextDetail = await requestEvaluationDetail(numericAppointmentId);
       setDetail(nextDetail);
       setForm(formFromEvaluation(nextDetail.evaluation));
+      // A successful fetch clears whatever transient failure preceded it.
+      setError(null);
+      setBillingError(null);
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -300,6 +359,8 @@ export default function EvaluationClient({ appointmentId }: { appointmentId: str
         current ? { ...current, evaluation: payload.data.evaluation } : current,
       );
       setForm(formFromEvaluation(payload.data.evaluation));
+      setError(null);
+      setBillingError(null);
     } catch {
       setError("Unable to reach the clinical evaluation service.");
     } finally {
@@ -329,6 +390,8 @@ export default function EvaluationClient({ appointmentId }: { appointmentId: str
       setDetail((current) =>
         current ? { ...current, evaluation: payload.data.evaluation } : current,
       );
+      setError(null);
+      setBillingError(null);
     } catch {
       setError("Unable to reach the clinical evaluation service.");
     } finally {
@@ -351,10 +414,14 @@ export default function EvaluationClient({ appointmentId }: { appointmentId: str
 
       if (!response.ok || !payload.success) {
         const apiError = getError(payload);
-        if (response.status === 409 && apiError) {
+
+        // A billing 409 is a billing signal, not a general failure. Setting
+        // only one of the two states is what keeps a single banner on screen.
+        if (isBillingClearanceError(response.status, apiError)) {
           setBillingError(apiError);
+        } else {
+          setError(safeMessage(payload, "Unable to start consultation."));
         }
-        setError(safeMessage(payload, "Unable to start consultation."));
         return;
       }
 
@@ -399,9 +466,14 @@ export default function EvaluationClient({ appointmentId }: { appointmentId: str
         </div>
       </div>
 
-      {error ? <BillingWarning blocked message={error} /> : null}
-      <BillingWarning blocked={detail.appointment.billing_blocked} message={detail.appointment.billing_clearance_message} />
-      <BillingWarning blocked={Boolean(billingError)} message={billingError?.billing_clearance_message ? `${billingError.message} ${billingError.billing_clearance_message}` : billingError?.message} />
+      <ErrorBanner message={error} />
+      {billingNotice ? (
+        <BillingWarning
+          blocked={billingNotice.blocked}
+          message={billingNotice.message}
+          detail={billingNotice.detail}
+        />
+      ) : null}
 
       <section className="grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
@@ -409,7 +481,7 @@ export default function EvaluationClient({ appointmentId }: { appointmentId: str
             <div>
               <div className="text-2xl font-semibold text-slate-950">{detail.patient.name}</div>
               <div className="mt-1 text-sm text-slate-500">{detail.patient.identification_code ?? "No MRN"} | {detail.patient.age ?? "-"} | {detail.patient.gender ?? "-"}</div>
-              <div className="mt-2 text-sm text-slate-700">Phone: {detail.patient.mobile ?? detail.patient.phone ?? "-"} | Blood group: {detail.patient.blood_group ?? "-"}</div>
+              <div className="mt-2 text-sm text-slate-700">Phone: {detail.patient.mobile ?? detail.patient.phone ?? "-"} | Blood group: {formatBloodGroup(detail.patient.blood_group)}</div>
             </div>
             <div className="text-right text-sm text-slate-600">
               <div className="font-semibold text-slate-950">{detail.appointment.appointment_code ?? detail.appointment.id}</div>
@@ -432,7 +504,7 @@ export default function EvaluationClient({ appointmentId }: { appointmentId: str
         <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm shadow-sm">
           <div className="font-semibold text-slate-950">Appointment Summary</div>
           <div className="mt-3 grid grid-cols-2 gap-2 text-slate-600">
-            <div>Date</div><div className="text-slate-900">{formatDateTime(detail.appointment.appointment_date)}</div>
+            <div>Date</div><div className="text-slate-900">{formatHospitalDateTime(detail.appointment.appointment_date)}</div>
             <div>Reason</div><div className="text-slate-900">{detail.appointment.reason ?? "-"}</div>
             <div>Encounter</div><div className="text-slate-900">{detail.encounter?.name ?? "Not linked"}</div>
             <div>Evaluation</div><div><StatusBadge value={detail.evaluation?.status} /></div>

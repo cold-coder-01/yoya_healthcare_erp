@@ -10,15 +10,15 @@ import {
 
 export async function POST(
   request: Request,
-  context: { params: Promise<{ appointmentId: string }> },
+  context: { params: Promise<{ id: string }> },
 ) {
   const session = await requireOdooSession();
   if (!session.ok) {
     return session.response;
   }
 
-  const { appointmentId } = await context.params;
-  const parsed = parsePositiveInteger(appointmentId, "Appointment ID");
+  const { id } = await context.params;
+  const parsed = parsePositiveInteger(id, "Appointment ID");
   if (!parsed.ok) {
     return parsed.response;
   }
@@ -44,3 +44,4 @@ export async function POST(
     );
   }
 }
+

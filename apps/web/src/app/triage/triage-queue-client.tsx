@@ -2,13 +2,10 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import BillingWarning from "@/components/clinical/billing-warning";
+import ErrorBanner from "@/components/clinical/error-banner";
 import StatusBadge from "@/components/clinical/status-badge";
+import { formatHospitalTime, hospitalToday } from "@/lib/clinical-format";
 import type { ApiEnvelope, EvaluationQueueResponse, EvaluationQueueRow } from "@/types/clinical";
-
-function todayIso() {
-  return new Date().toISOString().slice(0, 10);
-}
 
 function safeMessage(payload: unknown, fallback: string) {
   if (
@@ -23,20 +20,6 @@ function safeMessage(payload: unknown, fallback: string) {
     return payload.error.message;
   }
   return fallback;
-}
-
-function formatTime(value: string | null) {
-  if (!value) {
-    return "-";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
 }
 
 function includesText(row: EvaluationQueueRow, search: string) {
@@ -57,7 +40,7 @@ function includesText(row: EvaluationQueueRow, search: string) {
 }
 
 export default function TriageQueueClient() {
-  const [date, setDate] = useState(todayIso());
+  const [date, setDate] = useState(hospitalToday());
   const [state, setState] = useState("");
   const [departmentId, setDepartmentId] = useState("");
   const [doctorId, setDoctorId] = useState("");
@@ -232,7 +215,7 @@ export default function TriageQueueClient() {
         </div>
       </div>
 
-      {error ? <BillingWarning blocked message={error} /> : null}
+      <ErrorBanner message={error} title="Unable to load the evaluation queue" />
 
       <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
@@ -264,7 +247,7 @@ export default function TriageQueueClient() {
                     <td className="px-3 py-3 text-slate-700">{row.patient.identification_code ?? "-"}</td>
                     <td className="px-3 py-3 text-slate-900">{row.patient.name}</td>
                     <td className="px-3 py-3 text-slate-700">{row.patient.age ?? "-"} / {row.patient.gender ?? "-"}</td>
-                    <td className="px-3 py-3 text-slate-700">{formatTime(row.appointment_date)}</td>
+                    <td className="px-3 py-3 text-slate-700">{formatHospitalTime(row.appointment_date)}</td>
                     <td className="px-3 py-3 text-slate-700">{row.doctor_id?.name ?? "-"}</td>
                     <td className="px-3 py-3 text-slate-700">{row.department_id?.name ?? "-"}</td>
                     <td className="px-3 py-3"><StatusBadge value={row.evaluation.status} /></td>
