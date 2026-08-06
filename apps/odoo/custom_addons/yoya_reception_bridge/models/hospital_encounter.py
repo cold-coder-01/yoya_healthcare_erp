@@ -65,6 +65,117 @@ class HospitalEncounter(models.Model):
     )
 
     # ------------------------------------------------------------------
+    # Reception clearance (LIVE, encounter-wide)
+    # ------------------------------------------------------------------
+    #
+    # hospital.billing.account.financial_clearance_state is a STORED MIRROR that
+    # only changes when someone calls check_financial_clearance(persist=True).
+    # That happens exactly once in the whole codebase -- inside
+    # action_start_consultation -- so between registration and consultation it
+    # still reads its default, 'not_required'. That is why ENC01225 displays
+    # "Not Required" while 1,500 ETB is genuinely outstanding.
+    #
+    # These fields are the live view. They call the authoritative engine with
+    # persist=False and NO charge filter, so every pre-service charge on the
+    # account participates: consultation AND patient card. Nothing here writes
+    # financial_clearance_state.
+    #
+    reception_required_amount = fields.Float(
+        string="Required Before Service",
+        compute="_compute_reception_clearance",
+        compute_sudo=True,
+        digits=(16, 2),
+    )
+    reception_paid_amount = fields.Float(
+        string="Received",
+        compute="_compute_reception_clearance",
+        compute_sudo=True,
+        digits=(16, 2),
+    )
+    reception_outstanding_amount = fields.Float(
+        string="Outstanding",
+        compute="_compute_reception_clearance",
+        compute_sudo=True,
+        digits=(16, 2),
+    )
+    reception_clearance_ok = fields.Boolean(
+        string="Cleared For Triage",
+        compute="_compute_reception_clearance",
+        compute_sudo=True,
+    )
+    reception_clearance_state = fields.Selection(
+        # Same vocabulary as hospital_billing's FINANCIAL_CLEARANCE_STATES,
+        # redeclared rather than imported so a refactor there cannot silently
+        # change this field's meaning.
+        [
+            ("not_required", "Not Required"),
+            ("pending", "Pending"),
+            ("cleared", "Cleared"),
+            ("credit_authorized", "Credit Authorized"),
+            ("emergency_bypass", "Emergency Bypass"),
+        ],
+        string="Live Clearance",
+        compute="_compute_reception_clearance",
+        compute_sudo=True,
+    )
+    reception_clearance_message = fields.Char(
+        string="Clearance Reason",
+        compute="_compute_reception_clearance",
+        compute_sudo=True,
+    )
+
+    def _compute_reception_clearance(self):
+        engine = self.env["hospital.billing.engine"]
+        for encounter in self:
+            summary = encounter._reception_clearance_summary(engine=engine)
+            encounter.reception_required_amount = summary["required"]
+            encounter.reception_paid_amount = summary["paid"]
+            encounter.reception_outstanding_amount = summary["outstanding"]
+            encounter.reception_clearance_ok = summary["cleared"]
+            encounter.reception_clearance_state = summary["state"]
+            encounter.reception_clearance_message = summary["reason"]
+
+    def _reception_clearance_summary(self, engine=None):
+        """Encounter-wide pre-service clearance.
+
+        Deliberately calls check_financial_clearance WITHOUT the ``charges``
+        argument. hospital_billing scopes the appointment's own
+        billing_blocked/billing_clearance_message to the CONSULTATION charge
+        only -- correct for gating a consultation, wrong for gating reception,
+        where the patient card must be paid too.
+        """
+        self.ensure_one()
+        engine = engine or self.env["hospital.billing.engine"]
+
+        result = engine.check_financial_clearance(self)
+
+        account = self.billing_account_id
+        pre_service = account.charge_line_ids.filtered(
+            lambda line: line.charge_state in ("draft", "active")
+            and line.billing_basis == "prepaid"
+        ) if account else self.env["hospital.charge.line"]
+
+        return {
+            "cleared": bool(result.get("cleared")),
+            "state": result.get("state") or "not_required",
+            "reason": result.get("reason") or "",
+            "required": sum(pre_service.mapped("amount_estimated")),
+            "paid": sum(pre_service.mapped("amount_received")),
+            "outstanding": result.get("amount_due", 0.0),
+            "lines": [
+                {
+                    "charge_id": line.id,
+                    "name": line.name,
+                    "description": line.description,
+                    "required": line.amount_estimated,
+                    "received": line.amount_received,
+                    "outstanding": line.amount_due_for_clearance,
+                }
+                for line in pre_service
+            ],
+        }
+
+    # ------------------------------------------------------------------
     # Authorization
     # ------------------------------------------------------------------
     @api.model

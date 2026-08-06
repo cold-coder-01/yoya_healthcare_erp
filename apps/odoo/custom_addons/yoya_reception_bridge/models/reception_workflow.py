@@ -230,12 +230,29 @@ class HospitalReceptionWorkflow(models.AbstractModel):
 
         card_issue = self._maybe_issue_first_card(patient, encounter, issue_card)
 
+        # The card charge was raised AFTER action_confirm ran its clearance
+        # bookkeeping, so the account's stored financial_clearance_state still
+        # reads its 'not_required' default. Re-run the authoritative engine with
+        # persist=True now that every pre-service charge exists. This is the
+        # only sanctioned way to move that field -- never a direct write.
+        self.env["hospital.billing.engine"].check_financial_clearance(
+            encounter, persist=True
+        )
+
+        # Registration is complete, so the patient is physically present and
+        # checked in. This is independent of payment: action_check_in only moves
+        # planned -> checked_in and never starts the encounter or the
+        # consultation. Guarded so a retried create_visit is idempotent.
+        if encounter.state == "planned":
+            encounter.action_check_in()
+
         return {
             "patient": patient,
             "appointment": appointment,
             "encounter": encounter,
             "card_issue": card_issue,
             "consultation_charge": appointment.consultation_charge_id,
+            "clearance": encounter._reception_clearance_summary(),
         }
 
     @api.model
@@ -284,14 +301,82 @@ class HospitalReceptionWorkflow(models.AbstractModel):
                 "No triage destination is set for appointment %s."
                 % appointment.appointment_code
             )
+
+        encounter = appointment.encounter_id
+        if not encounter:
+            raise UserError(
+                "Appointment %s has no encounter; it cannot be sent to triage."
+                % appointment.appointment_code
+            )
+
+        # Opportunistic, verified self-heal: promote charged -> paid for any card
+        # whose charge the billing layer now reports as funded. It cannot lie --
+        # action_mark_paid re-reads charge.payment_state itself.
+        self._sync_card_payment_states(appointment.patient_id, encounter)
+
+        # Encounter-wide clearance. NOT appointment.billing_blocked, which
+        # hospital_billing deliberately scopes to the consultation charge alone
+        # and would let a patient through having paid 300 of 1,500.
+        clearance = encounter._reception_clearance_summary()
+        if not clearance["cleared"]:
+            raise UserError(
+                "%s cannot be sent to triage yet.\n\n"
+                "Required before service: %.2f\n"
+                "Received: %.2f\n"
+                "Outstanding: %.2f\n\n"
+                "%s\n\n"
+                "Take the outstanding payment, record a payer authorization, or "
+                "authorize an emergency bypass on encounter %s."
+                % (
+                    appointment.patient_id.display_name,
+                    clearance["required"],
+                    clearance["paid"],
+                    clearance["outstanding"],
+                    clearance["reason"],
+                    encounter.name,
+                )
+            )
+
         if destination != appointment.triage_destination_id:
             appointment.write({"triage_destination_id": destination.id})
 
         return {
             "appointment": appointment,
+            "encounter": encounter,
             "triage_destination": destination,
+            "clearance": clearance,
             "queue_stage": appointment.clinical_queue_stage,
         }
+
+    @api.model
+    def _sync_card_payment_states(self, patient, encounter):
+        """Promote card issuances whose charge is now verifiably funded.
+
+        hospital_billing exposes no hook on receipt confirmation, and patching
+        it is out of scope, so the promotion happens at the next reception
+        touchpoint instead of by observation. Silent when nothing qualifies.
+        """
+        cards = self.env["hospital.patient.card.issue"].search(
+            [
+                ("patient_id", "=", patient.id),
+                ("encounter_id", "=", encounter.id),
+                ("state", "=", "charged"),
+            ]
+        )
+        promoted = self.env["hospital.patient.card.issue"]
+        for card in cards:
+            charge = card.charge_line_id
+            if not charge:
+                continue
+            funded = charge.payment_state == "paid"
+            authorized = (
+                charge.authorization_state == "authorized"
+                and encounter.payer_type != "self_pay"
+            )
+            if funded or authorized:
+                card.action_mark_paid()
+                promoted |= card
+        return promoted
 
     # ------------------------------------------------------------------
     # Emergency

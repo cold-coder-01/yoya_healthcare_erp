@@ -137,7 +137,15 @@ class HospitalAppointment(models.Model):
         return evaluations[:1]
 
     def _is_payment_blocking(self):
-        """True when money is genuinely standing between the patient and triage."""
+        """True when money is genuinely standing between the patient and triage.
+
+        Uses ENCOUNTER-WIDE clearance, not appointment.billing_blocked.
+        hospital_billing scopes billing_blocked to the consultation charge
+        alone (appointment_billing.py:82-84), which is right for gating a
+        consultation but wrong here: a new patient who paid only the 300 ETB
+        consultation while 1,200 ETB of card fee stood unpaid would otherwise
+        flip from awaiting_payment to awaiting_triage.
+        """
         self.ensure_one()
         encounter = self.encounter_id
         if encounter and encounter.emergency_bypass:
@@ -146,6 +154,10 @@ class HospitalAppointment(models.Model):
             # Emergency arrivals are screened and triaged first; billing is
             # resolved afterwards.
             return False
+        if encounter:
+            return not encounter.reception_clearance_ok
+        # No encounter yet (never confirmed): fall back to the appointment's own
+        # signal, which is all that exists at that point.
         return bool(self.billing_blocked)
 
     # ------------------------------------------------------------------

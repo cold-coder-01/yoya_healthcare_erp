@@ -6,6 +6,16 @@
         <field name="model">hospital.encounter</field>
         <field name="inherit_id" ref="hospital_management.view_hospital_encounter_form"/>
         <field name="arch" type="xml">
+            <xpath expr="//group[@name='emergency_bypass']" position="before">
+                <group string="Reception Clearance (live)" name="reception_clearance">
+                    <field name="reception_clearance_state"/>
+                    <field name="reception_required_amount" widget="monetary"/>
+                    <field name="reception_paid_amount" widget="monetary"/>
+                    <field name="reception_outstanding_amount" widget="monetary"/>
+                    <field name="reception_clearance_ok"/>
+                    <field name="reception_clearance_message"/>
+                </group>
+            </xpath>
             <xpath expr="//group[@name='emergency_bypass']" position="after">
                 <group string="Emergency Screening" name="emergency_screening">
                     <field name="danger_sign_ids" widget="many2many_tags"
