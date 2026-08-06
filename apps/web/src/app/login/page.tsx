@@ -3,6 +3,13 @@
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import {
+  CLINICAL_ROUTE,
+  landingRouteForRoles,
+  parseReceptionRoles,
+} from "@/lib/reception-roles";
+import type { ApiEnvelope, ReceptionSession } from "@/types/reception";
+
 function getErrorMessage(payload: unknown, fallback: string) {
   if (
     typeof payload === "object" &&
@@ -32,22 +39,51 @@ export default function LoginPage() {
     setError(null);
 
     try {
-      const response = await fetch("/api/auth/login", {
+      const loginResponse = await fetch("/api/auth/login", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ login, password }),
       });
-      const payload: unknown = await response.json();
+      const loginPayload: unknown = await loginResponse.json();
 
-      if (!response.ok) {
-        setError(getErrorMessage(payload, "Unable to sign in."));
+      if (!loginResponse.ok) {
+        setError(getErrorMessage(loginPayload, "Unable to sign in."));
         return;
       }
 
       setPassword("");
-      router.push("/triage");
+
+      // Authentication has already succeeded and the session cookie is set, so
+      // a failed role lookup must never strand the user on the login screen.
+      // It only costs us the ability to pick the better landing route, and we
+      // fall back to the clinical workspace.
+      //
+      // NOTE: the reception session payload carries NO `nurse` flag. Routing is
+      // therefore by elimination -- no reception-side role means clinical --
+      // rather than by reading a field that does not exist. See
+      // lib/reception-roles.ts.
+      let destination = CLINICAL_ROUTE;
+      try {
+        const sessionResponse = await fetch("/api/reception/session", {
+          method: "GET",
+          cache: "no-store",
+        });
+        const sessionPayload = (await sessionResponse.json()) as
+          | ApiEnvelope<ReceptionSession>
+          | null;
+
+        if (sessionResponse.ok && sessionPayload?.success) {
+          destination = landingRouteForRoles(
+            parseReceptionRoles(sessionPayload.data?.roles),
+          );
+        }
+      } catch {
+        // Keep the fallback destination; the user is signed in either way.
+      }
+
+      router.push(destination);
       router.refresh();
     } catch {
       setError("Unable to reach the YOYA EMR gateway.");

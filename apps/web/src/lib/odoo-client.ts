@@ -322,6 +322,18 @@ export function startClinicalConsultation(
   );
 }
 
+/**
+ * Reception session. Used server-side by the app shells to decide which
+ * navigation items a user may see, so the sidebar is correct on first paint.
+ */
+export function fetchReceptionSession(sessionId: string) {
+  return callOdooApi<{ roles: unknown }>(
+    sessionId,
+    "/yoya-emr/api/v1/reception/session",
+    "GET",
+  );
+}
+
 export function fetchAppointments(sessionId: string) {
   return callOdooApi<unknown>(sessionId, "/yoya-emr/api/v1/appointments", "GET");
 }
