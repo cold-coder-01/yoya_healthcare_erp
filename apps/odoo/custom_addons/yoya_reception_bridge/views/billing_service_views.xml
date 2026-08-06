@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_hospital_billing_service_form_reception" model="ir.ui.view">
+        <field name="name">hospital.billing.service.form.reception</field>
+        <field name="model">hospital.billing.service</field>
+        <field name="inherit_id" ref="hospital_billing.view_hospital_billing_service_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//page[@name='billing_rules']" position="inside">
+                <group string="Patient Card">
+                    <field name="is_default_card_service"
+                           readonly="service_type != 'registration'"
+                           help="Charged by the reception workflow when a patient card is issued."/>
+                </group>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_hospital_billing_service_list_reception" model="ir.ui.view">
+        <field name="name">hospital.billing.service.list.reception</field>
+        <field name="model">hospital.billing.service</field>
+        <field name="inherit_id" ref="hospital_billing.view_hospital_billing_service_list"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='service_type']" position="after">
+                <field name="is_default_card_service" optional="show"/>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

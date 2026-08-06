@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!--
+        ADMINISTRATIVE ONLY.
+
+        The operational receptionist interface is being built in Next.js. This
+        menu exists for configuration, inspection and troubleshooting, so it is
+        restricted to managers and system administrators. Receptionists and
+        cashiers deliberately do NOT see it, which is what stops it drifting
+        into a second, competing daily workflow.
+    -->
+    <record id="menu_hospital_reception_root" model="ir.ui.menu">
+        <field name="name">Reception Administration</field>
+        <field name="sequence">15</field>
+        <field name="parent_id" eval="False"/>
+        <field name="web_icon">hospital_management,static/description/hospital.svg</field>
+        <field name="groups_id" eval="[(6, 0, [
+            ref('hospital_management.group_hospital_system_administrator'),
+            ref('hospital_management.group_hospital_manager')
+        ])]"/>
+    </record>
+
+    <record id="menu_hospital_reception_card_issues" model="ir.ui.menu">
+        <field name="name">Patient Cards</field>
+        <field name="parent_id" ref="menu_hospital_reception_root"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_patient_card_issue')"/>
+        <field name="sequence">10</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_reception_configuration" model="ir.ui.menu">
+        <field name="name">Configuration</field>
+        <field name="parent_id" ref="menu_hospital_reception_root"/>
+        <field name="sequence">90</field>
+        <field name="web_icon" eval="False"/>
+        <field name="groups_id" eval="[(6, 0, [
+            ref('hospital_management.group_hospital_system_administrator'),
+            ref('hospital_management.group_hospital_manager')
+        ])]"/>
+    </record>
+
+    <record id="menu_hospital_reception_danger_signs" model="ir.ui.menu">
+        <field name="name">Emergency Danger Signs</field>
+        <field name="parent_id" ref="menu_hospital_reception_configuration"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_emergency_danger_sign')"/>
+        <field name="sequence">10</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+</odoo>

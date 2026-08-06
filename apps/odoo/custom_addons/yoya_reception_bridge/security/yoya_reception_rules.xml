@@ -1,0 +1,203 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="0">
+
+        <!--
+            Odoo ORs the rules of every group a user holds, so a group rule can
+            only ever WIDEN access for a multi-role user. Restriction is applied
+            only where the business rules demand it (doctor, nurse); every other
+            role that already holds a read ACL gets an explicit unrestricted rule
+            so it is deliberate rather than unruled by omission.
+
+            group_hospital_manager implies receptionist + doctor + nurse, and
+            system administrator implies manager, so both keep full access.
+        -->
+
+        <!-- ==========================================================
+             hospital.patient.card.issue
+             ========================================================== -->
+
+        <record id="rule_card_issue_manager" model="ir.rule">
+            <field name="name">Patient card issuance: all (manager / system administrator)</field>
+            <field name="model_id" ref="model_hospital_patient_card_issue"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_card_issue_front_office" model="ir.rule">
+            <field name="name">Patient card issuance: all (receptionist / cashier)</field>
+            <field name="model_id" ref="model_hospital_patient_card_issue"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_receptionist')), (4, ref('group_hospital_cashier'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_card_issue_clinical_read" model="ir.rule">
+            <field name="name">Patient card issuance: read all (nurse / doctor / accountant)</field>
+            <field name="model_id" ref="model_hospital_patient_card_issue"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_nurse')), (4, ref('hospital_management.group_hospital_doctor')), (4, ref('hospital_management.group_hospital_accountant'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <!-- ==========================================================
+             hospital.appointment
+             ========================================================== -->
+
+        <record id="rule_appointment_manager" model="ir.rule">
+            <field name="name">Appointment: all (manager / system administrator)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_appointment"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_appointment_front_office" model="ir.rule">
+            <field name="name">Appointment: all (receptionist)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_appointment"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_receptionist'))]"/>
+            <!-- The front desk schedules the whole hospital; scoping it would
+                 break the existing reception workflow. -->
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_appointment_cashier" model="ir.rule">
+            <field name="name">Appointment: read all (cashier)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_appointment"/>
+            <field name="groups" eval="[(4, ref('group_hospital_cashier'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_appointment_dpo" model="ir.rule">
+            <field name="name">Appointment: read all for oversight (data protection officer)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_appointment"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_data_protection_officer'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_appointment_doctor" model="ir.rule">
+            <field name="name">Appointment: my patients (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_appointment"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">[('doctor_id.user_id', '=', user.id)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_appointment_nurse" model="ir.rule">
+            <field name="name">Appointment: my departments or my evaluations (nurse)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_appointment"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_nurse'))]"/>
+            <field name="domain_force">
+                ['|',
+                    ('department_id', 'in', user.yoya_permitted_department_ids.ids),
+                    ('evaluation_ids.assigned_nurse_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <!-- ==========================================================
+             hospital.encounter
+             ========================================================== -->
+
+        <record id="rule_encounter_manager" model="ir.rule">
+            <field name="name">Encounter: all (manager / system administrator)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_encounter"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_encounter_front_office" model="ir.rule">
+            <field name="name">Encounter: all (receptionist)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_encounter"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_receptionist'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_encounter_service_desks" model="ir.rule">
+            <field name="name">Encounter: read all (pharmacist / lab technician / accountant / cashier / DPO)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_encounter"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_pharmacist')), (4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_accountant')), (4, ref('group_hospital_cashier')), (4, ref('hospital_management.group_hospital_data_protection_officer'))]"/>
+            <!-- These desks work a cross-encounter queue of their own; scoping
+                 them by department would break dispensing and lab workflows.
+                 Unrestricted READ is a deliberate decision, not an omission. -->
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_encounter_doctor" model="ir.rule">
+            <field name="name">Encounter: my patients (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_encounter"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">
+                ['|',
+                    ('primary_doctor_id.user_id', '=', user.id),
+                    ('appointment_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_encounter_nurse" model="ir.rule">
+            <field name="name">Encounter: my departments or my evaluations (nurse)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_encounter"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_nurse'))]"/>
+            <field name="domain_force">
+                ['|',
+                    ('department_id', 'in', user.yoya_permitted_department_ids.ids),
+                    ('appointment_id.evaluation_ids.assigned_nurse_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+    </data>
+</odoo>

@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_hospital_appointment_form_reception" model="ir.ui.view">
+        <field name="name">hospital.appointment.form.reception</field>
+        <field name="model">hospital.appointment</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_appointment_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//notebook" position="inside">
+                <page string="Reception" name="reception"
+                      groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
+                    <group>
+                        <group string="Visit">
+                            <field name="visit_type"/>
+                            <field name="triage_destination_id" options="{'no_create': True}"/>
+                            <!-- Derived, never writable. -->
+                            <field name="clinical_queue_stage" readonly="1"/>
+                        </group>
+                        <group string="Registration">
+                            <field name="registered_by_id"/>
+                            <field name="registered_at"/>
+                            <!-- Administrative marker: set once by the reception
+                                 workflow, shown here for troubleshooting only. -->
+                            <field name="reception_workflow_managed" readonly="1"/>
+                        </group>
+                    </group>
+                </page>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_hospital_appointment_list_reception" model="ir.ui.view">
+        <field name="name">hospital.appointment.list.reception</field>
+        <field name="model">hospital.appointment</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_appointment_list"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='state']" position="before">
+                <field name="visit_type" optional="hide"/>
+                <field name="clinical_queue_stage" optional="hide"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_hospital_appointment_search_reception" model="ir.ui.view">
+        <field name="name">hospital.appointment.search.reception</field>
+        <field name="model">hospital.appointment</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_appointment_search"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='patient_id']" position="after">
+                <field name="visit_type"/>
+                <field name="triage_destination_id"/>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo noupdate="1">
+
+    <record id="danger_sign_severe_bleeding" model="hospital.emergency.danger.sign">
+        <field name="name">Severe bleeding</field>
+        <field name="code">severe_bleeding</field>
+        <field name="sequence">10</field>
+        <field name="severity">critical</field>
+    </record>
+
+    <record id="danger_sign_unconsciousness" model="hospital.emergency.danger.sign">
+        <field name="name">Unconsciousness</field>
+        <field name="code">unconsciousness</field>
+        <field name="sequence">20</field>
+        <field name="severity">critical</field>
+    </record>
+
+    <record id="danger_sign_severe_breathing_difficulty" model="hospital.emergency.danger.sign">
+        <field name="name">Severe breathing difficulty</field>
+        <field name="code">severe_breathing_difficulty</field>
+        <field name="sequence">30</field>
+        <field name="severity">critical</field>
+    </record>
+
+    <record id="danger_sign_convulsion" model="hospital.emergency.danger.sign">
+        <field name="name">Convulsion</field>
+        <field name="code">convulsion</field>
+        <field name="sequence">40</field>
+        <field name="severity">critical</field>
+    </record>
+
+    <record id="danger_sign_major_trauma" model="hospital.emergency.danger.sign">
+        <field name="name">Major trauma</field>
+        <field name="code">major_trauma</field>
+        <field name="sequence">50</field>
+        <field name="severity">critical</field>
+    </record>
+
+    <record id="danger_sign_severe_chest_pain" model="hospital.emergency.danger.sign">
+        <field name="name">Severe chest pain</field>
+        <field name="code">severe_chest_pain</field>
+        <field name="sequence">60</field>
+        <field name="severity">high</field>
+    </record>
+
+    <record id="danger_sign_obstetric_emergency" model="hospital.emergency.danger.sign">
+        <field name="name">Obstetric emergency</field>
+        <field name="code">obstetric_emergency</field>
+        <field name="sequence">70</field>
+        <field name="severity">critical</field>
+    </record>
+
+    <record id="danger_sign_critically_ill_child" model="hospital.emergency.danger.sign">
+        <field name="name">Critically ill child</field>
+        <field name="code">critically_ill_child</field>
+        <field name="sequence">80</field>
+        <field name="severity">critical</field>
+    </record>
+
+    <record id="danger_sign_other_life_threatening" model="hospital.emergency.danger.sign">
+        <field name="name">Other life-threatening condition</field>
+        <field name="code">other_life_threatening</field>
+        <field name="sequence">90</field>
+        <field name="severity">high</field>
+        <field name="description">Use when the presenting danger sign is not listed. Record the detail in the bypass reason.</field>
+    </record>
+
+</odoo>

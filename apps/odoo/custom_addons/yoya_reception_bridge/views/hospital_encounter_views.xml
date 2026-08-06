@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_hospital_encounter_form_reception" model="ir.ui.view">
+        <field name="name">hospital.encounter.form.reception</field>
+        <field name="model">hospital.encounter</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_encounter_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//group[@name='emergency_bypass']" position="after">
+                <group string="Emergency Screening" name="emergency_screening">
+                    <field name="danger_sign_ids" widget="many2many_tags"
+                           options="{'no_create': True}"/>
+                    <field name="highest_danger_severity"/>
+                    <field name="emergency_screened_by_id"/>
+                    <field name="emergency_screened_at"/>
+                    <button name="action_record_emergency_screening"
+                            string="Record Screening"
+                            type="object"
+                            class="btn-secondary"
+                            colspan="2"/>
+                </group>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_hospital_encounter_list_reception" model="ir.ui.view">
+        <field name="name">hospital.encounter.list.reception</field>
+        <field name="model">hospital.encounter</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_encounter_list"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='state']" position="before">
+                <field name="highest_danger_severity" optional="hide"/>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>
