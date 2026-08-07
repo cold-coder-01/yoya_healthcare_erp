@@ -42,3 +42,5 @@ apps/odoo/logs/
 .DS_Store
 Thumbs.db
 desktop.ini
+# Local safety backups
+backups/
