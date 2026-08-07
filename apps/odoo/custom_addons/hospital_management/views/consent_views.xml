@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_patient_consent_list" model="ir.ui.view">
+        <field name="name">hospital.patient.consent.list</field>
+        <field name="model">hospital.patient.consent</field>
+        <field name="arch" type="xml">
+            <list string="Patient Consents">
+                <field name="consent_code"/>
+                <field name="patient_id"/>
+                <field name="consent_type"/>
+                <field name="date_given"/>
+                <field name="expiry_date"/>
+                <field name="status"/>
+                <field name="given_by"/>
+                <field name="active"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_patient_consent_form" model="ir.ui.view">
+        <field name="name">hospital.patient.consent.form</field>
+        <field name="model">hospital.patient.consent</field>
+        <field name="arch" type="xml">
+            <form string="Patient Consent" class="hospital_consent_profile">
+                <header>
+                    <button name="action_activate" string="Activate" type="object" class="btn-primary hospital_consent_action_primary" invisible="status != 'draft'"/>
+                    <button name="action_withdraw" string="Withdraw" type="object" class="hospital_consent_action_secondary" invisible="status not in ('draft', 'active')"/>
+                    <button name="action_mark_expired" string="Mark Expired" type="object" class="hospital_consent_action_secondary" invisible="status not in ('draft', 'active')"/>
+                    <button
+                        name="action_reset_to_draft"
+                        string="Reset to Draft"
+                        type="object"
+                        class="hospital_consent_action_secondary"
+                        groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"
+                        invisible="status not in ('expired', 'withdrawn')"/>
+                    <field name="status" widget="statusbar" statusbar_visible="draft,active,expired,withdrawn"/>
+                </header>
+                <sheet class="hospital_consent_card">
+                    <div class="hospital_consent_header">
+                        <div class="hospital_consent_icon">
+                            <i class="fa fa-file-text-o" title="Consent"/>
+                        </div>
+                        <div>
+                            <h1 class="hospital_consent_code">
+                                <field name="consent_code" readonly="1" nolabel="1"/>
+                            </h1>
+                            <div class="hospital_consent_subtitle">
+                                <field name="patient_id" readonly="1" nolabel="1"/>
+                                <span> - </span>
+                                <field name="consent_type" readonly="1" nolabel="1"/>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="hospital_consent_summary">
+                        <div class="hospital_summary_chip">
+                            <i class="fa fa-user"/>
+                            <div>
+                                <span class="hospital_summary_label">Patient</span>
+                                <div class="hospital_summary_value">
+                                    <field name="patient_id" readonly="1" nolabel="1"/>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="hospital_summary_chip">
+                            <i class="fa fa-clipboard"/>
+                            <div>
+                                <span class="hospital_summary_label">Consent Type</span>
+                                <div class="hospital_summary_value">
+                                    <field name="consent_type" readonly="1" nolabel="1"/>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="hospital_summary_chip">
+                            <i class="fa fa-calendar"/>
+                            <div>
+                                <span class="hospital_summary_label">Date Given</span>
+                                <div class="hospital_summary_value">
+                                    <field name="date_given" readonly="1" nolabel="1"/>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="hospital_summary_chip">
+                            <i class="fa fa-shield"/>
+                            <div>
+                                <span class="hospital_summary_label">State</span>
+                                <div class="hospital_summary_value">
+                                    <field name="status" readonly="1" nolabel="1"/>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <group class="hospital_consent_details">
+                        <group string="Consent Information">
+                            <field name="consent_code"/>
+                            <field name="patient_id"/>
+                            <field name="consent_type"/>
+                            <field name="status" readonly="1"/>
+                        </group>
+                        <group string="Validity">
+                            <field name="date_given"/>
+                            <field name="expiry_date"/>
+                            <field name="given_by"/>
+                            <field name="active"/>
+                        </group>
+                    </group>
+                    <notebook class="hospital_consent_tabs">
+                        <page string="Consent Purpose">
+                            <group class="hospital_consent_notes">
+                                <field name="purpose"/>
+                            </group>
+                        </page>
+                        <page string="Withdrawal / Expiry">
+                            <group>
+                                <field name="withdrawn_date"/>
+                                <field name="expiry_date"/>
+                                <field name="notes"/>
+                            </group>
+                        </page>
+                        <page string="Notes">
+                            <group>
+                                <field name="notes"/>
+                            </group>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_patient_consent_search" model="ir.ui.view">
+        <field name="name">hospital.patient.consent.search</field>
+        <field name="model">hospital.patient.consent</field>
+        <field name="arch" type="xml">
+            <search string="Patient Consents">
+                <field name="consent_code"/>
+                <field name="patient_id"/>
+                <field name="consent_type"/>
+                <field name="status"/>
+                <field name="given_by"/>
+                <filter string="Draft" name="status_draft" domain="[('status', '=', 'draft')]"/>
+                <filter string="Active" name="status_active" domain="[('status', '=', 'active')]"/>
+                <filter string="Expired" name="status_expired" domain="[('status', '=', 'expired')]"/>
+                <filter string="Withdrawn" name="status_withdrawn" domain="[('status', '=', 'withdrawn')]"/>
+                <filter string="Data Sharing" name="type_data_sharing" domain="[('consent_type', '=', 'data_sharing')]"/>
+                <filter string="Research" name="type_research" domain="[('consent_type', '=', 'research')]"/>
+                <filter string="Archived" name="inactive" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Status" name="group_by_status" context="{'group_by': 'status'}"/>
+                    <filter string="Consent Type" name="group_by_consent_type" context="{'group_by': 'consent_type'}"/>
+                    <filter string="Patient" name="group_by_patient" context="{'group_by': 'patient_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_patient_consent" model="ir.actions.act_window">
+        <field name="name">Patient Consents</field>
+        <field name="res_model">hospital.patient.consent</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_patient_consent_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Record patient consent for treatment, data use, and compliance workflows.
+            </p>
+        </field>
+    </record>
+
+</odoo>

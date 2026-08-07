@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_billing_service_list" model="ir.ui.view">
+        <field name="name">hospital.billing.service.list</field>
+        <field name="model">hospital.billing.service</field>
+        <field name="arch" type="xml">
+            <list string="Billing Services">
+                <field name="code"/>
+                <field name="name"/>
+                <field name="service_type"/>
+                <field name="default_price"/>
+                <field name="currency_id" optional="show"/>
+                <field name="active" optional="show"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_billing_service_form" model="ir.ui.view">
+        <field name="name">hospital.billing.service.form</field>
+        <field name="model">hospital.billing.service</field>
+        <field name="arch" type="xml">
+            <form string="Billing Service">
+                <sheet>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1><field name="name" placeholder="Service Name"/></h1>
+                    </div>
+                    <group>
+                        <group string="Service Information">
+                            <field name="code" placeholder="e.g. LAB-CBC"/>
+                            <field name="service_type"/>
+                            <field name="active"/>
+                        </group>
+                        <group string="Pricing">
+                            <field name="currency_id"/>
+                            <field name="default_price"/>
+                            <field name="uom_id" groups="uom.group_uom"/>
+                            <field name="company_id" groups="base.group_multi_company"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Tax &amp; Fiscal" name="tax">
+                            <group>
+                                <group string="Tax Treatment">
+                                    <field name="tax_treatment"/>
+                                    <field name="tax_rate" invisible="tax_treatment != 'standard'"/>
+                                    <field name="tax_category"/>
+                                    <field name="exemption_code" invisible="tax_treatment != 'exempt'"/>
+                                </group>
+                                <group string="Fiscal Reporting">
+                                    <field name="fiscal_item_code"/>
+                                    <field name="legal_reference"/>
+                                    <field name="effective_date_start"/>
+                                    <field name="effective_date_end"/>
+                                </group>
+                            </group>
+                        </page>
+                        <page string="Billing Rules" name="billing_rules">
+                            <group>
+                                <group string="Charge Behaviour">
+                                    <field name="is_default_consultation"
+                                        invisible="service_type != 'consultation'"/>
+                                    <field name="fixed_fee"/>
+                                    <field name="prepayment_required"/>
+                                    <field name="coverage_auth_required"/>
+                                </group>
+                                <group string="Policies">
+                                    <field name="qty_overdelivery_policy"/>
+                                    <field name="discount_policy"/>
+                                    <field name="max_discount_percent"
+                                        invisible="discount_policy != 'limited'"
+                                        required="discount_policy == 'limited'"/>
+                                </group>
+                            </group>
+                        </page>
+                        <page string="Description" name="description">
+                            <field name="description" placeholder="Optional service description..."/>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_billing_service_search" model="ir.ui.view">
+        <field name="name">hospital.billing.service.search</field>
+        <field name="model">hospital.billing.service</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="code"/>
+                <field name="service_type"/>
+                <filter string="Active" name="active" domain="[('active', '=', True)]"/>
+                <filter string="Archived" name="archived" domain="[('active', '=', False)]"/>
+                <separator/>
+                <filter string="Consultation" name="consultation" domain="[('service_type', '=', 'consultation')]"/>
+                <filter string="Laboratory" name="laboratory" domain="[('service_type', '=', 'laboratory')]"/>
+                <filter string="Radiology" name="radiology" domain="[('service_type', '=', 'radiology')]"/>
+                <filter string="Pharmacy" name="pharmacy" domain="[('service_type', '=', 'pharmacy')]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Service Type" name="group_by_service_type" context="{'group_by': 'service_type'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_billing_service" model="ir.actions.act_window">
+        <field name="name">Billing Services</field>
+        <field name="res_model">hospital.billing.service</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_billing_service_search"/>
+        <field name="context">{'search_default_active': 1}</field>
+    </record>
+</odoo>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="action_report_patient_profile" model="ir.actions.report">
+        <field name="name">Patient Profile</field>
+        <field name="model">hospital.patient</field>
+        <field name="report_type">qweb-pdf</field>
+        <field name="report_name">hospital_management.report_patient_profile</field>
+        <field name="report_file">hospital_management.report_patient_profile</field>
+        <field name="binding_model_id" ref="model_hospital_patient"/>
+        <field name="binding_type">report</field>
+    </record>
+</odoo>

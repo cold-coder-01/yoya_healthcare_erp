@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+  <template id="report_laboratory_request">
+    <t t-call="web.html_container">
+        <t t-foreach="docs" t-as="doc">
+            <t t-call="web.internal_layout">
+                <div class="page">
+
+                    <!-- YOYA Hospital Shared Report Header -->
+                    <t t-set="report_title" t-value="'Laboratory Request'"/>
+                    <t t-set="report_ref_label" t-value="'Request Ref'"/>
+                    <t t-set="report_ref" t-value="doc.name"/>
+                    <t t-set="report_date_label" t-value="'Request Date'"/>
+                    <t t-set="report_date" t-value="doc.request_date"/>
+
+                    <t t-call="hospital_management.hospital_report_header"/>
+
+                    <div class="row mb-4">
+                        <div class="col-6">
+                            <strong style="color: #006A4F;">Patient Information</strong>
+                            <p>
+                                <strong>Name:</strong>
+                                <span t-field="doc.patient_id.name"/>
+                            </p>
+                            <p>
+                                <strong>Patient ID:</strong>
+                                <span t-field="doc.patient_id.identification_code"/>
+                            </p>
+                        </div>
+
+                        <div class="col-6">
+                            <strong style="color: #006A4F;">Request Details</strong>
+                            <p>
+                                <strong>Physician:</strong>
+                                <span t-field="doc.physician_id.name"/>
+                            </p>
+                            <p>
+                                <strong>Priority:</strong>
+                                <span t-field="doc.priority"/>
+                            </p>
+                            <p>
+                                <strong>State:</strong>
+                                <span t-field="doc.state"/>
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <t t-if="doc.appointment_id">
+                                <p>
+                                    <strong>Appointment:</strong>
+                                    <span t-out="doc.appointment_id.display_name"/>
+                                </p>
+                            </t>
+
+                            <t t-if="doc.diagnosis_id">
+                                <p>
+                                    <strong>Diagnosis:</strong>
+                                    <span t-out="doc.diagnosis_id.display_name"/>
+                                </p>
+                            </t>
+
+                            <t t-if="doc.treatment_plan_id">
+                                <p>
+                                    <strong>Treatment Plan:</strong>
+                                    <span t-out="doc.treatment_plan_id.display_name"/>
+                                </p>
+                            </t>
+                        </div>
+                    </div>
+
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h4 style="color: #006A4F;">Requested Laboratory Tests</h4>
+
+                            <table class="table table-bordered">
+                                <thead>
+                                    <tr style="background-color: #F3F8F6;">
+                                        <th>Test</th>
+                                        <th>Category</th>
+                                        <th>Sample Type</th>
+                                        <th>Special Instructions</th>
+                                    </tr>
+                                </thead>
+
+                                <tbody>
+                                    <t t-foreach="doc.line_ids" t-as="line">
+                                        <tr>
+                                            <td>
+                                                <span t-field="line.test_id.name"/>
+                                            </td>
+                                            <td>
+                                                <span t-field="line.test_id.category"/>
+                                            </td>
+                                            <td>
+                                                <span t-field="line.sample_type"/>
+                                            </td>
+                                            <td>
+                                                <span t-field="line.special_instruction"/>
+                                            </td>
+                                        </tr>
+                                    </t>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <t t-if="doc.clinical_notes">
+                        <div class="row mb-4">
+                            <div class="col-12">
+                                <h4 style="color: #006A4F;">Clinical Notes</h4>
+                                <p>
+                                    <span t-field="doc.clinical_notes"/>
+                                </p>
+                            </div>
+                        </div>
+                    </t>
+
+                    <t t-if="doc.instructions">
+                        <div class="row mb-4">
+                            <div class="col-12">
+                                <h4 style="color: #006A4F;">Instructions</h4>
+                                <p>
+                                    <span t-field="doc.instructions"/>
+                                </p>
+                            </div>
+                        </div>
+                    </t>
+
+                    <hr/>
+
+                    <div class="row">
+                        <div class="col-12">
+                            <p style="font-size: 10px; color: #666;">
+                                This report is generated from YOYA Hospital Ethiopian Hospital ERP.
+                            </p>
+                        </div>
+                    </div>
+
+                </div>
+            </t>
+        </t>
+    </t>
+  </template>
+</odoo>
+
+

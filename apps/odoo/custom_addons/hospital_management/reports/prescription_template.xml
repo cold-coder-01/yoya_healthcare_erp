@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <template id="report_prescription">
+        <t t-call="web.html_container">
+            <t t-foreach="docs" t-as="prescription">
+                <t t-call="web.external_layout">
+                    <div class="page">
+                        <style>
+                            .hospital-report-title {
+                                color: #006A4F;
+                                font-size: 22px;
+                                font-weight: 700;
+                                margin-bottom: 4px;
+                            }
+                            .hospital-report-subtitle {
+                                color: #333333;
+                                font-size: 16px;
+                                font-weight: 600;
+                                margin-bottom: 12px;
+                            }
+                            .hospital-section-title {
+                                color: #006A4F;
+                                font-size: 14px;
+                                font-weight: 700;
+                                margin: 12px 0 6px;
+                            }
+                            .hospital-report-table {
+                                width: 100%;
+                                border-collapse: collapse;
+                                margin-bottom: 10px;
+                            }
+                            .hospital-report-table th {
+                                background: #F3F8F6;
+                                color: #333333;
+                                font-weight: 700;
+                            }
+                            .hospital-report-table th,
+                            .hospital-report-table td {
+                                border: 1px solid #DDDDDD;
+                                padding: 5px;
+                                font-size: 11px;
+                                vertical-align: top;
+                            }
+                            .hospital-info-table td:first-child,
+                            .hospital-info-table td:nth-child(3) {
+                                width: 18%;
+                                color: #555555;
+                                font-weight: 700;
+                            }
+                            .hospital-empty-note {
+                                color: #666666;
+                                font-style: italic;
+                                margin: 6px 0 10px;
+                            }
+                            .hospital-footer-note {
+                                color: #555555;
+                                font-size: 11px;
+                                margin-top: 16px;
+                            }
+                        </style>
+
+                        <t t-set="report_title" t-value="'Prescription Report'"/>
+                        <t t-set="report_ref_label" t-value="'Prescription Ref'"/>
+                        <t t-set="report_ref" t-value="prescription.name"/>
+                        <t t-set="report_date_label" t-value="'Prescription Date'"/>
+                        <t t-set="report_date" t-value="prescription.prescription_date"/>
+                        <t t-call="hospital_management.hospital_report_header"/>
+
+                        <table class="hospital-report-table hospital-info-table">
+                            <tbody>
+                                <tr>
+                                    <td>Prescription Reference</td>
+                                    <td><span t-field="prescription.name"/></td>
+                                    <td>Date</td>
+                                    <td><span t-field="prescription.prescription_date"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Patient</td>
+                                    <td>
+                                        <span t-field="prescription.patient_id.name"/>
+                                        <t t-if="prescription.patient_id.identification_code">
+                                            (<span t-field="prescription.patient_id.identification_code"/>)
+                                        </t>
+                                    </td>
+                                    <td>Physician</td>
+                                    <td><span t-field="prescription.physician_id"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Appointment</td>
+                                    <td><span t-out="prescription.appointment_id.display_name"/></td>
+                                    <td>Diagnosis</td>
+                                    <td><span t-out="prescription.diagnosis_id.display_name"/></td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <div class="hospital-section-title">Medicine Lines</div>
+                        <t t-if="prescription.line_ids">
+                            <table class="hospital-report-table">
+                                <thead>
+                                    <tr>
+                                        <th>Medicine</th>
+                                        <th>Dosage</th>
+                                        <th>Frequency</th>
+                                        <th>Duration</th>
+                                        <th>Route</th>
+                                        <th>Quantity</th>
+                                        <th>Instructions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr t-foreach="prescription.line_ids" t-as="line">
+                                        <td><span t-field="line.medicine_name"/></td>
+                                        <td><span t-field="line.dosage"/></td>
+                                        <td><span t-field="line.frequency"/></td>
+                                        <td><span t-field="line.duration"/></td>
+                                        <td><span t-field="line.route"/></td>
+                                        <td><span t-field="line.quantity"/></td>
+                                        <td><span t-field="line.instructions"/></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </t>
+                        <t t-else="">
+                            <div class="hospital-empty-note">No medicine lines recorded.</div>
+                        </t>
+
+                        <div class="hospital-section-title">Notes</div>
+                        <table class="hospital-report-table hospital-info-table">
+                            <tbody>
+                                <tr>
+                                    <td>Notes</td>
+                                    <td colspan="3"><span t-field="prescription.notes"/></td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <div class="hospital-footer-note">
+                            This report is generated from YOYA Hospital Ethiopian Hospital ERP.
+                        </div>
+                    </div>
+                </t>
+            </t>
+        </t>
+    </template>
+</odoo>

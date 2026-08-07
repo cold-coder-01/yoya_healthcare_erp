@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_appointment_form_billing" model="ir.ui.view">
+        <field name="name">hospital.appointment.form.billing</field>
+        <field name="model">hospital.appointment</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_appointment_form"/>
+        <field name="arch" type="xml">
+
+            <xpath expr="//sheet" position="before">
+                <div class="alert alert-warning" role="alert"
+                    invisible="not billing_blocked">
+                    <i class="fa fa-lock"/>
+                    <strong> Financial clearance required. </strong>
+                    <field name="billing_clearance_message" readonly="1" nolabel="1"
+                        class="oe_inline"/>
+                    <div class="mt-1">
+                        Take payment, record payer authorization, or authorize an emergency
+                        bypass on the encounter before starting the consultation.
+                    </div>
+                </div>
+            </xpath>
+
+            <xpath expr="//sheet" position="inside">
+                <group string="Billing" name="billing"
+                    invisible="not encounter_id"
+                    groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
+                    <field name="encounter_id" readonly="1"/>
+                    <field name="consultation_charge_id" readonly="1"/>
+                    <field name="billing_blocked" invisible="1"/>
+                </group>
+            </xpath>
+
+        </field>
+    </record>
+</odoo>

@@ -1,0 +1,343 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_charge_line_list" model="ir.ui.view">
+        <field name="name">hospital.charge.line.list</field>
+        <field name="model">hospital.charge.line</field>
+        <field name="arch" type="xml">
+            <list string="Charge Lines">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="encounter_id" optional="show"/>
+                <field name="billing_account_id" optional="hide"/>
+                <field name="description"/>
+                <field name="service_id" optional="hide"/>
+                <field name="billing_basis" optional="hide"/>
+                <field name="qty_requested" optional="hide"/>
+                <field name="qty_delivered" optional="hide"/>
+                <field name="qty_billable"/>
+                <field name="qty_invoiced" optional="hide"/>
+                <field name="qty_credited" optional="hide"/>
+                <field name="qty_to_invoice" optional="hide"/>
+                <field name="delivery_invoice_variance_qty" optional="hide"/>
+                <field name="unit_price"/>
+                <field name="price_subtotal" optional="hide"/>
+                <field name="tax_amount_estimated" optional="hide" string="Est. Tax"/>
+                <field name="amount_estimated" sum="Estimated"/>
+                <field name="amount_delivered" sum="Delivered" optional="hide"/>
+                <field name="amount_to_invoice" sum="To Invoice" optional="hide"/>
+                <field name="amount_invoiced" sum="Invoiced" optional="hide"/>
+                <field name="amount_credited" sum="Credited" optional="hide"/>
+                <field name="amount_received" sum="Received" optional="hide"/>
+                <field name="amount_applied_to_invoice" sum="Applied" optional="hide"/>
+                <field name="amount_outstanding" sum="Outstanding" optional="show"/>
+                <field name="amount_prepayment_held" sum="Advance Held" optional="show"/>
+                <field name="amount_patient_credit" sum="Patient Credit" optional="hide"/>
+                <field name="adjustment_state" widget="badge" optional="show"
+                    decoration-warning="adjustment_state == 'additional_invoice_required'"
+                    decoration-danger="adjustment_state == 'credit_required'"
+                    decoration-success="adjustment_state == 'resolved'"
+                />
+                <field name="charge_state" widget="badge"
+                    decoration-info="charge_state == 'draft'"
+                    decoration-success="charge_state == 'active'"
+                    decoration-danger="charge_state in ('cancelled', 'reversed')"
+                />
+                <field name="authorization_state" widget="badge" optional="show"
+                    decoration-warning="authorization_state in ('pending', 'bypassed')"
+                    decoration-success="authorization_state == 'authorized'"
+                    decoration-danger="authorization_state == 'rejected'"
+                />
+                <field name="delivery_state" widget="badge" optional="show"/>
+                <field name="invoice_state" widget="badge" optional="show"
+                    decoration-warning="invoice_state == 'partially_invoiced'"
+                    decoration-success="invoice_state == 'invoiced'"
+                    decoration-info="invoice_state in ('partially_credited', 'credited')"
+                />
+                <field name="operational_funding_state" widget="badge"
+                    decoration-warning="operational_funding_state == 'partially_funded'"
+                    decoration-success="operational_funding_state == 'funded'"
+                    decoration-info="operational_funding_state == 'overfunded'"
+                    decoration-danger="operational_funding_state == 'refunded'"
+                />
+                <field name="accounting_receipt_state" widget="badge" optional="show"
+                    decoration-warning="accounting_receipt_state in ('unposted', 'partially_posted')"
+                    decoration-success="accounting_receipt_state == 'posted'"/>
+                <field name="settlement_state" widget="badge" optional="hide"
+                    decoration-success="settlement_state == 'settled'"
+                    decoration-warning="settlement_state in ('unsettled', 'partially_settled')"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_charge_line_form" model="ir.ui.view">
+        <field name="name">hospital.charge.line.form</field>
+        <field name="model">hospital.charge.line</field>
+        <field name="arch" type="xml">
+            <form string="Charge Line">
+                <header>
+                    <button name="action_record_payment" type="object"
+                        string="Record Payment / Advance" class="btn-primary"
+                        invisible="charge_state != 'active'"
+                        groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <button name="action_activate" string="Activate" type="object"
+                        class="btn-secondary" invisible="charge_state != 'draft'"/>
+                    <button name="action_cancel" string="Cancel" type="object"
+                        invisible="charge_state in ('cancelled', 'reversed') or invoice_state != 'not_invoiced'"/>
+                    <field name="charge_state" widget="statusbar"
+                        statusbar_visible="draft,active"/>
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box"
+                        groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
+                        <button name="action_view_receipts" type="object"
+                            class="oe_stat_button" icon="fa-money">
+                            <field name="receipt_count" widget="statinfo" string="Receipts"/>
+                        </button>
+                    </div>
+                    <widget name="web_ribbon" title="Cancelled" bg_color="text-bg-danger"
+                        invisible="charge_state != 'cancelled'"/>
+                    <widget name="web_ribbon" title="Reversed" bg_color="text-bg-warning"
+                        invisible="charge_state != 'reversed'"/>
+                    <div class="oe_title">
+                        <h1><field name="name" readonly="1"/></h1>
+                    </div>
+                    <group>
+                        <group string="Charge">
+                            <field name="billing_account_id" options="{'no_create': True}"/>
+                            <field name="encounter_id"/>
+                            <field name="patient_id"/>
+                            <field name="service_id"/>
+                            <field name="description"/>
+                            <field name="uom_id" groups="uom.group_uom"/>
+                            <field name="billing_basis"/>
+                            <field name="active"/>
+                        </group>
+                        <group string="Quantities">
+                            <field name="qty_requested"
+                                readonly="invoice_state != 'not_invoiced'"/>
+                            <field name="qty_delivered"
+                                readonly="invoice_state != 'not_invoiced'"/>
+                            <field name="qty_billable" readonly="1"/>
+                            <field name="qty_invoiced" readonly="1"/>
+                            <field name="qty_credited" readonly="1"/>
+                            <field name="net_invoiced_qty" readonly="1"/>
+                            <field name="qty_to_invoice" readonly="1"/>
+                            <div class="text-muted" colspan="2"
+                                invisible="invoice_state == 'not_invoiced'">
+                                This charge is invoiced. Quantities are locked to direct editing —
+                                use Record Delivery so the correction is audited.
+                            </div>
+                        </group>
+                    </group>
+                    <group string="Delivery / Invoice Variance"
+                        invisible="invoice_state == 'not_invoiced'">
+                        <group>
+                            <field name="delivery_invoice_variance_qty" readonly="1"/>
+                            <field name="adjustment_state" widget="badge" readonly="1"/>
+                        </group>
+                        <group>
+                            <div class="text-muted" colspan="2"
+                                invisible="adjustment_state != 'additional_invoice_required'">
+                                More was delivered than invoiced. An additional invoice may be required.
+                            </div>
+                            <div class="text-muted" colspan="2"
+                                invisible="adjustment_state != 'credit_required'">
+                                More was invoiced than delivered. A credit may be required.
+                            </div>
+                        </group>
+                    </group>
+                    <group>
+                        <group string="Pricing">
+                            <field name="unit_price"/>
+                            <field name="discount"/>
+                            <field name="price_unit_net" readonly="1"/>
+                            <field name="price_subtotal" readonly="1"/>
+                            <field name="currency_id" groups="base.group_multi_currency"/>
+                        </group>
+                        <group string="Tax Snapshot (Estimate Only)">
+                            <field name="tax_treatment"/>
+                            <field name="tax_rate" invisible="tax_treatment != 'standard'"/>
+                            <field name="tax_amount_estimated" readonly="1"/>
+                            <div class="text-muted" colspan="2">
+                                Indicative only. Authoritative tax is computed by the accounting
+                                layer from configured Odoo tax rules.
+                            </div>
+                        </group>
+                    </group>
+                    <group>
+                        <group string="Independent Financial Lifecycles">
+                            <field name="authorization_state"/>
+                            <field name="delivery_state"/>
+                            <field name="invoice_state"/>
+                            <field name="operational_funding_state" widget="badge"/>
+                            <field name="accounting_receipt_state" widget="badge"/>
+                            <field name="settlement_state" widget="badge"/>
+                            <field name="fiscal_state" widget="badge"/>
+                            <field name="payment_state" invisible="1"/>
+                            <div class="alert alert-info" role="alert" colspan="2">
+                                Operational funding reserves cash only. It does not mean the
+                                receipt was posted to Accounting, the charge was invoiced, a
+                                receivable was reconciled, or a fiscal event was completed.
+                            </div>
+                        </group>
+                        <group string="Value">
+                            <field name="amount_estimated" readonly="1"/>
+                            <field name="amount_delivered" readonly="1"/>
+                            <field name="amount_eligible" readonly="1"/>
+                            <field name="amount_to_invoice" readonly="1"/>
+                            <field name="amount_invoiced" readonly="1"
+                                groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                            <field name="amount_credited" readonly="1"
+                                groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                            <field name="net_invoiced_amount" readonly="1"
+                                groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                            <field name="amount_due_for_clearance" readonly="1"
+                                invisible="billing_basis != 'prepaid'"/>
+                        </group>
+                    </group>
+                    <group string="Operational Funding Allocation"
+                        groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
+                        <group string="Buckets">
+                            <field name="amount_received" readonly="1"/>
+                            <field name="amount_applied_to_invoice" readonly="1"
+                                groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                            <field name="amount_refunded_from_advance" readonly="1"
+                                groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                            <field name="amount_refunded_from_credit" readonly="1"
+                                groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                            <field name="amount_refunded" readonly="1"
+                                groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                        </group>
+                        <group string="Position">
+                            <field name="receivable_balance" readonly="1"
+                                groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                            <field name="amount_outstanding" readonly="1"/>
+                            <field name="amount_prepayment_held" readonly="1"/>
+                            <field name="amount_patient_credit" readonly="1"/>
+                            <div class="text-muted" colspan="2"
+                                invisible="not amount_prepayment_held">
+                                Advance held is a deposit, not a debt. It becomes a patient credit
+                                only if it is over-applied against an invoice, or refundable if the
+                                service is cancelled.
+                            </div>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Payment Receipts" name="receipts"
+                            groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
+                            <div class="alert alert-info" role="alert">
+                                <i class="fa fa-info-circle"/>
+                                Operational payment intake only — not an accounting entry
+                                and not a fiscal receipt.
+                            </div>
+                            <field name="receipt_ids" readonly="1">
+                                <list>
+                                    <field name="name"/>
+                                    <field name="received_at"/>
+                                    <field name="payment_method"/>
+                                    <field name="payment_reference"/>
+                                    <field name="amount" sum="Total Received"/>
+                                    <field name="received_by_id"/>
+                                    <field name="accounting_posted"/>
+                                    <field name="fiscalized"/>
+                                    <field name="state" widget="badge"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Provenance" name="provenance">
+                            <group>
+                                <group string="Source">
+                                    <field name="source_model" readonly="1"/>
+                                    <field name="source_res_id" readonly="1"/>
+                                    <field name="source_line_id" readonly="1"/>
+                                    <field name="source_event" readonly="1"/>
+                                    <field name="source_key" readonly="1"/>
+                                    <field name="reversal_of_id" readonly="1" invisible="not reversal_of_id"/>
+                                </group>
+                                <group string="Timestamps">
+                                    <field name="authorized_at"/>
+                                    <field name="service_started_at"/>
+                                    <field name="delivered_at"/>
+                                    <field name="invoiced_at"/>
+                                    <field name="paid_at"/>
+                                </group>
+                            </group>
+                        </page>
+                        <page string="Notes" name="notes">
+                            <field name="cancel_reason" placeholder="Cancellation reason..."
+                                invisible="charge_state != 'cancelled'"/>
+                            <field name="notes" placeholder="Internal notes..."/>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_charge_line_search" model="ir.ui.view">
+        <field name="name">hospital.charge.line.search</field>
+        <field name="model">hospital.charge.line</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="encounter_id"/>
+                <field name="description"/>
+                <field name="source_key"/>
+                <filter string="Draft" name="draft" domain="[('charge_state', '=', 'draft')]"/>
+                <filter string="Active" name="state_active" domain="[('charge_state', '=', 'active')]"/>
+                <filter string="Cancelled" name="cancelled" domain="[('charge_state', '=', 'cancelled')]"/>
+                <separator/>
+                <filter string="Pending Authorization" name="auth_pending"
+                    domain="[('authorization_state', '=', 'pending')]"/>
+                <filter string="Emergency Bypassed" name="auth_bypassed"
+                    domain="[('authorization_state', '=', 'bypassed')]"/>
+                <separator/>
+                <filter string="Additional Invoice Required" name="adj_invoice"
+                    domain="[('adjustment_state', '=', 'additional_invoice_required')]"/>
+                <filter string="Credit Required" name="adj_credit"
+                    domain="[('adjustment_state', '=', 'credit_required')]"/>
+                <filter string="Patient Credit Owed" name="patient_credit"
+                    domain="[('amount_patient_credit', '>', 0)]"/>
+                <filter string="Advance Held" name="advance_held"
+                    domain="[('amount_prepayment_held', '>', 0)]"/>
+                <filter string="Delivered" name="delivered" domain="[('delivery_state', '=', 'delivered')]"/>
+                <filter string="Not Invoiced" name="not_invoiced" domain="[('invoice_state', '=', 'not_invoiced')]"/>
+                <filter string="To Invoice" name="to_invoice" domain="[('qty_to_invoice', '>', 0)]"/>
+                <filter string="Not Funded" name="not_funded"
+                    domain="[('operational_funding_state', '=', 'not_funded')]"/>
+                <filter string="Funded / Advance Allocated" name="funded"
+                    domain="[('operational_funding_state', '=', 'funded')]"/>
+                <filter string="Accounting Unposted" name="accounting_unposted"
+                    domain="[('accounting_receipt_state', '=', 'unposted')]"/>
+                <filter string="Unsettled" name="unsettled"
+                    domain="[('settlement_state', '=', 'unsettled')]"/>
+                <separator/>
+                <filter string="Active Records" name="active" domain="[('active', '=', True)]"/>
+                <filter string="Archived" name="archived" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Patient" name="group_by_patient" context="{'group_by': 'patient_id'}"/>
+                    <filter string="Encounter" name="group_by_encounter" context="{'group_by': 'encounter_id'}"/>
+                    <filter string="Charge State" name="group_by_charge_state" context="{'group_by': 'charge_state'}"/>
+                    <filter string="Invoice State" name="group_by_invoice_state" context="{'group_by': 'invoice_state'}"/>
+                    <filter string="Adjustment" name="group_by_adjustment" context="{'group_by': 'adjustment_state'}"/>
+                    <filter string="Operational Funding" name="group_by_funding_state"
+                        context="{'group_by': 'operational_funding_state'}"/>
+                    <filter string="Receipt Accounting" name="group_by_receipt_accounting"
+                        context="{'group_by': 'accounting_receipt_state'}"/>
+                    <filter string="Settlement" name="group_by_settlement"
+                        context="{'group_by': 'settlement_state'}"/>
+                    <filter string="Source Model" name="group_by_source" context="{'group_by': 'source_model'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_charge_line" model="ir.actions.act_window">
+        <field name="name">Charge Lines</field>
+        <field name="res_model">hospital.charge.line</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_charge_line_search"/>
+        <field name="context">{'search_default_active': 1}</field>
+    </record>
+</odoo>

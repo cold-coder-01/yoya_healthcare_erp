@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <template id="hospital_report_header">
+        <div class="hospital_report_header"
+             style="display: table; width: 100%; border-bottom: 2px solid #006A4F; padding-bottom: 10px; margin-bottom: 18px;">
+
+            <div style="display: table-cell; width: 95px; vertical-align: middle;">
+                <img src="/hospital_management/static/src/img/yoya_hospital_logo.png"
+                     style="max-height: 75px; max-width: 85px;"/>
+            </div>
+
+            <div style="display: table-cell; vertical-align: middle; padding-left: 12px;">
+                <h2 style="margin: 0; color: #006A4F; font-size: 22px;">
+                    YOYA Hospital
+                </h2>
+                <p style="margin: 3px 0 0 0; color: #333; font-size: 13px;">
+                    Ethiopian Hospital ERP
+                </p>
+                <p style="margin: 3px 0 0 0; color: #666; font-size: 12px;">
+                    Care. Compassion. Excellence.
+                </p>
+            </div>
+
+            <div style="display: table-cell; width: 230px; vertical-align: middle; text-align: right;">
+                <h3 style="margin: 0; color: #1f2933; font-size: 18px;">
+                    <span t-out="report_title"/>
+                </h3>
+
+                <t t-if="report_ref">
+                    <p style="margin: 5px 0 0 0; font-size: 13px;">
+                        <strong><span t-out="report_ref_label"/>:</strong>
+                        <span t-out="report_ref"/>
+                    </p>
+                </t>
+
+                <t t-if="report_date">
+                    <p style="margin: 3px 0 0 0; font-size: 13px;">
+                        <strong><span t-out="report_date_label"/>:</strong>
+                        <span t-out="report_date"/>
+                    </p>
+                </t>
+            </div>
+        </div>
+    </template>
+
+</odoo>

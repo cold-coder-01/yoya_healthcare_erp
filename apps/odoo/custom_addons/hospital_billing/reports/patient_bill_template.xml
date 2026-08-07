@@ -1,0 +1,246 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <template id="report_patient_bill">
+        <t t-call="web.html_container">
+            <t t-foreach="docs" t-as="doc">
+                <t t-call="web.external_layout">
+                    <div class="page">
+                        <style>
+                            .billing-report-table {
+                                width: 100%;
+                                border-collapse: collapse;
+                                margin-bottom: 12px;
+                            }
+                            .billing-report-table th {
+                                background: #F3F8F6;
+                                color: #333333;
+                                font-weight: 700;
+                                text-align: left;
+                            }
+                            .billing-report-table th,
+                            .billing-report-table td {
+                                border: 1px solid #DDDDDD;
+                                padding: 5px 7px;
+                                font-size: 11px;
+                                vertical-align: top;
+                            }
+                            .billing-info-table td:first-child,
+                            .billing-info-table td:nth-child(3) {
+                                width: 18%;
+                                color: #555555;
+                                font-weight: 700;
+                            }
+                            .billing-section-title {
+                                color: #006A4F;
+                                font-size: 13px;
+                                font-weight: 700;
+                                margin: 14px 0 6px;
+                            }
+                            .billing-summary-table {
+                                width: 340px;
+                                float: right;
+                                border-collapse: collapse;
+                                margin-top: 6px;
+                            }
+                            .billing-summary-table td {
+                                border: 1px solid #DDDDDD;
+                                padding: 4px 7px;
+                                font-size: 11px;
+                            }
+                            .billing-summary-table td:first-child {
+                                color: #555555;
+                                font-weight: 700;
+                                width: 55%;
+                            }
+                            .billing-summary-table td:last-child {
+                                text-align: right;
+                            }
+                            .billing-total-row td {
+                                background: #006A4F;
+                                color: #ffffff;
+                                font-weight: 700;
+                            }
+                            .billing-due-row td {
+                                background: #F3F8F6;
+                                font-weight: 700;
+                                color: #006A4F;
+                            }
+                            .billing-footer-note {
+                                color: #555555;
+                                font-size: 10px;
+                                margin-top: 24px;
+                                border-top: 1px solid #DDDDDD;
+                                padding-top: 6px;
+                                clear: both;
+                            }
+                            .billing-state-badge {
+                                display: inline-block;
+                                padding: 2px 10px;
+                                border-radius: 10px;
+                                font-size: 10px;
+                                font-weight: 700;
+                                color: #ffffff;
+                                background: #006A4F;
+                            }
+                        </style>
+
+                        <t t-set="report_title" t-value="'Patient Bill / Receipt'"/>
+                        <t t-set="report_ref_label" t-value="'Bill Ref'"/>
+                        <t t-set="report_ref" t-value="doc.name"/>
+                        <t t-set="report_date_label" t-value="'Bill Date'"/>
+                        <t t-set="report_date" t-value="doc.bill_date"/>
+                        <t t-call="hospital_management.hospital_report_header"/>
+
+                        <p class="billing-section-title">Patient &amp; Bill Information</p>
+                        <table class="billing-report-table billing-info-table">
+                            <tbody>
+                                <tr>
+                                    <td>Patient</td>
+                                    <td><span t-field="doc.patient_id.name"/></td>
+                                    <td>Patient ID</td>
+                                    <td><span t-field="doc.patient_id.identification_code"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Bill Reference</td>
+                                    <td><span t-field="doc.name"/></td>
+                                    <td>Bill Date</td>
+                                    <td><span t-field="doc.bill_date"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Physician</td>
+                                    <td>
+                                        <t t-if="doc.physician_id">
+                                            <span t-field="doc.physician_id.name"/>
+                                        </t>
+                                        <t t-if="not doc.physician_id">-</t>
+                                    </td>
+                                    <td>Cashier</td>
+                                    <td><span t-field="doc.cashier_id.name"/></td>
+                                </tr>
+                                <t t-if="doc.payment_method">
+                                    <tr>
+                                        <td>Payment Method</td>
+                                        <td><span t-field="doc.payment_method"/></td>
+                                        <td>Status</td>
+                                        <td>
+                                            <span class="billing-state-badge">
+                                                <span t-field="doc.state"/>
+                                            </span>
+                                        </td>
+                                    </tr>
+                                </t>
+                                <t t-if="not doc.payment_method">
+                                    <tr>
+                                        <td>Status</td>
+                                        <td colspan="3">
+                                            <span class="billing-state-badge">
+                                                <span t-field="doc.state"/>
+                                            </span>
+                                        </td>
+                                    </tr>
+                                </t>
+                            </tbody>
+                        </table>
+
+                        <p class="billing-section-title">Bill Lines</p>
+                        <table class="billing-report-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 5%;">#</th>
+                                    <th style="width: 35%;">Description</th>
+                                    <th style="width: 15%;">Type</th>
+                                    <th style="width: 10%; text-align: right;">Qty</th>
+                                    <th style="width: 15%; text-align: right;">Unit Price</th>
+                                    <th style="width: 8%; text-align: right;">Disc %</th>
+                                    <th style="width: 12%; text-align: right;">Subtotal</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <t t-foreach="doc.line_ids" t-as="line">
+                                    <tr>
+                                        <td><span t-out="line_index + 1"/></td>
+                                        <td><span t-field="line.description"/></td>
+                                        <td><span t-field="line.source_type"/></td>
+                                        <td style="text-align: right;"><span t-field="line.quantity"/></td>
+                                        <td style="text-align: right;"><span t-field="line.unit_price"/></td>
+                                        <td style="text-align: right;"><span t-field="line.discount"/></td>
+                                        <td style="text-align: right;"><span t-field="line.subtotal"/></td>
+                                    </tr>
+                                </t>
+                                <t t-if="not doc.line_ids">
+                                    <tr>
+                                        <td colspan="7" style="text-align: center; color: #666666; font-style: italic;">No bill lines.</td>
+                                    </tr>
+                                </t>
+                            </tbody>
+                        </table>
+
+                        <p class="billing-section-title">Payment History</p>
+                        <table class="billing-report-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 20%;">Date</th>
+                                    <th style="width: 18%;">Method</th>
+                                    <th style="width: 22%;">Reference</th>
+                                    <th style="width: 25%;">Cashier</th>
+                                    <th style="width: 15%; text-align: right;">Amount</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <t t-foreach="doc.payment_ids" t-as="payment">
+                                    <tr>
+                                        <td><span t-field="payment.payment_date"/></td>
+                                        <td><span t-field="payment.payment_method"/></td>
+                                        <td><span t-out="payment.payment_reference or '-'"/></td>
+                                        <td><span t-field="payment.cashier_id.name"/></td>
+                                        <td style="text-align: right;"><span t-field="payment.amount"/></td>
+                                    </tr>
+                                </t>
+                                <t t-if="not doc.payment_ids">
+                                    <tr>
+                                        <td colspan="5" style="text-align: center; color: #666666; font-style: italic;">No payments recorded.</td>
+                                    </tr>
+                                </t>
+                            </tbody>
+                        </table>
+
+                        <table class="billing-summary-table">
+                            <tbody>
+                                <tr>
+                                    <td>Subtotal</td>
+                                    <td><span t-field="doc.amount_untaxed"/></td>
+                                </tr>
+                                <t t-if="doc.discount_amount">
+                                    <tr>
+                                        <td>Total Discount</td>
+                                        <td>(<span t-field="doc.discount_amount"/>)</td>
+                                    </tr>
+                                </t>
+                                <tr class="billing-total-row">
+                                    <td>Total</td>
+                                    <td><span t-field="doc.amount_total"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Amount Paid</td>
+                                    <td><span t-field="doc.amount_paid"/></td>
+                                </tr>
+                                <tr class="billing-due-row">
+                                    <td>Amount Due</td>
+                                    <td><span t-field="doc.amount_due"/></td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <div class="billing-footer-note">
+                            <t t-if="doc.notes">
+                                <strong>Notes:</strong> <span t-field="doc.notes"/>
+                                <br/>
+                            </t>
+                            <span>Thank you for choosing YOYA Hospital. Care. Compassion. Excellence.</span>
+                        </div>
+                    </div>
+                </t>
+            </t>
+        </t>
+    </template>
+</odoo>

@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_appointment_list" model="ir.ui.view">
+        <field name="name">hospital.appointment.list</field>
+        <field name="model">hospital.appointment</field>
+        <field name="arch" type="xml">
+            <list string="Appointments">
+                <field name="appointment_code"/>
+                <field name="patient_id"/>
+                <field name="doctor_id"/>
+                <field name="department_id"/>
+                <field name="appointment_date"/>
+                <field name="duration"/>
+                <field name="state"/>
+                <field name="active"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_appointment_form" model="ir.ui.view">
+        <field name="name">hospital.appointment.form</field>
+        <field name="model">hospital.appointment</field>
+        <field name="arch" type="xml">
+            <form string="Appointment" class="hospital_appointment_profile">
+                <header>
+                    <button name="action_confirm" string="Confirm" type="object" class="btn-primary hospital_appointment_action_primary" invisible="state != 'draft'"/>
+                    <button name="action_start_consultation" string="Start Consultation" type="object" class="btn-primary hospital_appointment_action_primary" invisible="state != 'confirmed'"/>
+                    <button name="action_done" string="Mark Done" type="object" class="btn-primary hospital_appointment_action_primary" invisible="state not in ('confirmed', 'in_consultation')"/>
+                    <button name="action_cancel" string="Cancel" type="object" class="hospital_appointment_action_secondary" invisible="state not in ('draft', 'confirmed', 'in_consultation')"/>
+                    <button
+                        name="action_reset_to_draft"
+                        string="Reset to Draft"
+                        type="object"
+                        class="hospital_appointment_action_secondary"
+                        groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"
+                        invisible="state not in ('cancelled', 'done')"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,confirmed,in_consultation,done"/>
+                </header>
+                <sheet class="hospital_appointment_card">
+                    <div class="oe_title hospital_appointment_header">
+                        <label for="appointment_code"/>
+                        <h1>
+                            <field name="appointment_code" readonly="1"/>
+                        </h1>
+                    </div>
+                    <div class="hospital_appointment_summary">
+                        <div class="hospital_summary_chip">
+                            <i class="fa fa-user-md" role="img" aria-label="Patient"/>
+                            <div>
+                                <span class="hospital_summary_label">Patient</span>
+                                <div class="hospital_summary_value">
+                                    <field name="patient_id" readonly="1" nolabel="1"/>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="hospital_summary_chip">
+                            <i class="fa fa-stethoscope" role="img" aria-label="Doctor"/>
+                            <div>
+                                <span class="hospital_summary_label">Doctor</span>
+                                <div class="hospital_summary_value">
+                                    <field name="doctor_id" readonly="1" nolabel="1"/>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="hospital_summary_chip">
+                            <i class="fa fa-hospital-o" role="img" aria-label="Department"/>
+                            <div>
+                                <span class="hospital_summary_label">Department</span>
+                                <div class="hospital_summary_value">
+                                    <field name="department_id" readonly="1" nolabel="1"/>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="hospital_summary_chip">
+                            <i class="fa fa-check-circle" role="img" aria-label="State"/>
+                            <div>
+                                <span class="hospital_summary_label">State</span>
+                                <div class="hospital_summary_value">
+                                    <field name="state" readonly="1" nolabel="1"/>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <group class="hospital_appointment_details">
+                        <group string="Appointment Information">
+                            <field name="appointment_code"/>
+                            <field name="patient_id"/>
+                            <field name="doctor_id"/>
+                            <field name="department_id"/>
+                        </group>
+                        <group string="Schedule">
+                            <field name="appointment_date"/>
+                            <field name="duration"/>
+                            <field name="state" readonly="1"/>
+                            <field name="active"/>
+                        </group>
+                    </group>
+                    <notebook class="hospital_appointment_tabs">
+                        <page string="Appointment Details">
+                            <group class="hospital_appointment_notes">
+                                <field name="reason"/>
+                                <field name="notes"/>
+                            </group>
+                        </page>
+                        <page string="Patient Information">
+                            <group>
+                                <field name="patient_id" readonly="1"/>
+                            </group>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_appointment_calendar" model="ir.ui.view">
+        <field name="name">hospital.appointment.calendar</field>
+        <field name="model">hospital.appointment</field>
+        <field name="arch" type="xml">
+            <calendar string="Appointments" date_start="appointment_date" color="doctor_id">
+                <field name="patient_id"/>
+                <field name="doctor_id"/>
+                <field name="department_id"/>
+                <field name="state"/>
+            </calendar>
+        </field>
+    </record>
+
+    <record id="view_hospital_appointment_search" model="ir.ui.view">
+        <field name="name">hospital.appointment.search</field>
+        <field name="model">hospital.appointment</field>
+        <field name="arch" type="xml">
+            <search string="Appointments">
+                <field name="appointment_code"/>
+                <field name="patient_id"/>
+                <field name="doctor_id"/>
+                <field name="department_id"/>
+                <field name="appointment_date"/>
+                <field name="state"/>
+                <filter string="Draft" name="state_draft" domain="[('state', '=', 'draft')]"/>
+                <filter string="Confirmed" name="state_confirmed" domain="[('state', '=', 'confirmed')]"/>
+                <filter string="In Consultation" name="state_in_consultation" domain="[('state', '=', 'in_consultation')]"/>
+                <filter string="Done" name="state_done" domain="[('state', '=', 'done')]"/>
+                <filter string="Cancelled" name="state_cancelled" domain="[('state', '=', 'cancelled')]"/>
+                <filter string="Today" name="today" domain="[('appointment_date', '&gt;=', context_today().strftime('%Y-%m-%d 00:00:00')), ('appointment_date', '&lt;=', context_today().strftime('%Y-%m-%d 23:59:59'))]"/>
+                <filter string="Archived" name="inactive" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="State" name="group_by_state" context="{'group_by': 'state'}"/>
+                    <filter string="Doctor" name="group_by_doctor" context="{'group_by': 'doctor_id'}"/>
+                    <filter string="Department" name="group_by_department" context="{'group_by': 'department_id'}"/>
+                    <filter string="Patient" name="group_by_patient" context="{'group_by': 'patient_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_appointment" model="ir.actions.act_window">
+        <field name="name">Appointments</field>
+        <field name="res_model">hospital.appointment</field>
+        <field name="view_mode">list,form,calendar</field>
+        <field name="search_view_id" ref="view_hospital_appointment_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Schedule and manage patient appointments.
+            </p>
+        </field>
+    </record>
+
+</odoo>

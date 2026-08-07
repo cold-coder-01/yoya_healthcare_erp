@@ -1,0 +1,2627 @@
+/* Default Odoo top navbar */
+.o_main_navbar,
+.o_main_navbar .o_menu_sections,
+.o_main_navbar .o_menu_systray,
+.o_main_navbar .o_menu_apps,
+.o_main_navbar .o_navbar_apps_menu {
+    background-color: #006A4F !important;
+    border-bottom-color: #005A43 !important;
+}
+
+/* Patient Evaluation UI Pattern v1 */
+.hospital_evaluation_profile {
+    --hospital-eval-primary: #006A4F;
+    --hospital-eval-primary-dark: #005A43;
+    --hospital-eval-primary-soft: rgba(0, 106, 79, 0.08);
+    --hospital-eval-border: #DFE7E3;
+    --hospital-eval-card: #FFFFFF;
+    --hospital-eval-page: #F7FAF9;
+    --hospital-eval-text: #1F2933;
+    --hospital-eval-muted: #6B7280;
+}
+
+.hospital_evaluation_profile .o_form_sheet,
+.o_form_sheet.hospital_evaluation_profile {
+    background-color: var(--hospital-eval-page) !important;
+    border: 1px solid var(--hospital-eval-border) !important;
+    border-radius: 10px !important;
+    box-shadow: 0 6px 18px rgba(31, 41, 51, 0.06) !important;
+    color: var(--hospital-eval-text);
+    margin-top: 10px !important;
+    max-width: none !important;
+    padding: 16px 18px 18px !important;
+}
+
+.hospital_evaluation_profile .o_form_statusbar,
+.hospital_evaluation_profile .o_statusbar_status {
+    background-color: #FFFFFF !important;
+}
+
+.hospital_evaluation_profile .o_statusbar_status .o_arrow_button_current,
+.hospital_evaluation_profile .o_statusbar_status .o_arrow_button_current.disabled,
+.hospital_evaluation_profile .o_statusbar_status .o_arrow_button_current:disabled {
+    background-color: var(--hospital-eval-primary) !important;
+    border-color: var(--hospital-eval-primary) !important;
+    color: #FFFFFF !important;
+}
+
+.hospital_evaluation_profile .o_statusbar_status .o_arrow_button:not(.o_arrow_button_current) {
+    background-color: #F4F7F6 !important;
+    color: #52616B !important;
+}
+
+.hospital_evaluation_profile .hospital_eval_action_primary,
+.hospital_evaluation_profile header .btn-primary {
+    background-color: var(--hospital-eval-primary) !important;
+    border-color: var(--hospital-eval-primary) !important;
+    color: #FFFFFF !important;
+    font-weight: 600 !important;
+}
+
+.hospital_evaluation_profile .hospital_eval_action_primary:hover,
+.hospital_evaluation_profile .hospital_eval_action_primary:focus,
+.hospital_evaluation_profile header .btn-primary:hover,
+.hospital_evaluation_profile header .btn-primary:focus {
+    background-color: var(--hospital-eval-primary-dark) !important;
+    border-color: var(--hospital-eval-primary-dark) !important;
+}
+
+.hospital_evaluation_profile .hospital_eval_action_secondary {
+    background-color: #FFFFFF !important;
+    border-color: #D7DEDB !important;
+    color: var(--hospital-eval-text) !important;
+    font-weight: 500 !important;
+}
+
+.hospital_evaluation_profile .hospital_eval_action_secondary:hover,
+.hospital_evaluation_profile .hospital_eval_action_secondary:focus {
+    background-color: var(--hospital-eval-primary-soft) !important;
+    border-color: rgba(0, 106, 79, 0.28) !important;
+    color: var(--hospital-eval-primary) !important;
+}
+
+.hospital_evaluation_profile .hospital_eval_title {
+    margin-bottom: 12px;
+}
+
+.hospital_evaluation_profile .hospital_eval_title h1 {
+    margin: 0;
+}
+
+.hospital_evaluation_profile .hospital_eval_title h1 .o_field_widget,
+.hospital_evaluation_profile .hospital_eval_title h1 input {
+    border: 0 !important;
+    color: var(--hospital-eval-text) !important;
+    font-size: 28px !important;
+    font-weight: 700 !important;
+    line-height: 1.15;
+}
+
+.hospital_evaluation_profile .hospital_eval_subtitle {
+    color: var(--hospital-eval-muted);
+    font-size: 14px;
+    margin-top: 2px;
+}
+
+.hospital_evaluation_profile .hospital_eval_kpi_row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.hospital_evaluation_profile .hospital_eval_kpi_card {
+    align-items: center;
+    background-color: var(--hospital-eval-card);
+    border: 1px solid var(--hospital-eval-border);
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(31, 41, 51, 0.04);
+    display: flex;
+    flex: 1 1 180px;
+    gap: 10px;
+    min-height: 70px;
+    min-width: 0;
+    padding: 9px 12px;
+}
+
+.hospital_evaluation_profile .hospital_eval_kpi_icon {
+    align-items: center;
+    background-color: var(--hospital-eval-primary-soft);
+    border-radius: 8px;
+    color: var(--hospital-eval-primary);
+    display: flex;
+    flex: 0 0 38px;
+    font-size: 19px;
+    height: 38px;
+    justify-content: center;
+    width: 38px;
+}
+
+.hospital_evaluation_profile .hospital_eval_kpi_content {
+    min-width: 0;
+}
+
+.hospital_evaluation_profile .hospital_eval_kpi_label {
+    color: var(--hospital-eval-muted);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.2;
+    margin-bottom: 3px;
+}
+
+.hospital_evaluation_profile .hospital_eval_kpi_value,
+.hospital_evaluation_profile .hospital_eval_kpi_value .o_field_widget,
+.hospital_evaluation_profile .hospital_eval_kpi_value a {
+    color: var(--hospital-eval-text) !important;
+    font-size: 13px;
+    font-weight: 600 !important;
+    line-height: 1.25;
+    max-width: 100%;
+}
+
+.hospital_evaluation_profile .hospital_eval_state_kpi .hospital_eval_kpi_value,
+.hospital_evaluation_profile .hospital_eval_state_kpi .hospital_eval_kpi_value .o_field_widget {
+    color: var(--hospital-eval-primary) !important;
+}
+
+.hospital_evaluation_profile .hospital_eval_top_grid,
+.hospital_evaluation_profile .hospital_eval_details_grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    margin-bottom: 12px;
+}
+
+.hospital_evaluation_profile .hospital_eval_card {
+    background-color: var(--hospital-eval-card);
+    border: 1px solid var(--hospital-eval-border);
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(31, 41, 51, 0.04);
+    min-width: 0;
+    padding: 12px 16px;
+}
+
+.hospital_evaluation_profile .hospital_card_title {
+    align-items: center;
+    border-bottom: 1px solid var(--hospital-eval-border);
+    color: var(--hospital-eval-primary);
+    display: flex;
+    font-size: 13px;
+    font-weight: 700;
+    gap: 8px;
+    letter-spacing: 0.02em;
+    margin-bottom: 8px;
+    padding-bottom: 7px;
+    text-transform: uppercase;
+}
+
+.hospital_evaluation_profile .hospital_card_title > i,
+.hospital_evaluation_profile .hospital_card_title > div > i {
+    color: var(--hospital-eval-primary);
+    font-size: 15px;
+}
+
+.hospital_evaluation_profile .hospital_card_title > div {
+    align-items: center;
+    display: flex;
+    gap: 8px;
+}
+
+.hospital_evaluation_profile .hospital_eval_compact_group,
+.hospital_evaluation_profile .hospital_eval_compact_group .o_inner_group {
+    margin-bottom: 0 !important;
+}
+
+.hospital_evaluation_profile .hospital_eval_compact_group .o_inner_group > tbody > tr > td {
+    padding-bottom: 3px !important;
+    padding-top: 3px !important;
+}
+
+.hospital_evaluation_profile .hospital_eval_compact_group .o_td_label label {
+    color: var(--hospital-eval-text) !important;
+    font-weight: 500 !important;
+}
+
+.hospital_evaluation_profile .hospital_eval_patient_summary {
+    align-items: flex-start;
+    display: flex;
+    gap: 16px;
+}
+
+.hospital_evaluation_profile .hospital_eval_patient_fields {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.hospital_evaluation_profile .hospital_eval_photo_block {
+    flex: 0 0 120px;
+    text-align: center;
+}
+
+.hospital_evaluation_profile .hospital_eval_photo_label,
+.hospital_evaluation_profile .hospital_eval_pain_field_label {
+    color: var(--hospital-eval-text);
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.hospital_evaluation_profile .hospital_eval_photo img {
+    border: 1px solid var(--hospital-eval-border);
+    border-radius: 8px;
+    height: 110px !important;
+    object-fit: cover;
+    width: 110px !important;
+}
+
+.hospital_evaluation_profile .hospital_eval_notebook {
+    margin-top: 2px;
+}
+
+.hospital_evaluation_profile .hospital_eval_notebook .nav-tabs .nav-link {
+    color: var(--hospital-eval-muted) !important;
+    font-weight: 500 !important;
+}
+
+.hospital_evaluation_profile .hospital_eval_notebook .nav-tabs .nav-link.active {
+    border-top: 2px solid var(--hospital-eval-primary) !important;
+    color: var(--hospital-eval-primary) !important;
+    font-weight: 700 !important;
+}
+
+.hospital_evaluation_profile .hospital_eval_notebook .tab-content {
+    background-color: transparent;
+    border: 1px solid var(--hospital-eval-border);
+    border-radius: 0 0 8px 8px;
+    padding: 12px;
+}
+
+.hospital_evaluation_profile .hospital_eval_metric_card {
+    padding-bottom: 10px;
+}
+
+.hospital_evaluation_profile .hospital_eval_metric_row {
+    align-items: center;
+    display: grid;
+    gap: 10px;
+    grid-template-columns: minmax(125px, 1.4fr) minmax(80px, 1fr) minmax(72px, 0.65fr);
+    min-height: 30px;
+}
+
+.hospital_evaluation_profile .hospital_eval_metric_label {
+    color: var(--hospital-eval-text);
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.hospital_evaluation_profile .hospital_eval_metric_row > .o_field_widget,
+.hospital_evaluation_profile .hospital_eval_metric_row > .o_field_widget input {
+    max-width: 100%;
+    width: 100%;
+}
+
+.hospital_evaluation_profile .hospital_eval_metric_row > .o_field_widget input {
+    min-height: 26px;
+}
+
+.hospital_evaluation_profile .hospital_eval_metric_row > .o_readonly_modifier,
+.hospital_evaluation_profile .hospital_eval_metric_row > .o_field_widget.o_readonly_modifier {
+    color: var(--hospital-eval-primary);
+    font-weight: 600;
+}
+
+.hospital_evaluation_profile .hospital_eval_unit {
+    color: var(--hospital-eval-muted);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.hospital_evaluation_profile .hospital_eval_pain_card {
+    margin-top: 0;
+}
+
+.hospital_evaluation_profile .hospital_eval_pain_title {
+    justify-content: space-between;
+}
+
+.hospital_evaluation_profile .hospital_eval_pain_guide {
+    background-color: var(--hospital-eval-primary-soft) !important;
+    border: 1px solid rgba(0, 106, 79, 0.18) !important;
+    border-radius: 16px !important;
+    color: var(--hospital-eval-primary) !important;
+    font-size: 11px !important;
+    font-weight: 600 !important;
+    padding: 4px 10px !important;
+    text-transform: none;
+}
+
+.hospital_evaluation_profile .hospital_eval_pain_layout {
+    align-items: start;
+    display: grid;
+    gap: 24px;
+    grid-template-columns: minmax(0, 1.1fr) minmax(260px, 0.9fr);
+}
+
+.hospital_evaluation_profile .hospital_eval_pain_scale .o_field_radio {
+    display: flex !important;
+    flex-wrap: nowrap;
+    gap: 5px;
+    justify-content: space-between;
+    max-width: 100%;
+}
+
+.hospital_evaluation_profile .hospital_eval_pain_scale .o_radio_item {
+    align-items: center;
+    display: flex;
+    margin: 0 !important;
+    min-width: 0;
+}
+
+.hospital_evaluation_profile .hospital_eval_pain_scale .o_radio_item label {
+    color: var(--hospital-eval-text);
+    font-size: 11px;
+    margin-left: 2px;
+}
+
+.hospital_evaluation_profile .hospital_eval_pain_scale input[type="radio"]:checked + label {
+    color: var(--hospital-eval-primary);
+    font-weight: 700;
+}
+
+.hospital_evaluation_profile .hospital_eval_pain_bar {
+    background: linear-gradient(90deg, #129B65 0%, #F4D03F 48%, #F39C12 68%, #EF5B63 100%);
+    border-radius: 4px;
+    height: 5px;
+    margin-top: 12px;
+    position: relative;
+}
+
+.hospital_evaluation_profile .hospital_eval_pain_bar::before,
+.hospital_evaluation_profile .hospital_eval_pain_bar::after {
+    background-color: #FFFFFF;
+    border: 2px solid currentColor;
+    border-radius: 50%;
+    content: "";
+    height: 9px;
+    position: absolute;
+    top: -2px;
+    width: 9px;
+}
+
+.hospital_evaluation_profile .hospital_eval_pain_bar::before {
+    color: #129B65;
+    left: 0;
+}
+
+.hospital_evaluation_profile .hospital_eval_pain_bar::after {
+    color: #EF5B63;
+    right: 0;
+}
+
+.hospital_evaluation_profile .hospital_eval_pain_legend {
+    color: var(--hospital-eval-muted);
+    display: flex;
+    font-size: 10px;
+    justify-content: space-between;
+    margin-top: 7px;
+}
+
+.hospital_evaluation_profile .hospital_eval_pain_legend span:first-child {
+    color: #128357;
+}
+
+.hospital_evaluation_profile .hospital_eval_pain_legend span:nth-child(2) {
+    color: #C47D00;
+}
+
+.hospital_evaluation_profile .hospital_eval_pain_legend span:last-child {
+    color: #D94851;
+}
+
+.hospital_evaluation_profile .hospital_eval_pain_note textarea,
+.hospital_evaluation_profile .hospital_eval_pain_note .o_field_text {
+    background-color: #FFFFFF;
+    border-color: var(--hospital-eval-border) !important;
+    border-radius: 6px;
+    min-height: 88px;
+    width: 100%;
+}
+
+@media (max-width: 991.98px) {
+    .hospital_evaluation_profile .hospital_eval_top_grid,
+    .hospital_evaluation_profile .hospital_eval_details_grid,
+    .hospital_evaluation_profile .hospital_eval_pain_layout {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .hospital_evaluation_profile .hospital_eval_kpi_card {
+        flex-basis: calc(50% - 10px);
+    }
+}
+
+@media (max-width: 575.98px) {
+    .hospital_evaluation_profile .o_form_sheet,
+    .o_form_sheet.hospital_evaluation_profile {
+        padding: 12px !important;
+    }
+
+    .hospital_evaluation_profile .hospital_eval_kpi_card {
+        flex-basis: 100%;
+    }
+
+    .hospital_evaluation_profile .hospital_eval_patient_summary {
+        flex-direction: column;
+    }
+
+    .hospital_evaluation_profile .hospital_eval_photo_block {
+        flex-basis: auto;
+    }
+
+    .hospital_evaluation_profile .hospital_eval_metric_row {
+        grid-template-columns: minmax(105px, 1.2fr) minmax(70px, 1fr) minmax(62px, 0.7fr);
+    }
+
+    .hospital_evaluation_profile .hospital_eval_pain_scale .o_field_radio {
+        flex-wrap: wrap;
+        justify-content: flex-start;
+    }
+}
+
+.o_main_navbar .o_menu_brand,
+.o_main_navbar .o_menu_sections > a,
+.o_main_navbar .o_menu_sections > button,
+.o_main_navbar .o_menu_sections > .dropdown > a,
+.o_main_navbar .o_menu_sections > .dropdown > button,
+.o_main_navbar .o_menu_sections a:not(.dropdown-item),
+.o_main_navbar .o_menu_sections button,
+.o_main_navbar .o_menu_systray a,
+.o_main_navbar .o_menu_systray button,
+.o_main_navbar .o_menu_apps,
+.o_main_navbar .o_navbar_apps_menu {
+    background-color: #006A4F !important;
+    color: #FFFFFF !important;
+    font-size: 15px !important;
+}
+
+.o_main_navbar .o_menu_brand:hover,
+.o_main_navbar .o_menu_sections > a:hover,
+.o_main_navbar .o_menu_sections > button:hover,
+.o_main_navbar .o_menu_sections > .dropdown > a:hover,
+.o_main_navbar .o_menu_sections > .dropdown > button:hover,
+.o_main_navbar .o_menu_sections a:not(.dropdown-item):hover,
+.o_main_navbar .o_menu_sections button:hover,
+.o_main_navbar .o_menu_systray a:hover,
+.o_main_navbar .o_menu_systray button:hover,
+.o_main_navbar .o_menu_sections .show > a,
+.o_main_navbar .o_menu_sections .show > button {
+    background-color: #005A43 !important;
+    color: #FFFFFF !important;
+}
+
+/* MUK Backend Theme sidebar overrides */
+.mk_sidebar,
+.mk_apps_sidebar,
+.mk_sidebar_menu {
+    background-color: #006A4F !important;
+}
+
+.mk_sidebar a,
+.mk_sidebar button,
+.mk_apps_sidebar a,
+.mk_apps_sidebar button,
+.mk_sidebar .mk_menu_item,
+.mk_apps_sidebar .mk_app_item,
+.mk_sidebar .mk_menu_item span,
+.mk_apps_sidebar .mk_app_item span {
+    color: #FFFFFF !important;
+    font-size: 15px !important;
+}
+
+.mk_sidebar a:hover,
+.mk_sidebar button:hover,
+.mk_apps_sidebar a:hover,
+.mk_apps_sidebar button:hover,
+.mk_sidebar .mk_menu_item:hover,
+.mk_apps_sidebar .mk_app_item:hover,
+.mk_sidebar .active,
+.mk_apps_sidebar .active,
+.mk_sidebar .mk_menu_item.active,
+.mk_apps_sidebar .mk_app_item.active {
+    background-color: #005A43 !important;
+    color: #FFFFFF !important;
+}
+
+/* Keep backend work areas out of the navigation theme */
+.o_content,
+.o_action_manager,
+.o_view_controller,
+.o_list_view,
+.o_kanban_view {
+    background-color: #F8F9FA !important;
+}
+
+.o_form_view,
+.o_form_sheet_bg {
+    background-color: #FFFFFF !important;
+}
+
+/* Odoo app-menu fallbacks used by some backend theme layouts */
+.o_main_navbar .o_app,
+.o_main_navbar .o_menu_apps,
+.o_main_navbar .o_navbar_apps_menu {
+    background-color: #006A4F !important;
+}
+
+.o_main_navbar .o_app,
+.o_main_navbar .o_menu_apps a,
+.o_main_navbar .o_navbar_apps_menu a {
+    color: #FFFFFF !important;
+    font-size: 15px !important;
+}
+
+.o_main_navbar .o_app:hover,
+.o_main_navbar .o_menu_apps a:hover,
+.o_main_navbar .o_navbar_apps_menu a:hover {
+    background-color: #005A43 !important;
+    color: #FFFFFF !important;
+}
+
+/* App launcher background from MUK/Odoo home menu */
+.o_home_menu,
+.o_home_menu_background,
+.o_home_menu .o_apps,
+.mk_home_menu,
+.mk_home_menu_background,
+.mk_apps,
+.mk_apps_container,
+.mk_apps_menu,
+.mk_app_launcher,
+.mk_app_launcher_background {
+    background: #006A4F !important;
+    background-color: #006A4F !important;
+    background-image: none !important;
+}
+
+.o_home_menu::before,
+.o_home_menu::after,
+.o_home_menu_background::before,
+.o_home_menu_background::after,
+.mk_home_menu::before,
+.mk_home_menu::after,
+.mk_home_menu_background::before,
+.mk_home_menu_background::after,
+.mk_app_launcher::before,
+.mk_app_launcher::after,
+.mk_app_launcher_background::before,
+.mk_app_launcher_background::after {
+    background: #006A4F !important;
+    background-color: #006A4F !important;
+    background-image: none !important;
+}
+
+.o_home_menu .o_app,
+.o_home_menu .o_caption,
+.o_home_menu .o_app .o_caption,
+.mk_home_menu .o_app,
+.mk_home_menu .o_caption,
+.mk_apps .o_app,
+.mk_apps .o_caption,
+.mk_app_launcher .o_app,
+.mk_app_launcher .o_caption {
+    color: #FFFFFF !important;
+    font-size: 15px !important;
+}
+
+.o_home_menu .o_app:hover,
+.mk_home_menu .o_app:hover,
+.mk_apps .o_app:hover,
+.mk_app_launcher .o_app:hover {
+    background-color: #005A43 !important;
+    color: #FFFFFF !important;
+}
+
+/* Dropdown readability fixes */
+.o_main_navbar .dropdown-menu,
+.mk_sidebar .dropdown-menu,
+.mk_apps_sidebar .dropdown-menu {
+    background-color: #FFFFFF !important;
+}
+
+.o_main_navbar .dropdown-menu .dropdown-item,
+.mk_sidebar .dropdown-menu .dropdown-item,
+.mk_apps_sidebar .dropdown-menu .dropdown-item {
+    color: #212529 !important;
+    font-size: 15px !important;
+}
+
+.o_main_navbar .dropdown-menu .dropdown-item:hover,
+.o_main_navbar .dropdown-menu .dropdown-item:focus,
+.mk_sidebar .dropdown-menu .dropdown-item:hover,
+.mk_sidebar .dropdown-menu .dropdown-item:focus,
+.mk_apps_sidebar .dropdown-menu .dropdown-item:hover,
+.mk_apps_sidebar .dropdown-menu .dropdown-item:focus {
+    background-color: #E6F2EF !important;
+    color: #006A4F !important;
+}
+
+/* MUK full app launcher background */
+.o_main_navbar .mk_app_menu.dropdown-menu,
+.mk_app_menu.dropdown-menu {
+    background: #006A4F !important;
+    background-color: #006A4F !important;
+    background-image: none !important;
+}
+
+.o_main_navbar .mk_app_menu.dropdown-menu .mk_app_name,
+.mk_app_menu.dropdown-menu .mk_app_name,
+.o_main_navbar .mk_app_menu.dropdown-menu .o_app > a,
+.mk_app_menu.dropdown-menu .o_app > a {
+    color: #FFFFFF !important;
+    font-size: 15px !important;
+}
+
+.o_main_navbar .mk_app_menu.dropdown-menu .o_app:hover,
+.mk_app_menu.dropdown-menu .o_app:hover {
+    background-color: #005A43 !important;
+}
+
+/* Odoo create button hover polish */
+.o_control_panel .o_form_button_create,
+.o_control_panel .o_list_button_add {
+    background-color: #FFFFFF !important;
+    border-color: #006A4F !important;
+    color: #006A4F !important;
+}
+
+.o_control_panel .o_form_button_create:hover,
+.o_control_panel .o_form_button_create:focus,
+.o_control_panel .o_list_button_add:hover,
+.o_control_panel .o_list_button_add:focus {
+    background-color: #006A4F !important;
+    border-color: #006A4F !important;
+    color: #FFFFFF !important;
+}
+
+/* Patient profile blueprint layout */
+.hospital_patient_profile .o_form_sheet,
+.o_form_sheet.hospital_patient_profile {
+    background-color: #FFFFFF !important;
+}
+
+.hospital_patient_profile .hospital_patient_button_box,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box {
+    display: flex;
+    flex-wrap: wrap;
+    float: none !important;
+    gap: 0;
+    justify-content: center;
+    margin: 4px auto 14px;
+    width: 100%;
+}
+
+.hospital_patient_profile .hospital_patient_button_box .oe_stat_button,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .oe_stat_button {
+    border: 1px solid #DEE2E6 !important;
+    border-radius: 4px !important;
+    color: #212529 !important;
+    margin: 0 !important;
+    min-height: 48px;
+    min-width: 178px;
+    padding: 7px 16px !important;
+    background-color: #FFFFFF !important;
+}
+
+.hospital_patient_profile .hospital_patient_button_box .oe_stat_button .fa,
+.hospital_patient_profile .hospital_patient_button_box .oe_stat_button .o_button_icon,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .oe_stat_button .fa,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .oe_stat_button .o_button_icon {
+    color: #006A4F !important;
+    font-size: 22px !important;
+}
+
+.hospital_patient_profile .hospital_patient_button_box .oe_stat_button:hover,
+.hospital_patient_profile .hospital_patient_button_box .oe_stat_button:focus,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .oe_stat_button:hover,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .oe_stat_button:focus {
+    background-color: #E6F2EF !important;
+    border-color: #006A4F !important;
+    color: #006A4F !important;
+}
+
+/* Task 16B: Patient smart button More dropdown polish */
+.hospital_patient_profile .hospital_patient_button_box .o_button_more,
+.hospital_patient_profile .hospital_patient_button_box .o_dropdown_more,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .o_button_more,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .o_dropdown_more {
+    border-color: #006A4F !important;
+    color: #006A4F !important;
+}
+
+.hospital_patient_profile .hospital_patient_button_box .dropdown-menu,
+.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .dropdown-menu,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu {
+    background-color: #FFFFFF !important;
+    border: 1px solid rgba(0, 106, 79, 0.18) !important;
+    border-radius: 8px !important;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08) !important;
+    min-width: 210px;
+    padding: 4px !important;
+}
+
+.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .dropdown-item,
+.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .o_dropdown_item,
+.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .oe_stat_button,
+.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .dropdown-item,
+.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .o_dropdown_item,
+.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .oe_stat_button,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .dropdown-item,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .o_dropdown_item,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .oe_stat_button,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .dropdown-item,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .o_dropdown_item,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .oe_stat_button {
+    background-color: #FFFFFF !important;
+    border: 0 !important;
+    border-radius: 6px !important;
+    color: #1F2933 !important;
+    display: flex;
+    min-height: 40px;
+    padding: 8px 10px !important;
+}
+
+.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .dropdown-item:hover,
+.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .dropdown-item:focus,
+.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .o_dropdown_item:hover,
+.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .o_dropdown_item:focus,
+.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .oe_stat_button:hover,
+.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .oe_stat_button:focus,
+.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .dropdown-item:hover,
+.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .dropdown-item:focus,
+.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .o_dropdown_item:hover,
+.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .o_dropdown_item:focus,
+.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .oe_stat_button:hover,
+.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .oe_stat_button:focus,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .dropdown-item:hover,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .dropdown-item:focus,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .o_dropdown_item:hover,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .o_dropdown_item:focus,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .oe_stat_button:hover,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .oe_stat_button:focus,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .dropdown-item:hover,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .dropdown-item:focus,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .o_dropdown_item:hover,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .o_dropdown_item:focus,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .oe_stat_button:hover,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .oe_stat_button:focus {
+    background-color: rgba(0, 106, 79, 0.08) !important;
+    color: #006A4F !important;
+}
+
+.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .fa,
+.hospital_patient_profile .hospital_patient_button_box .dropdown-menu i,
+.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .o_button_icon,
+.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .fa,
+.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu i,
+.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .o_button_icon,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .fa,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .dropdown-menu i,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .o_button_icon,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .fa,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu i,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .o_button_icon {
+    color: #006A4F !important;
+}
+
+.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .o_stat_info,
+.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .o_stat_text,
+.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .o_stat_value,
+.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .o_stat_info,
+.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .o_stat_text,
+.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .o_stat_value,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .o_stat_info,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .o_stat_text,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .dropdown-menu .o_stat_value,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .o_stat_info,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .o_stat_text,
+.o_form_sheet.hospital_patient_profile .hospital_patient_button_box .o_dropdown_menu .o_stat_value {
+    color: inherit !important;
+}
+
+.o_form_view .o_button_box .dropdown-menu:has(.oe_stat_button),
+.o_form_view .o_button_box .o_dropdown_menu:has(.oe_stat_button),
+.o_form_view .hospital_patient_button_box + .dropdown-menu,
+.o_form_view .hospital_patient_button_box + .o_dropdown_menu {
+    background-color: #FFFFFF !important;
+    border: 1px solid rgba(0, 106, 79, 0.18) !important;
+    border-radius: 8px !important;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08) !important;
+    padding: 4px !important;
+}
+
+.o_form_view .o_button_box .dropdown-menu:has(.oe_stat_button) .oe_stat_button,
+.o_form_view .o_button_box .o_dropdown_menu:has(.oe_stat_button) .oe_stat_button,
+.o_form_view .hospital_patient_button_box + .dropdown-menu .oe_stat_button,
+.o_form_view .hospital_patient_button_box + .o_dropdown_menu .oe_stat_button {
+    background-color: #FFFFFF !important;
+    border: 0 !important;
+    border-radius: 6px !important;
+    color: #1F2933 !important;
+    padding: 8px 10px !important;
+}
+
+.o_form_view .o_button_box .dropdown-menu:has(.oe_stat_button) .oe_stat_button:hover,
+.o_form_view .o_button_box .dropdown-menu:has(.oe_stat_button) .oe_stat_button:focus,
+.o_form_view .o_button_box .o_dropdown_menu:has(.oe_stat_button) .oe_stat_button:hover,
+.o_form_view .o_button_box .o_dropdown_menu:has(.oe_stat_button) .oe_stat_button:focus,
+.o_form_view .hospital_patient_button_box + .dropdown-menu .oe_stat_button:hover,
+.o_form_view .hospital_patient_button_box + .dropdown-menu .oe_stat_button:focus,
+.o_form_view .hospital_patient_button_box + .o_dropdown_menu .oe_stat_button:hover,
+.o_form_view .hospital_patient_button_box + .o_dropdown_menu .oe_stat_button:focus {
+    background-color: rgba(0, 106, 79, 0.08) !important;
+    color: #006A4F !important;
+}
+
+/* Task 16B follow-up: Odoo 18 More menu uses oe_button_box/o-dropdown classes */
+.o_form_view .oe_button_box .o_button_more,
+.o_form_view .oe_button_box .o_dropdown_more,
+.o_form_view .oe_button_box .dropdown-toggle {
+    border-color: #006A4F !important;
+    color: #006A4F !important;
+}
+
+.o_form_view .oe_button_box .dropdown-menu,
+.o_form_view .oe_button_box .o_dropdown_menu,
+.o_form_view .oe_button_box .o-dropdown--menu,
+.o_form_view .oe_button_box .o-dropdown-menu {
+    background-color: #FFFFFF !important;
+    border: 1px solid rgba(0, 106, 79, 0.18) !important;
+    border-radius: 8px !important;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08) !important;
+    min-width: 190px;
+    padding: 4px !important;
+}
+
+.o_form_view .oe_button_box .dropdown-menu .dropdown-item,
+.o_form_view .oe_button_box .dropdown-menu .o_dropdown_item,
+.o_form_view .oe_button_box .dropdown-menu .o-dropdown-item,
+.o_form_view .oe_button_box .dropdown-menu .o-dropdown--item,
+.o_form_view .oe_button_box .dropdown-menu .oe_stat_button,
+.o_form_view .oe_button_box .dropdown-menu button,
+.o_form_view .oe_button_box .o_dropdown_menu .dropdown-item,
+.o_form_view .oe_button_box .o_dropdown_menu .o_dropdown_item,
+.o_form_view .oe_button_box .o_dropdown_menu .o-dropdown-item,
+.o_form_view .oe_button_box .o_dropdown_menu .o-dropdown--item,
+.o_form_view .oe_button_box .o_dropdown_menu .oe_stat_button,
+.o_form_view .oe_button_box .o_dropdown_menu button,
+.o_form_view .oe_button_box .o-dropdown--menu .dropdown-item,
+.o_form_view .oe_button_box .o-dropdown--menu .o_dropdown_item,
+.o_form_view .oe_button_box .o-dropdown--menu .o-dropdown-item,
+.o_form_view .oe_button_box .o-dropdown--menu .o-dropdown--item,
+.o_form_view .oe_button_box .o-dropdown--menu .oe_stat_button,
+.o_form_view .oe_button_box .o-dropdown--menu button,
+.o_form_view .oe_button_box .o-dropdown-menu .dropdown-item,
+.o_form_view .oe_button_box .o-dropdown-menu .o_dropdown_item,
+.o_form_view .oe_button_box .o-dropdown-menu .o-dropdown-item,
+.o_form_view .oe_button_box .o-dropdown-menu .o-dropdown--item,
+.o_form_view .oe_button_box .o-dropdown-menu .oe_stat_button,
+.o_form_view .oe_button_box .o-dropdown-menu button {
+    background-color: #FFFFFF !important;
+    border: 0 !important;
+    border-radius: 6px !important;
+    color: #1F2933 !important;
+    min-height: 38px;
+    padding: 7px 10px !important;
+}
+
+.o_form_view .oe_button_box .dropdown-menu .dropdown-item:hover,
+.o_form_view .oe_button_box .dropdown-menu .dropdown-item:focus,
+.o_form_view .oe_button_box .dropdown-menu .o_dropdown_item:hover,
+.o_form_view .oe_button_box .dropdown-menu .o_dropdown_item:focus,
+.o_form_view .oe_button_box .dropdown-menu .o-dropdown-item:hover,
+.o_form_view .oe_button_box .dropdown-menu .o-dropdown-item:focus,
+.o_form_view .oe_button_box .dropdown-menu .o-dropdown--item:hover,
+.o_form_view .oe_button_box .dropdown-menu .o-dropdown--item:focus,
+.o_form_view .oe_button_box .dropdown-menu .oe_stat_button:hover,
+.o_form_view .oe_button_box .dropdown-menu .oe_stat_button:focus,
+.o_form_view .oe_button_box .dropdown-menu button:hover,
+.o_form_view .oe_button_box .dropdown-menu button:focus,
+.o_form_view .oe_button_box .o_dropdown_menu .dropdown-item:hover,
+.o_form_view .oe_button_box .o_dropdown_menu .dropdown-item:focus,
+.o_form_view .oe_button_box .o_dropdown_menu .o_dropdown_item:hover,
+.o_form_view .oe_button_box .o_dropdown_menu .o_dropdown_item:focus,
+.o_form_view .oe_button_box .o_dropdown_menu .o-dropdown-item:hover,
+.o_form_view .oe_button_box .o_dropdown_menu .o-dropdown-item:focus,
+.o_form_view .oe_button_box .o_dropdown_menu .o-dropdown--item:hover,
+.o_form_view .oe_button_box .o_dropdown_menu .o-dropdown--item:focus,
+.o_form_view .oe_button_box .o_dropdown_menu .oe_stat_button:hover,
+.o_form_view .oe_button_box .o_dropdown_menu .oe_stat_button:focus,
+.o_form_view .oe_button_box .o_dropdown_menu button:hover,
+.o_form_view .oe_button_box .o_dropdown_menu button:focus,
+.o_form_view .oe_button_box .o-dropdown--menu .dropdown-item:hover,
+.o_form_view .oe_button_box .o-dropdown--menu .dropdown-item:focus,
+.o_form_view .oe_button_box .o-dropdown--menu .o_dropdown_item:hover,
+.o_form_view .oe_button_box .o-dropdown--menu .o_dropdown_item:focus,
+.o_form_view .oe_button_box .o-dropdown--menu .o-dropdown-item:hover,
+.o_form_view .oe_button_box .o-dropdown--menu .o-dropdown-item:focus,
+.o_form_view .oe_button_box .o-dropdown--menu .o-dropdown--item:hover,
+.o_form_view .oe_button_box .o-dropdown--menu .o-dropdown--item:focus,
+.o_form_view .oe_button_box .o-dropdown--menu .oe_stat_button:hover,
+.o_form_view .oe_button_box .o-dropdown--menu .oe_stat_button:focus,
+.o_form_view .oe_button_box .o-dropdown--menu button:hover,
+.o_form_view .oe_button_box .o-dropdown--menu button:focus,
+.o_form_view .oe_button_box .o-dropdown-menu .dropdown-item:hover,
+.o_form_view .oe_button_box .o-dropdown-menu .dropdown-item:focus,
+.o_form_view .oe_button_box .o-dropdown-menu .o_dropdown_item:hover,
+.o_form_view .oe_button_box .o-dropdown-menu .o_dropdown_item:focus,
+.o_form_view .oe_button_box .o-dropdown-menu .o-dropdown-item:hover,
+.o_form_view .oe_button_box .o-dropdown-menu .o-dropdown-item:focus,
+.o_form_view .oe_button_box .o-dropdown-menu .o-dropdown--item:hover,
+.o_form_view .oe_button_box .o-dropdown-menu .o-dropdown--item:focus,
+.o_form_view .oe_button_box .o-dropdown-menu .oe_stat_button:hover,
+.o_form_view .oe_button_box .o-dropdown-menu .oe_stat_button:focus,
+.o_form_view .oe_button_box .o-dropdown-menu button:hover,
+.o_form_view .oe_button_box .o-dropdown-menu button:focus {
+    background-color: rgba(0, 106, 79, 0.08) !important;
+    color: #006A4F !important;
+}
+
+.o_form_view .oe_button_box .dropdown-menu .fa,
+.o_form_view .oe_button_box .dropdown-menu i,
+.o_form_view .oe_button_box .dropdown-menu .o_button_icon,
+.o_form_view .oe_button_box .o_dropdown_menu .fa,
+.o_form_view .oe_button_box .o_dropdown_menu i,
+.o_form_view .oe_button_box .o_dropdown_menu .o_button_icon,
+.o_form_view .oe_button_box .o-dropdown--menu .fa,
+.o_form_view .oe_button_box .o-dropdown--menu i,
+.o_form_view .oe_button_box .o-dropdown--menu .o_button_icon,
+.o_form_view .oe_button_box .o-dropdown-menu .fa,
+.o_form_view .oe_button_box .o-dropdown-menu i,
+.o_form_view .oe_button_box .o-dropdown-menu .o_button_icon {
+    color: #006A4F !important;
+}
+
+.o_form_view .oe_button_box .dropdown-menu .o_stat_info,
+.o_form_view .oe_button_box .dropdown-menu .o_stat_text,
+.o_form_view .oe_button_box .dropdown-menu .o_stat_value,
+.o_form_view .oe_button_box .o_dropdown_menu .o_stat_info,
+.o_form_view .oe_button_box .o_dropdown_menu .o_stat_text,
+.o_form_view .oe_button_box .o_dropdown_menu .o_stat_value,
+.o_form_view .oe_button_box .o-dropdown--menu .o_stat_info,
+.o_form_view .oe_button_box .o-dropdown--menu .o_stat_text,
+.o_form_view .oe_button_box .o-dropdown--menu .o_stat_value,
+.o_form_view .oe_button_box .o-dropdown-menu .o_stat_info,
+.o_form_view .oe_button_box .o-dropdown-menu .o_stat_text,
+.o_form_view .oe_button_box .o-dropdown-menu .o_stat_value {
+    color: inherit !important;
+}
+
+/* Portal fallback: only affects stat buttons rendered inside dropdown overlays */
+.dropdown-menu .oe_stat_button,
+.o_dropdown_menu .oe_stat_button,
+.o-dropdown--menu .oe_stat_button,
+.o-dropdown-menu .oe_stat_button {
+    background-color: #FFFFFF !important;
+    border: 0 !important;
+    border-radius: 6px !important;
+    color: #1F2933 !important;
+    min-height: 38px;
+    padding: 7px 10px !important;
+}
+
+.dropdown-menu .oe_stat_button:hover,
+.dropdown-menu .oe_stat_button:focus,
+.o_dropdown_menu .oe_stat_button:hover,
+.o_dropdown_menu .oe_stat_button:focus,
+.o-dropdown--menu .oe_stat_button:hover,
+.o-dropdown--menu .oe_stat_button:focus,
+.o-dropdown-menu .oe_stat_button:hover,
+.o-dropdown-menu .oe_stat_button:focus {
+    background-color: rgba(0, 106, 79, 0.08) !important;
+    color: #006A4F !important;
+}
+
+.dropdown-menu .oe_stat_button .fa,
+.dropdown-menu .oe_stat_button i,
+.dropdown-menu .oe_stat_button .o_button_icon,
+.o_dropdown_menu .oe_stat_button .fa,
+.o_dropdown_menu .oe_stat_button i,
+.o_dropdown_menu .oe_stat_button .o_button_icon,
+.o-dropdown--menu .oe_stat_button .fa,
+.o-dropdown--menu .oe_stat_button i,
+.o-dropdown--menu .oe_stat_button .o_button_icon,
+.o-dropdown-menu .oe_stat_button .fa,
+.o-dropdown-menu .oe_stat_button i,
+.o-dropdown-menu .oe_stat_button .o_button_icon {
+    color: #006A4F !important;
+}
+
+.dropdown-menu .oe_stat_button .o_stat_info,
+.dropdown-menu .oe_stat_button .o_stat_text,
+.dropdown-menu .oe_stat_button .o_stat_value,
+.o_dropdown_menu .oe_stat_button .o_stat_info,
+.o_dropdown_menu .oe_stat_button .o_stat_text,
+.o_dropdown_menu .oe_stat_button .o_stat_value,
+.o-dropdown--menu .oe_stat_button .o_stat_info,
+.o-dropdown--menu .oe_stat_button .o_stat_text,
+.o-dropdown--menu .oe_stat_button .o_stat_value,
+.o-dropdown-menu .oe_stat_button .o_stat_info,
+.o-dropdown-menu .oe_stat_button .o_stat_text,
+.o-dropdown-menu .oe_stat_button .o_stat_value {
+    color: inherit !important;
+}
+
+.hospital_patient_profile .hospital_patient_title,
+.o_form_sheet.hospital_patient_profile .hospital_patient_title {
+    margin-bottom: 10px;
+}
+
+.hospital_patient_profile .hospital_patient_title > label,
+.o_form_sheet.hospital_patient_profile .hospital_patient_title > label {
+    align-items: center;
+    color: #212529;
+    display: inline-flex;
+    font-weight: 600;
+    gap: 6px;
+}
+
+.hospital_patient_profile .hospital_patient_title > label::before,
+.o_form_sheet.hospital_patient_profile .hospital_patient_title > label::before {
+    color: #006A4F;
+    content: "\f2c2";
+    font-family: FontAwesome;
+    font-size: 15px;
+}
+
+.hospital_patient_profile .hospital_patient_title h1,
+.o_form_sheet.hospital_patient_profile .hospital_patient_title h1 {
+    align-items: center;
+    display: flex;
+    gap: 8px;
+    margin-bottom: 2px;
+}
+
+.hospital_patient_profile .hospital_patient_name_line .o_field_widget,
+.hospital_patient_profile .hospital_patient_name_line input,
+.o_form_sheet.hospital_patient_profile .hospital_patient_name_line .o_field_widget,
+.o_form_sheet.hospital_patient_profile .hospital_patient_name_line input {
+    border-bottom: 1px solid #C9D2D8 !important;
+    color: #212529 !important;
+    font-size: 26px !important;
+    font-weight: 700 !important;
+    line-height: 1.25;
+}
+
+.hospital_patient_profile .hospital_patient_name_line input:focus,
+.hospital_patient_profile .hospital_patient_name_line .o_field_widget:focus-within,
+.o_form_sheet.hospital_patient_profile .hospital_patient_name_line input:focus,
+.o_form_sheet.hospital_patient_profile .hospital_patient_name_line .o_field_widget:focus-within {
+    border-bottom-color: #006A4F !important;
+    box-shadow: none !important;
+}
+
+.hospital_patient_profile .hospital_patient_favorite,
+.o_form_sheet.hospital_patient_profile .hospital_patient_favorite {
+    flex: 0 0 auto;
+    font-size: 22px;
+    line-height: 1;
+}
+
+.hospital_patient_profile .hospital_patient_favorite .fa,
+.hospital_patient_profile .hospital_patient_favorite .o_field_widget,
+.o_form_sheet.hospital_patient_profile .hospital_patient_favorite .fa,
+.o_form_sheet.hospital_patient_profile .hospital_patient_favorite .o_field_widget {
+    color: #9AA6AF !important;
+}
+
+.hospital_patient_profile .hospital_patient_favorite:hover .fa,
+.hospital_patient_profile .hospital_patient_favorite:focus .fa,
+.o_form_sheet.hospital_patient_profile .hospital_patient_favorite:hover .fa,
+.o_form_sheet.hospital_patient_profile .hospital_patient_favorite:focus .fa {
+    color: #006A4F !important;
+}
+
+.hospital_patient_profile .hospital_patient_code,
+.o_form_sheet.hospital_patient_profile .hospital_patient_code {
+    color: #006A4F;
+    font-size: 16px;
+    font-weight: 600;
+    margin-top: 2px;
+}
+
+.hospital_patient_profile .hospital_patient_code .o_field_widget,
+.hospital_patient_profile .hospital_patient_code input,
+.o_form_sheet.hospital_patient_profile .hospital_patient_code .o_field_widget,
+.o_form_sheet.hospital_patient_profile .hospital_patient_code input {
+    color: #006A4F;
+    font-weight: 600;
+}
+
+.hospital_patient_profile .hospital_patient_header_card,
+.o_form_sheet.hospital_patient_profile .hospital_patient_header_card {
+    border: 1px solid #DEE2E6;
+    border-radius: 6px;
+    padding: 18px 20px 14px;
+    margin-bottom: 18px;
+}
+
+.hospital_patient_profile .hospital_patient_identity .o_horizontal_separator,
+.hospital_patient_profile .hospital_patient_summary .o_horizontal_separator,
+.o_form_sheet.hospital_patient_profile .hospital_patient_identity .o_horizontal_separator,
+.o_form_sheet.hospital_patient_profile .hospital_patient_summary .o_horizontal_separator {
+    align-items: center;
+    color: #212529;
+    display: flex;
+    font-weight: 700;
+    gap: 7px;
+}
+
+.hospital_patient_profile .hospital_patient_identity .o_horizontal_separator::before,
+.hospital_patient_profile .hospital_patient_summary .o_horizontal_separator::before,
+.o_form_sheet.hospital_patient_profile .hospital_patient_identity .o_horizontal_separator::before,
+.o_form_sheet.hospital_patient_profile .hospital_patient_summary .o_horizontal_separator::before {
+    color: #006A4F;
+    font-family: FontAwesome;
+    font-size: 16px;
+    font-weight: 400;
+}
+
+.hospital_patient_profile .hospital_patient_identity .o_horizontal_separator::before,
+.o_form_sheet.hospital_patient_profile .hospital_patient_identity .o_horizontal_separator::before {
+    content: "\f2c3";
+}
+
+.hospital_patient_profile .hospital_patient_summary .o_horizontal_separator::before,
+.o_form_sheet.hospital_patient_profile .hospital_patient_summary .o_horizontal_separator::before {
+    content: "\f0f1";
+}
+
+.hospital_patient_profile .hospital_patient_identity,
+.hospital_patient_profile .hospital_patient_summary,
+.o_form_sheet.hospital_patient_profile .hospital_patient_identity,
+.o_form_sheet.hospital_patient_profile .hospital_patient_summary {
+    padding: 0 14px;
+}
+
+.hospital_patient_profile .hospital_patient_summary,
+.o_form_sheet.hospital_patient_profile .hospital_patient_summary {
+    border-left: 1px solid #E9ECEF;
+}
+
+.hospital_patient_profile .hospital_patient_summary .hospital_patient_photo,
+.o_form_sheet.hospital_patient_profile .hospital_patient_summary .hospital_patient_photo {
+    display: block !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    text-align: center;
+}
+
+.hospital_patient_profile .hospital_patient_photo img,
+.o_form_sheet.hospital_patient_profile .hospital_patient_photo img {
+    border-radius: 6px;
+    height: 168px !important;
+    max-height: 168px;
+    max-width: 168px;
+    object-fit: cover;
+    width: 168px !important;
+}
+
+.hospital_patient_profile .hospital_patient_tabs .nav-tabs .nav-link,
+.hospital_patient_profile .o_notebook .nav-tabs .nav-link,
+.o_form_sheet.hospital_patient_profile .hospital_patient_tabs .nav-tabs .nav-link,
+.o_form_sheet.hospital_patient_profile .o_notebook .nav-tabs .nav-link {
+    color: #2F5F73 !important;
+}
+
+.hospital_patient_profile .hospital_patient_tabs .nav-tabs .nav-link:hover,
+.hospital_patient_profile .hospital_patient_tabs .nav-tabs .nav-link:focus,
+.hospital_patient_profile .o_notebook .nav-tabs .nav-link:hover,
+.hospital_patient_profile .o_notebook .nav-tabs .nav-link:focus,
+.o_form_sheet.hospital_patient_profile .hospital_patient_tabs .nav-tabs .nav-link:hover,
+.o_form_sheet.hospital_patient_profile .hospital_patient_tabs .nav-tabs .nav-link:focus,
+.o_form_sheet.hospital_patient_profile .o_notebook .nav-tabs .nav-link:hover,
+.o_form_sheet.hospital_patient_profile .o_notebook .nav-tabs .nav-link:focus {
+    background-color: #E6F2EF !important;
+    border-color: #B8D8CF #B8D8CF #DEE2E6 !important;
+    color: #006A4F !important;
+}
+
+.hospital_patient_profile .hospital_patient_tabs .nav-tabs .nav-link.active,
+.hospital_patient_profile .o_notebook .nav-tabs .nav-link.active,
+.o_form_sheet.hospital_patient_profile .hospital_patient_tabs .nav-tabs .nav-link.active,
+.o_form_sheet.hospital_patient_profile .o_notebook .nav-tabs .nav-link.active {
+    border-top: 2px solid #006A4F !important;
+    color: #006A4F !important;
+    font-weight: 600 !important;
+}
+
+@media (max-width: 767.98px) {
+    .hospital_patient_profile .hospital_patient_summary,
+    .o_form_sheet.hospital_patient_profile .hospital_patient_summary {
+        border-left: 0;
+        border-top: 1px solid #E9ECEF;
+        margin-top: 12px;
+        padding-top: 12px;
+    }
+}
+
+/* Task 13B: compact patient profile spacing */
+.hospital_patient_profile .hospital_patient_title,
+.o_form_sheet.hospital_patient_profile .hospital_patient_title {
+    margin-bottom: 6px;
+}
+
+.hospital_patient_profile .hospital_patient_title > label,
+.o_form_sheet.hospital_patient_profile .hospital_patient_title > label {
+    font-size: 12px;
+    margin-bottom: 0;
+}
+
+.hospital_patient_profile .hospital_patient_title h1,
+.o_form_sheet.hospital_patient_profile .hospital_patient_title h1 {
+    margin-top: 0;
+}
+
+.hospital_patient_profile .hospital_patient_name_line .o_field_widget,
+.hospital_patient_profile .hospital_patient_name_line input,
+.o_form_sheet.hospital_patient_profile .hospital_patient_name_line .o_field_widget,
+.o_form_sheet.hospital_patient_profile .hospital_patient_name_line input {
+    font-size: 24px !important;
+    line-height: 1.15;
+}
+
+.hospital_patient_profile .hospital_patient_code,
+.o_form_sheet.hospital_patient_profile .hospital_patient_code {
+    font-size: 14px;
+    margin-top: 0;
+}
+
+.hospital_patient_profile .hospital_patient_header_card,
+.o_form_sheet.hospital_patient_profile .hospital_patient_header_card {
+    margin-bottom: 6px;
+    padding: 8px 14px 6px;
+}
+
+.hospital_patient_profile .hospital_patient_identity,
+.hospital_patient_profile .hospital_patient_summary,
+.o_form_sheet.hospital_patient_profile .hospital_patient_identity,
+.o_form_sheet.hospital_patient_profile .hospital_patient_summary {
+    padding: 0 10px;
+}
+
+.hospital_patient_profile .hospital_patient_identity .o_horizontal_separator,
+.hospital_patient_profile .hospital_patient_summary .o_horizontal_separator,
+.o_form_sheet.hospital_patient_profile .hospital_patient_identity .o_horizontal_separator,
+.o_form_sheet.hospital_patient_profile .hospital_patient_summary .o_horizontal_separator {
+    margin: 0 0 6px;
+    padding-bottom: 4px;
+}
+
+.hospital_patient_profile .hospital_patient_identity .o_inner_group,
+.hospital_patient_profile .hospital_patient_summary .o_inner_group,
+.o_form_sheet.hospital_patient_profile .hospital_patient_identity .o_inner_group,
+.o_form_sheet.hospital_patient_profile .hospital_patient_summary .o_inner_group {
+    margin-bottom: 0;
+}
+
+.hospital_patient_profile .hospital_patient_identity .o_inner_group > tbody > tr > td,
+.hospital_patient_profile .hospital_patient_summary .o_inner_group > tbody > tr > td,
+.o_form_sheet.hospital_patient_profile .hospital_patient_identity .o_inner_group > tbody > tr > td,
+.o_form_sheet.hospital_patient_profile .hospital_patient_summary .o_inner_group > tbody > tr > td {
+    padding-bottom: 2px !important;
+    padding-top: 2px !important;
+}
+
+.hospital_patient_profile .hospital_patient_summary_fields,
+.o_form_sheet.hospital_patient_profile .hospital_patient_summary_fields {
+    width: 62% !important;
+}
+
+.hospital_patient_profile .hospital_patient_summary_photo,
+.o_form_sheet.hospital_patient_profile .hospital_patient_summary_photo {
+    width: 38% !important;
+}
+
+.hospital_patient_profile .hospital_patient_summary_fields .o_inner_group,
+.hospital_patient_profile .hospital_patient_summary_photo .o_inner_group,
+.o_form_sheet.hospital_patient_profile .hospital_patient_summary_fields .o_inner_group,
+.o_form_sheet.hospital_patient_profile .hospital_patient_summary_photo .o_inner_group {
+    margin-bottom: 0 !important;
+}
+
+.hospital_patient_profile .hospital_patient_summary_photo .hospital_patient_photo,
+.o_form_sheet.hospital_patient_profile .hospital_patient_summary_photo .hospital_patient_photo {
+    margin-bottom: 4px !important;
+    margin-top: 0 !important;
+}
+
+.hospital_patient_profile .hospital_patient_photo img,
+.o_form_sheet.hospital_patient_profile .hospital_patient_photo img {
+    height: 124px !important;
+    max-height: 124px;
+    max-width: 124px;
+    width: 124px !important;
+}
+
+.hospital_patient_profile .hospital_patient_tabs,
+.o_form_sheet.hospital_patient_profile .hospital_patient_tabs {
+    margin-top: 4px;
+}
+
+/* Task 21D: Appointment form blueprint polish */
+.hospital_appointment_profile .o_form_sheet,
+.o_form_sheet.hospital_appointment_card {
+    background-color: #FFFFFF !important;
+    border: 1px solid rgba(0, 106, 79, 0.12) !important;
+    border-radius: 10px !important;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.06) !important;
+    margin-top: 10px !important;
+    padding: 18px 22px !important;
+}
+
+.hospital_appointment_profile .o_form_statusbar,
+.hospital_appointment_profile .o_statusbar_status {
+    background-color: #FFFFFF !important;
+}
+
+.hospital_appointment_profile .o_statusbar_status .o_arrow_button_current,
+.hospital_appointment_profile .o_statusbar_status .o_arrow_button_current.disabled,
+.hospital_appointment_profile .o_statusbar_status .o_arrow_button_current:disabled {
+    background-color: #006A4F !important;
+    border-color: #006A4F !important;
+    color: #FFFFFF !important;
+}
+
+.hospital_appointment_profile .o_statusbar_status .o_arrow_button:not(.o_arrow_button_current) {
+    background-color: #F4F7F6 !important;
+    color: #52616B !important;
+}
+
+.hospital_appointment_profile .hospital_appointment_action_primary,
+.hospital_appointment_profile header .btn-primary {
+    background-color: #006A4F !important;
+    border-color: #006A4F !important;
+    color: #FFFFFF !important;
+    font-weight: 600 !important;
+}
+
+.hospital_appointment_profile .hospital_appointment_action_primary:hover,
+.hospital_appointment_profile .hospital_appointment_action_primary:focus,
+.hospital_appointment_profile header .btn-primary:hover,
+.hospital_appointment_profile header .btn-primary:focus {
+    background-color: #005A43 !important;
+    border-color: #005A43 !important;
+    color: #FFFFFF !important;
+}
+
+.hospital_appointment_profile .hospital_appointment_action_secondary {
+    background-color: #F1F3F5 !important;
+    border-color: #DEE2E6 !important;
+    color: #1F2933 !important;
+    font-weight: 500 !important;
+}
+
+.hospital_appointment_profile .hospital_appointment_action_secondary:hover,
+.hospital_appointment_profile .hospital_appointment_action_secondary:focus {
+    background-color: #E6F2EF !important;
+    border-color: rgba(0, 106, 79, 0.28) !important;
+    color: #006A4F !important;
+}
+
+.hospital_appointment_profile .hospital_appointment_header {
+    margin-bottom: 14px;
+}
+
+.hospital_appointment_profile .hospital_appointment_header > label {
+    color: #52616B;
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 2px;
+}
+
+.hospital_appointment_profile .hospital_appointment_header h1 {
+    margin: 0;
+}
+
+.hospital_appointment_profile .hospital_appointment_header h1 .o_field_widget,
+.hospital_appointment_profile .hospital_appointment_header h1 input {
+    border-bottom: 1px solid #C9D2D8 !important;
+    color: #1F2933 !important;
+    font-size: 24px !important;
+    font-weight: 700 !important;
+    line-height: 1.2;
+}
+
+.hospital_appointment_profile .hospital_appointment_summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.hospital_appointment_profile .hospital_summary_chip {
+    align-items: center;
+    background-color: #FFFFFF;
+    border: 1px solid rgba(0, 106, 79, 0.14);
+    border-radius: 8px;
+    display: flex;
+    gap: 12px;
+    min-height: 62px;
+    min-width: 170px;
+    padding: 10px 14px;
+}
+
+.hospital_appointment_profile .hospital_summary_chip .fa,
+.hospital_appointment_profile .hospital_summary_chip i {
+    color: #006A4F;
+    flex: 0 0 auto;
+    font-size: 22px;
+}
+
+.hospital_appointment_profile .hospital_summary_label {
+    color: #52616B;
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.2;
+}
+
+.hospital_appointment_profile .hospital_summary_value,
+.hospital_appointment_profile .hospital_summary_value .o_field_widget,
+.hospital_appointment_profile .hospital_summary_value a {
+    color: #006A4F !important;
+    font-weight: 600 !important;
+    line-height: 1.25;
+}
+
+.hospital_appointment_profile .hospital_appointment_details {
+    border: 1px solid #E3E8EA;
+    border-radius: 8px;
+    margin-bottom: 16px;
+    padding: 14px 18px 8px;
+}
+
+.hospital_appointment_profile .hospital_appointment_details .o_horizontal_separator {
+    color: #1F2933;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
+.hospital_appointment_profile .hospital_appointment_details .o_inner_group {
+    margin-bottom: 0;
+}
+
+.hospital_appointment_profile .hospital_appointment_details .o_inner_group > tbody > tr > td {
+    padding-bottom: 6px !important;
+    padding-top: 6px !important;
+}
+
+.hospital_appointment_profile .hospital_appointment_details .o_td_label label,
+.hospital_appointment_profile .hospital_appointment_notes .o_td_label label {
+    color: #1F2933 !important;
+    font-weight: 600 !important;
+}
+
+.hospital_appointment_profile .hospital_appointment_tabs {
+    margin-top: 6px;
+}
+
+.hospital_appointment_profile .hospital_appointment_tabs .nav-tabs .nav-link,
+.hospital_appointment_profile .o_notebook .nav-tabs .nav-link {
+    color: #52616B !important;
+    font-weight: 500 !important;
+}
+
+.hospital_appointment_profile .hospital_appointment_tabs .nav-tabs .nav-link:hover,
+.hospital_appointment_profile .hospital_appointment_tabs .nav-tabs .nav-link:focus,
+.hospital_appointment_profile .o_notebook .nav-tabs .nav-link:hover,
+.hospital_appointment_profile .o_notebook .nav-tabs .nav-link:focus {
+    background-color: #E6F2EF !important;
+    border-color: #B8D8CF #B8D8CF #DEE2E6 !important;
+    color: #006A4F !important;
+}
+
+.hospital_appointment_profile .hospital_appointment_tabs .nav-tabs .nav-link.active,
+.hospital_appointment_profile .o_notebook .nav-tabs .nav-link.active {
+    border-top: 2px solid #006A4F !important;
+    color: #006A4F !important;
+    font-weight: 700 !important;
+}
+
+.hospital_appointment_profile .hospital_appointment_tabs .tab-content,
+.hospital_appointment_profile .o_notebook .tab-content {
+    border: 1px solid #E3E8EA;
+    border-top: 0;
+    border-radius: 0 0 8px 8px;
+    padding: 14px 18px;
+}
+
+.hospital_appointment_profile .hospital_appointment_notes .o_inner_group {
+    margin-bottom: 0;
+}
+
+.hospital_appointment_profile .hospital_appointment_notes textarea,
+.hospital_appointment_profile .hospital_appointment_notes .o_field_text {
+    min-height: 70px;
+}
+
+@media (max-width: 767.98px) {
+    .hospital_appointment_profile .o_form_sheet,
+    .o_form_sheet.hospital_appointment_card {
+        padding: 14px !important;
+    }
+
+    .hospital_appointment_profile .hospital_summary_chip {
+        width: 100%;
+    }
+
+    .hospital_appointment_profile .hospital_appointment_details {
+        padding: 12px;
+    }
+}
+
+/* Task 21F: Consent form blueprint polish */
+.hospital_consent_profile .o_form_sheet,
+.o_form_sheet.hospital_consent_card {
+    background-color: #FFFFFF !important;
+    border: 1px solid rgba(0, 106, 79, 0.12) !important;
+    border-radius: 10px !important;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.06) !important;
+    margin-top: 10px !important;
+    padding: 18px 22px !important;
+}
+
+.hospital_consent_profile .o_form_statusbar,
+.hospital_consent_profile .o_statusbar_status {
+    background-color: #FFFFFF !important;
+}
+
+.hospital_consent_profile .o_statusbar_status .o_arrow_button_current,
+.hospital_consent_profile .o_statusbar_status .o_arrow_button_current.disabled,
+.hospital_consent_profile .o_statusbar_status .o_arrow_button_current:disabled {
+    background-color: #006A4F !important;
+    border-color: #006A4F !important;
+    color: #FFFFFF !important;
+}
+
+.hospital_consent_profile .o_statusbar_status .o_arrow_button:not(.o_arrow_button_current) {
+    background-color: #F4F7F6 !important;
+    color: #52616B !important;
+}
+
+.hospital_consent_profile .hospital_consent_action_primary,
+.hospital_consent_profile header .btn-primary {
+    background-color: #006A4F !important;
+    border-color: #006A4F !important;
+    color: #FFFFFF !important;
+    font-weight: 600 !important;
+}
+
+.hospital_consent_profile .hospital_consent_action_primary:hover,
+.hospital_consent_profile .hospital_consent_action_primary:focus,
+.hospital_consent_profile header .btn-primary:hover,
+.hospital_consent_profile header .btn-primary:focus {
+    background-color: #005A43 !important;
+    border-color: #005A43 !important;
+    color: #FFFFFF !important;
+}
+
+.hospital_consent_profile .hospital_consent_action_secondary {
+    background-color: #F1F3F5 !important;
+    border-color: #DEE2E6 !important;
+    color: #1F2933 !important;
+    font-weight: 500 !important;
+}
+
+.hospital_consent_profile .hospital_consent_action_secondary:hover,
+.hospital_consent_profile .hospital_consent_action_secondary:focus {
+    background-color: #E6F2EF !important;
+    border-color: rgba(0, 106, 79, 0.28) !important;
+    color: #006A4F !important;
+}
+
+.hospital_consent_profile .hospital_consent_header {
+    align-items: center;
+    display: flex;
+    gap: 14px;
+    margin-bottom: 16px;
+}
+
+.hospital_consent_profile .hospital_consent_icon {
+    align-items: center;
+    background-color: rgba(0, 106, 79, 0.08);
+    border-radius: 10px;
+    color: #006A4F;
+    display: flex;
+    flex: 0 0 58px;
+    font-size: 28px;
+    height: 58px;
+    justify-content: center;
+    width: 58px;
+}
+
+.hospital_consent_profile .hospital_consent_code {
+    margin: 0 0 4px;
+}
+
+.hospital_consent_profile .hospital_consent_code .o_field_widget,
+.hospital_consent_profile .hospital_consent_code input {
+    border-bottom: 0 !important;
+    color: #1F2933 !important;
+    font-size: 24px !important;
+    font-weight: 700 !important;
+    line-height: 1.2;
+}
+
+.hospital_consent_profile .hospital_consent_subtitle,
+.hospital_consent_profile .hospital_consent_subtitle .o_field_widget,
+.hospital_consent_profile .hospital_consent_subtitle a {
+    color: #1F2933 !important;
+    font-size: 14px !important;
+    line-height: 1.35;
+}
+
+.hospital_consent_profile .hospital_consent_subtitle a {
+    color: #006A4F !important;
+    font-weight: 600 !important;
+}
+
+.hospital_consent_profile .hospital_consent_summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.hospital_consent_profile .hospital_summary_chip {
+    align-items: center;
+    background-color: #FFFFFF;
+    border: 1px solid rgba(0, 106, 79, 0.14);
+    border-radius: 8px;
+    display: flex;
+    flex: 1 1 210px;
+    gap: 12px;
+    min-height: 64px;
+    padding: 10px 14px;
+}
+
+.hospital_consent_profile .hospital_summary_chip .fa,
+.hospital_consent_profile .hospital_summary_chip i {
+    align-items: center;
+    background-color: rgba(0, 106, 79, 0.08);
+    border-radius: 50%;
+    color: #006A4F;
+    display: flex;
+    flex: 0 0 42px;
+    font-size: 20px;
+    height: 42px;
+    justify-content: center;
+    width: 42px;
+}
+
+.hospital_consent_profile .hospital_summary_label {
+    color: #52616B;
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.2;
+}
+
+.hospital_consent_profile .hospital_summary_value,
+.hospital_consent_profile .hospital_summary_value .o_field_widget,
+.hospital_consent_profile .hospital_summary_value a {
+    color: #006A4F !important;
+    font-weight: 600 !important;
+    line-height: 1.25;
+}
+
+.hospital_consent_profile .hospital_consent_details {
+    border: 1px solid #E3E8EA;
+    border-radius: 8px;
+    margin-bottom: 16px;
+    padding: 14px 18px 8px;
+}
+
+.hospital_consent_profile .hospital_consent_details .o_horizontal_separator {
+    color: #1F2933;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
+.hospital_consent_profile .hospital_consent_details .o_group {
+    margin-bottom: 0;
+}
+
+.hospital_consent_profile .hospital_consent_details .o_inner_group {
+    margin-bottom: 0;
+}
+
+.hospital_consent_profile .hospital_consent_details .o_inner_group > tbody > tr > td {
+    padding-bottom: 6px !important;
+    padding-top: 6px !important;
+}
+
+.hospital_consent_profile .hospital_consent_details .o_td_label label,
+.hospital_consent_profile .hospital_consent_notes .o_td_label label {
+    color: #1F2933 !important;
+    font-weight: 600 !important;
+}
+
+.hospital_consent_profile .hospital_consent_tabs {
+    margin-top: 6px;
+}
+
+.hospital_consent_profile .hospital_consent_tabs .nav-tabs .nav-link,
+.hospital_consent_profile .o_notebook .nav-tabs .nav-link {
+    color: #52616B !important;
+    font-weight: 500 !important;
+}
+
+.hospital_consent_profile .hospital_consent_tabs .nav-tabs .nav-link:hover,
+.hospital_consent_profile .hospital_consent_tabs .nav-tabs .nav-link:focus,
+.hospital_consent_profile .o_notebook .nav-tabs .nav-link:hover,
+.hospital_consent_profile .o_notebook .nav-tabs .nav-link:focus {
+    background-color: #E6F2EF !important;
+    border-color: #B8D8CF #B8D8CF #DEE2E6 !important;
+    color: #006A4F !important;
+}
+
+.hospital_consent_profile .hospital_consent_tabs .nav-tabs .nav-link.active,
+.hospital_consent_profile .o_notebook .nav-tabs .nav-link.active {
+    border-top: 2px solid #006A4F !important;
+    color: #006A4F !important;
+    font-weight: 700 !important;
+}
+
+.hospital_consent_profile .hospital_consent_tabs .tab-content,
+.hospital_consent_profile .o_notebook .tab-content {
+    border: 1px solid #E3E8EA;
+    border-top: 0;
+    border-radius: 0 0 8px 8px;
+    padding: 14px 18px;
+}
+
+.hospital_consent_profile .hospital_consent_notes .o_inner_group {
+    margin-bottom: 0;
+}
+
+.hospital_consent_profile .hospital_consent_notes textarea,
+.hospital_consent_profile .hospital_consent_notes .o_field_text {
+    min-height: 70px;
+}
+
+@media (max-width: 767.98px) {
+    .hospital_consent_profile .o_form_sheet,
+    .o_form_sheet.hospital_consent_card {
+        padding: 14px !important;
+    }
+
+    .hospital_consent_profile .hospital_consent_header {
+        align-items: flex-start;
+    }
+
+    .hospital_consent_profile .hospital_summary_chip {
+        flex-basis: 100%;
+    }
+
+    .hospital_consent_profile .hospital_consent_details {
+        padding: 12px;
+    }
+}
+
+/* Patient Diagnosis UI Pattern V1 */
+.hospital_diagnosis_profile {
+    --hospital-dx-primary: #006A4F;
+    --hospital-dx-primary-dark: #005A43;
+    --hospital-dx-primary-soft: rgba(0, 106, 79, 0.08);
+    --hospital-dx-border: #DFE7E3;
+    --hospital-dx-card: #FFFFFF;
+    --hospital-dx-page: #F7FAF9;
+    --hospital-dx-text: #1F2933;
+    --hospital-dx-muted: #6B7280;
+}
+
+.hospital_diagnosis_profile .o_form_sheet,
+.o_form_sheet.hospital_diagnosis_card {
+    background-color: var(--hospital-dx-page) !important;
+    border: 1px solid var(--hospital-dx-border) !important;
+    border-radius: 10px !important;
+    box-shadow: 0 6px 18px rgba(31, 41, 51, 0.06) !important;
+    color: var(--hospital-dx-text);
+    margin-top: 10px !important;
+    max-width: none !important;
+    padding: 16px 18px 18px !important;
+}
+
+.hospital_diagnosis_profile .hospital_diagnosis_header {
+    align-items: center;
+    display: flex;
+    gap: 14px;
+    margin-bottom: 10px;
+}
+
+.hospital_diagnosis_profile .hospital_diagnosis_icon {
+    align-items: center;
+    background-color: var(--hospital-dx-primary-soft);
+    border-radius: 10px;
+    color: var(--hospital-dx-primary);
+    display: flex;
+    flex: 0 0 54px;
+    font-size: 26px;
+    height: 54px;
+    justify-content: center;
+    width: 54px;
+}
+
+.hospital_diagnosis_profile .hospital_diagnosis_title {
+    color: var(--hospital-dx-text);
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.hospital_diagnosis_profile .hospital_diagnosis_subtitle {
+    color: var(--hospital-dx-muted);
+    font-size: 13px;
+    margin-top: 2px;
+}
+
+.hospital_diagnosis_profile .hospital_diagnosis_kpi_row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.hospital_diagnosis_profile .hospital_diagnosis_kpi_card {
+    align-items: center;
+    background-color: var(--hospital-dx-card);
+    border: 1px solid var(--hospital-dx-border);
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(31, 41, 51, 0.04);
+    display: flex;
+    flex: 1 1 180px;
+    gap: 10px;
+    min-height: 70px;
+    min-width: 0;
+    padding: 9px 12px;
+}
+
+.hospital_diagnosis_profile .hospital_diagnosis_kpi_icon {
+    align-items: center;
+    background-color: var(--hospital-dx-primary-soft);
+    border-radius: 8px;
+    color: var(--hospital-dx-primary);
+    display: flex;
+    flex: 0 0 38px;
+    font-size: 19px;
+    height: 38px;
+    justify-content: center;
+    width: 38px;
+}
+
+.hospital_diagnosis_profile .hospital_diagnosis_kpi_content {
+    min-width: 0;
+}
+
+.hospital_diagnosis_profile .hospital_diagnosis_kpi_label {
+    align-items: center;
+    color: var(--hospital-dx-muted);
+    display: flex;
+    font-size: 11px;
+    font-weight: 600;
+    gap: 4px;
+    line-height: 1.2;
+    margin-bottom: 3px;
+}
+
+.hospital_diagnosis_profile .hospital_diagnosis_kpi_label .fa {
+    color: var(--hospital-dx-primary);
+    font-size: 10px;
+}
+
+.hospital_diagnosis_profile .hospital_diagnosis_kpi_value,
+.hospital_diagnosis_profile .hospital_diagnosis_kpi_value .o_field_widget,
+.hospital_diagnosis_profile .hospital_diagnosis_kpi_value a {
+    color: var(--hospital-dx-text) !important;
+    font-size: 13px;
+    font-weight: 600 !important;
+    line-height: 1.25;
+    max-width: 100%;
+}
+
+.hospital_diagnosis_profile .hospital_diagnosis_status_kpi .hospital_diagnosis_kpi_value,
+.hospital_diagnosis_profile .hospital_diagnosis_status_kpi .hospital_diagnosis_kpi_value .o_field_widget {
+    color: var(--hospital-dx-primary) !important;
+}
+
+.hospital_diagnosis_profile .hospital_diagnosis_main_card {
+    background-color: var(--hospital-dx-card);
+    border: 1px solid var(--hospital-dx-border);
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(31, 41, 51, 0.04);
+    margin-bottom: 8px;
+    padding: 12px 16px;
+}
+
+.hospital_diagnosis_profile .hospital_diagnosis_card {
+    background-color: var(--hospital-dx-card);
+    border: 1px solid var(--hospital-dx-border);
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(31, 41, 51, 0.04);
+    min-width: 0;
+    padding: 12px 16px;
+}
+
+.hospital_diagnosis_profile .hospital_diagnosis_card_title {
+    align-items: center;
+    border-bottom: 1px solid var(--hospital-dx-border);
+    color: var(--hospital-dx-primary);
+    display: flex;
+    font-size: 13px;
+    font-weight: 700;
+    gap: 8px;
+    letter-spacing: 0.02em;
+    margin-bottom: 8px;
+    padding-bottom: 7px;
+    text-transform: uppercase;
+}
+
+.hospital_diagnosis_profile .hospital_diagnosis_card_title > i {
+    color: var(--hospital-dx-primary);
+    font-size: 15px;
+}
+
+.hospital_diagnosis_profile .hospital_diagnosis_compact_group,
+.hospital_diagnosis_profile .hospital_diagnosis_compact_group .o_inner_group {
+    margin-bottom: 0 !important;
+}
+
+.hospital_diagnosis_profile .hospital_diagnosis_compact_group .o_inner_group > tbody > tr > td {
+    padding-bottom: 3px !important;
+    padding-top: 3px !important;
+}
+
+.hospital_diagnosis_profile .hospital_diagnosis_compact_group .o_td_label label {
+    color: var(--hospital-dx-text) !important;
+    font-weight: 500 !important;
+}
+
+.hospital_diagnosis_profile .hospital_diagnosis_lower_grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin-bottom: 12px;
+}
+
+.hospital_diagnosis_profile .hospital_diagnosis_notes_group {
+    background-color: rgba(0, 106, 79, 0.04);
+    border: 1px solid var(--hospital-dx-border);
+    border-radius: 8px;
+    padding: 4px 8px;
+}
+
+.hospital_diagnosis_profile .hospital_diagnosis_notes_group .o_inner_group > tbody > tr > td {
+    padding-bottom: 6px !important;
+    padding-top: 6px !important;
+}
+
+.hospital_diagnosis_profile .hospital_diagnosis_notes_group textarea,
+.hospital_diagnosis_profile .hospital_diagnosis_notes_group .o_field_text {
+    background-color: transparent;
+    border: none !important;
+    box-shadow: none !important;
+    line-height: 1.65;
+    min-height: 90px;
+    padding: 4px 2px;
+    resize: vertical;
+    width: 100%;
+}
+
+/* Severity — amber pill only in readonly view and badge widget */
+.hospital_diagnosis_profile [name="severity"].o_readonly_modifier .o_field_widget,
+.hospital_diagnosis_profile .o_readonly_modifier[name="severity"] .o_field_widget,
+.hospital_diagnosis_profile [name="severity"] .o_field_badge,
+.hospital_diagnosis_profile .o_field_badge[name="severity"] {
+    background-color: #FEF3C7;
+    border-radius: 12px;
+    color: #92400E;
+    display: inline-block !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    line-height: 1.5;
+    padding: 2px 10px !important;
+}
+
+/* Status — emerald text in main card (readonly only), emerald pill in lower cards */
+.hospital_diagnosis_profile .hospital_diagnosis_main_card [name="status"].o_readonly_modifier .o_field_widget,
+.hospital_diagnosis_profile .hospital_diagnosis_main_card .o_readonly_modifier[name="status"] .o_field_widget {
+    color: var(--hospital-dx-primary) !important;
+    font-weight: 600 !important;
+}
+
+.hospital_diagnosis_profile .hospital_diagnosis_lower_grid [name="status"] .o_field_badge,
+.hospital_diagnosis_profile .hospital_diagnosis_lower_grid .o_field_badge[name="status"],
+.hospital_diagnosis_profile .hospital_diagnosis_lower_grid [name="status"].o_readonly_modifier .o_field_widget,
+.hospital_diagnosis_profile .hospital_diagnosis_lower_grid .o_readonly_modifier[name="status"] .o_field_widget {
+    background-color: #D1FAE5 !important;
+    border-radius: 12px;
+    color: #065F46 !important;
+    display: inline-block !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    line-height: 1.5;
+    padding: 2px 10px !important;
+}
+
+.hospital_diagnosis_profile .hospital_diagnosis_info_notice {
+    align-items: flex-start;
+    background-color: var(--hospital-dx-primary-soft);
+    border: 1px solid rgba(0, 106, 79, 0.14);
+    border-radius: 8px;
+    color: var(--hospital-dx-primary);
+    display: flex;
+    font-size: 12px;
+    font-weight: 500;
+    gap: 8px;
+    margin-top: 4px;
+    padding: 10px 14px;
+}
+
+.hospital_diagnosis_profile .hospital_diagnosis_info_notice .fa {
+    flex: 0 0 auto;
+    font-size: 15px;
+    margin-top: 1px;
+}
+
+@media (max-width: 991.98px) {
+    .hospital_diagnosis_profile .hospital_diagnosis_lower_grid {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    }
+
+    .hospital_diagnosis_profile .hospital_diagnosis_kpi_card {
+        flex-basis: calc(50% - 10px);
+    }
+}
+
+@media (max-width: 575.98px) {
+    .hospital_diagnosis_profile .o_form_sheet,
+    .o_form_sheet.hospital_diagnosis_card {
+        padding: 12px !important;
+    }
+
+    .hospital_diagnosis_profile .hospital_diagnosis_lower_grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .hospital_diagnosis_profile .hospital_diagnosis_kpi_card {
+        flex-basis: 100%;
+    }
+}
+
+/* Patient Profile Dashboard V2 — scoped to the patient form only */
+.hospital_patient_profile {
+    --hospital-pt-primary: #006A4F;
+    --hospital-pt-primary-dark: #005A43;
+    --hospital-pt-primary-soft: rgba(0, 106, 79, 0.08);
+    --hospital-pt-border: #DFE7E3;
+    --hospital-pt-card: #FFFFFF;
+    --hospital-pt-page: #F7FAF9;
+    --hospital-pt-text: #1F2933;
+    --hospital-pt-muted: #6B7280;
+}
+
+.hospital_patient_profile .o_form_sheet,
+.o_form_sheet.hospital_patient_profile {
+    background-color: var(--hospital-pt-page) !important;
+    border: 1px solid var(--hospital-pt-border) !important;
+    border-radius: 10px !important;
+    box-shadow: 0 6px 18px rgba(31, 41, 51, 0.06) !important;
+    color: var(--hospital-pt-text);
+    margin-top: 10px !important;
+    max-width: none !important;
+    padding: 14px 16px 16px !important;
+}
+
+/* Hero / profile header */
+.hospital_patient_profile .hospital_pt_hero {
+    align-items: flex-start;
+    background-color: var(--hospital-pt-card);
+    border: 1px solid var(--hospital-pt-border);
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(31, 41, 51, 0.04);
+    display: flex;
+    gap: 16px;
+    margin-bottom: 10px;
+    padding: 14px 16px;
+}
+
+.hospital_patient_profile .hospital_pt_hero_photo {
+    flex: 0 0 auto;
+}
+
+.hospital_patient_profile .hospital_pt_hero_photo .oe_avatar {
+    float: none !important;
+    margin: 0 !important;
+}
+
+.hospital_patient_profile .hospital_pt_hero_photo img {
+    background-color: var(--hospital-pt-primary-soft);
+    border: 1px solid var(--hospital-pt-border);
+    border-radius: 10px;
+    object-fit: cover;
+}
+
+.hospital_patient_profile .hospital_pt_hero_main {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.hospital_patient_profile .hospital_pt_hero .hospital_patient_title {
+    margin-bottom: 2px;
+}
+
+.hospital_patient_profile .hospital_pt_hero_meta {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.hospital_patient_profile .hospital_pt_hero_meta .hospital_patient_code,
+.hospital_patient_profile .hospital_pt_hero_meta .hospital_patient_code .o_field_widget {
+    color: var(--hospital-pt-primary) !important;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+}
+
+.hospital_patient_profile .hospital_pt_badge {
+    align-items: center;
+    border-radius: 12px;
+    display: inline-flex;
+    font-size: 11px;
+    font-weight: 600;
+    gap: 5px;
+    line-height: 1.4;
+    padding: 2px 10px;
+}
+
+.hospital_patient_profile .hospital_pt_badge_active {
+    background-color: #D1FAE5;
+    color: #065F46;
+}
+
+.hospital_patient_profile .hospital_pt_badge_archived {
+    background-color: #F3F4F6;
+    color: #6B7280;
+}
+
+/* Quick-fact chips */
+.hospital_patient_profile .hospital_pt_hero_facts {
+    display: grid;
+    gap: 8px;
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    margin-bottom: 8px;
+}
+
+.hospital_patient_profile .hospital_pt_fact {
+    align-items: center;
+    background-color: var(--hospital-pt-page);
+    border: 1px solid var(--hospital-pt-border);
+    border-radius: 8px;
+    display: flex;
+    gap: 9px;
+    min-width: 0;
+    padding: 7px 10px;
+}
+
+.hospital_patient_profile .hospital_pt_fact_icon {
+    align-items: center;
+    background-color: var(--hospital-pt-primary-soft);
+    border-radius: 7px;
+    color: var(--hospital-pt-primary);
+    display: flex;
+    flex: 0 0 30px;
+    font-size: 14px;
+    height: 30px;
+    justify-content: center;
+    width: 30px;
+}
+
+.hospital_patient_profile .hospital_pt_fact_content {
+    min-width: 0;
+}
+
+.hospital_patient_profile .hospital_pt_fact_label {
+    color: var(--hospital-pt-muted);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    line-height: 1.2;
+    text-transform: uppercase;
+}
+
+.hospital_patient_profile .hospital_pt_fact_value,
+.hospital_patient_profile .hospital_pt_fact_value .o_field_widget {
+    align-items: baseline;
+    color: var(--hospital-pt-text) !important;
+    display: flex;
+    flex-wrap: wrap;
+    font-size: 13px;
+    font-weight: 600;
+    gap: 3px;
+    line-height: 1.3;
+    min-width: 0;
+}
+
+.hospital_patient_profile .hospital_pt_fact_value a {
+    color: var(--hospital-pt-primary) !important;
+    font-weight: 600;
+}
+
+.hospital_patient_profile .hospital_pt_fact_unit {
+    color: var(--hospital-pt-muted);
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.hospital_patient_profile .hospital_pt_hero_tags {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.hospital_patient_profile .hospital_pt_hero_tags .o_field_many2many_tags .badge {
+    border-radius: 10px;
+    font-size: 11px;
+}
+
+.hospital_patient_profile .hospital_pt_alert_tags .badge {
+    background-color: #FEE2E2 !important;
+    color: #991B1B !important;
+}
+
+/* Hero right contact panel */
+.hospital_patient_profile .hospital_pt_hero_contact {
+    align-self: stretch;
+    border-inline-start: 1px solid var(--hospital-pt-border);
+    display: flex;
+    flex: 0 0 250px;
+    flex-direction: column;
+    gap: 12px;
+    justify-content: center;
+    min-width: 0;
+    padding-inline-start: 18px;
+}
+
+.hospital_patient_profile .hospital_pt_contact_row {
+    align-items: flex-start;
+    color: var(--hospital-pt-text);
+    display: flex;
+    font-size: 13px;
+    font-weight: 500;
+    gap: 10px;
+    min-width: 0;
+}
+
+.hospital_patient_profile .hospital_pt_contact_row > .fa {
+    color: var(--hospital-pt-primary);
+    flex: 0 0 16px;
+    font-size: 14px;
+    margin-top: 2px;
+    text-align: center;
+}
+
+.hospital_patient_profile .hospital_pt_contact_row .o_field_widget {
+    color: var(--hospital-pt-text) !important;
+    font-weight: 500;
+    min-width: 0;
+}
+
+.hospital_patient_profile .hospital_pt_contact_row a {
+    color: var(--hospital-pt-primary) !important;
+}
+
+.hospital_patient_profile .hospital_pt_contact_addr {
+    min-width: 0;
+}
+
+.hospital_patient_profile .hospital_pt_contact_addr_line {
+    color: var(--hospital-pt-muted);
+    display: flex;
+    flex-wrap: wrap;
+    font-size: 12px;
+    gap: 4px;
+}
+
+/* Patient name input without underline for a cleaner hero */
+.hospital_patient_profile .hospital_patient_name_line input,
+.hospital_patient_profile .hospital_patient_name_line .o_input {
+    border: none !important;
+    box-shadow: none !important;
+    padding-left: 0;
+}
+
+/* Smart summary KPI cards (in-sheet buttons mirroring the stat button actions) */
+.hospital_patient_profile .hospital_pt_kpi_grid {
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    margin-bottom: 10px;
+}
+
+.hospital_patient_profile button.hospital_pt_kpi {
+    align-items: center;
+    background-color: var(--hospital-pt-card) !important;
+    border: 1px solid var(--hospital-pt-border) !important;
+    border-radius: 8px !important;
+    box-shadow: 0 2px 8px rgba(31, 41, 51, 0.04);
+    color: var(--hospital-pt-text) !important;
+    display: flex;
+    gap: 12px;
+    justify-content: flex-start;
+    min-height: 64px;
+    min-width: 0;
+    padding: 10px 14px !important;
+    text-align: left;
+    width: 100%;
+}
+
+.hospital_patient_profile button.hospital_pt_kpi:hover,
+.hospital_patient_profile button.hospital_pt_kpi:focus {
+    background-color: #E6F2EF !important;
+    border-color: var(--hospital-pt-primary) !important;
+    box-shadow: 0 3px 10px rgba(0, 106, 79, 0.12);
+}
+
+.hospital_patient_profile .hospital_pt_kpi_icon {
+    align-items: center;
+    background-color: var(--hospital-pt-primary-soft);
+    border-radius: 8px;
+    color: var(--hospital-pt-primary);
+    display: flex;
+    flex: 0 0 40px;
+    font-size: 18px;
+    height: 40px;
+    justify-content: center;
+    width: 40px;
+}
+
+.hospital_patient_profile .hospital_pt_kpi_info {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.2;
+    min-width: 0;
+}
+
+.hospital_patient_profile .hospital_pt_kpi_value,
+.hospital_patient_profile .hospital_pt_kpi_value .o_field_widget {
+    color: var(--hospital-pt-text) !important;
+    font-size: 17px;
+    font-weight: 700;
+}
+
+.hospital_patient_profile .hospital_pt_kpi_label {
+    color: var(--hospital-pt-muted);
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+/* Overview strip — emerald info band, visually distinct from the clickable white cards */
+.hospital_patient_profile .hospital_pt_overview {
+    background: linear-gradient(135deg, var(--hospital-pt-primary) 0%, var(--hospital-pt-primary-dark) 100%);
+    border: 1px solid var(--hospital-pt-primary-dark);
+    border-radius: 8px;
+    box-shadow: 0 3px 12px rgba(0, 106, 79, 0.18);
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    margin-bottom: 10px;
+    padding: 8px 0;
+}
+
+.hospital_patient_profile .hospital_pt_ov_item {
+    align-items: flex-start;
+    border-inline-start: 1px solid rgba(255, 255, 255, 0.18);
+    display: flex;
+    gap: 10px;
+    min-width: 0;
+    padding: 6px 16px;
+}
+
+.hospital_patient_profile .hospital_pt_ov_item:first-child {
+    border-inline-start: none;
+}
+
+.hospital_patient_profile .hospital_pt_ov_icon {
+    align-items: center;
+    background-color: rgba(255, 255, 255, 0.16);
+    border-radius: 50%;
+    color: #FFFFFF;
+    display: flex;
+    flex: 0 0 34px;
+    font-size: 14px;
+    height: 34px;
+    justify-content: center;
+    width: 34px;
+}
+
+.hospital_patient_profile .hospital_pt_ov_icon_alert {
+    background-color: #FEE2E2;
+    color: #DC2626;
+}
+
+.hospital_patient_profile .hospital_pt_ov_content {
+    min-width: 0;
+}
+
+.hospital_patient_profile .hospital_pt_ov_label {
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    line-height: 1.3;
+    text-transform: uppercase;
+}
+
+.hospital_patient_profile .hospital_pt_ov_value,
+.hospital_patient_profile .hospital_pt_ov_value .o_field_widget {
+    color: #FFFFFF !important;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.3;
+}
+
+.hospital_patient_profile .hospital_pt_ov_sub,
+.hospital_patient_profile .hospital_pt_ov_sub .o_field_widget,
+.hospital_patient_profile .hospital_pt_ov_sub a {
+    color: rgba(255, 255, 255, 0.78) !important;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.3;
+}
+
+/* Information cards inside notebook tabs */
+.hospital_patient_profile .hospital_pt_tab_grid {
+    align-items: start;
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.hospital_patient_profile .hospital_pt_card {
+    background-color: var(--hospital-pt-card);
+    border: 1px solid var(--hospital-pt-border);
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(31, 41, 51, 0.04);
+    min-width: 0;
+    padding: 12px 16px;
+}
+
+.hospital_patient_profile .hospital_pt_card_title {
+    align-items: center;
+    border-bottom: 1px solid var(--hospital-pt-border);
+    color: var(--hospital-pt-primary);
+    display: flex;
+    flex-wrap: wrap;
+    font-size: 13px;
+    font-weight: 700;
+    gap: 8px;
+    letter-spacing: 0.02em;
+    margin-bottom: 8px;
+    padding-bottom: 7px;
+    text-transform: uppercase;
+}
+
+.hospital_patient_profile .hospital_pt_card_title > i {
+    color: var(--hospital-pt-primary);
+    font-size: 15px;
+}
+
+.hospital_patient_profile .hospital_pt_card_subtitle {
+    align-items: center;
+    color: var(--hospital-pt-text);
+    display: flex;
+    font-size: 12px;
+    font-weight: 700;
+    gap: 7px;
+    margin: 10px 0 6px;
+}
+
+.hospital_patient_profile .hospital_pt_card_subtitle > i {
+    color: var(--hospital-pt-primary);
+    font-size: 13px;
+}
+
+.hospital_patient_profile .hospital_pt_compact_group,
+.hospital_patient_profile .hospital_pt_compact_group .o_inner_group {
+    margin-bottom: 0 !important;
+}
+
+.hospital_patient_profile .hospital_pt_compact_group .o_inner_group > tbody > tr > td {
+    padding-bottom: 3px !important;
+    padding-top: 3px !important;
+}
+
+.hospital_patient_profile .hospital_pt_compact_group .o_td_label label {
+    color: var(--hospital-pt-text) !important;
+    font-weight: 500 !important;
+}
+
+/* Emergency contact card title accent */
+.hospital_patient_profile .hospital_pt_card_title_alert,
+.hospital_patient_profile .hospital_pt_card_title_alert > i {
+    color: #DC2626;
+}
+
+/* Notebook wrapped as a card with emerald active tab */
+.hospital_patient_profile .hospital_patient_tabs,
+.o_form_sheet.hospital_patient_profile .hospital_patient_tabs {
+    background-color: var(--hospital-pt-card);
+    border: 1px solid var(--hospital-pt-border);
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(31, 41, 51, 0.04);
+    margin-top: 0;
+    padding: 4px 14px 12px;
+}
+
+.hospital_patient_profile .hospital_patient_tabs .nav-tabs .nav-link {
+    color: var(--hospital-pt-muted);
+    font-weight: 600;
+}
+
+.hospital_patient_profile .hospital_patient_tabs .nav-tabs .nav-link.active {
+    background-color: transparent;
+    border-bottom: 2px solid var(--hospital-pt-primary);
+    color: var(--hospital-pt-primary);
+}
+
+.hospital_patient_profile .hospital_patient_tabs .tab-content {
+    padding-top: 12px;
+}
+
+/* Responsive behaviour */
+@media (max-width: 1399.98px) {
+    .hospital_patient_profile .hospital_pt_kpi_grid,
+    .hospital_patient_profile .hospital_pt_overview {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .hospital_patient_profile .hospital_pt_overview .hospital_pt_ov_item {
+        border-inline-start: none;
+    }
+}
+
+@media (max-width: 991.98px) {
+    .hospital_patient_profile .hospital_pt_kpi_grid,
+    .hospital_patient_profile .hospital_pt_overview {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .hospital_patient_profile .hospital_pt_hero {
+        flex-wrap: wrap;
+    }
+
+    .hospital_patient_profile .hospital_pt_hero_contact {
+        border-inline-start: none;
+        border-top: 1px solid var(--hospital-pt-border);
+        flex: 1 1 100%;
+        padding-inline-start: 0;
+        padding-top: 12px;
+    }
+}
+
+@media (max-width: 767.98px) {
+    .hospital_patient_profile .hospital_pt_hero {
+        flex-direction: column;
+    }
+
+    .hospital_patient_profile .hospital_pt_kpi_grid,
+    .hospital_patient_profile .hospital_pt_overview {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}

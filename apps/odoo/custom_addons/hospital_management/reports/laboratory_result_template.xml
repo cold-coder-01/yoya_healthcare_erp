@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+  <template id="report_laboratory_result">
+    <t t-call="web.html_container">
+        <t t-foreach="docs" t-as="doc">
+            <t t-call="web.internal_layout">
+                <div class="page">
+                    <t t-set="report_title" t-value="'Laboratory Result Report'"/>
+                    <t t-set="report_ref_label" t-value="'Result Ref'"/>
+                    <t t-set="report_ref" t-value="doc.name"/>
+                    <t t-set="report_date_label" t-value="'Result Date'"/>
+                    <t t-set="report_date" t-value="doc.result_date"/>
+                    <t t-call="hospital_management.hospital_report_header"/>
+
+                    <div class="row mb-4">
+                        <div class="col-6">
+                            <strong style="color: #006A4F;">Patient Information</strong>
+                            <p>
+                                <strong>Patient:</strong>
+                                <span t-field="doc.patient_id.name" />
+                            </p>
+                            <p>
+                                <strong>Patient Code:</strong>
+                                <span t-field="doc.patient_id.identification_code" />
+                            </p>
+                        </div>
+                        <div class="col-6">
+                            <strong style="color: #006A4F;">Result Details</strong>
+                            <p>
+                                <strong>Request Reference:</strong>
+                                <span t-field="doc.request_id.name" />
+                            </p>
+                            <p>
+                                <strong>Physician:</strong>
+                                <span t-field="doc.physician_id.name" />
+                            </p>
+                            <p>
+                                <strong>Lab Technician:</strong>
+                                <span t-field="doc.lab_technician_id.name" />
+                            </p>
+                            <p>
+                                <strong>State:</strong>
+                                <span t-field="doc.state" />
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h4 style="color: #006A4F;">Result Lines</h4>
+                            <table class="table table-bordered">
+                                <thead>
+                                    <tr style="background-color: #F3F8F6;">
+                                        <th>Test</th>
+                                        <th>Sample Type</th>
+                                        <th>Result Value</th>
+                                        <th>Unit</th>
+                                        <th>Reference Range</th>
+                                        <th>Flag</th>
+                                        <th>Notes</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <t t-foreach="doc.line_ids" t-as="line">
+                                        <tr>
+                                            <td>
+                                                <span t-field="line.test_id.name" />
+                                            </td>
+                                            <td>
+                                                <span t-field="line.sample_type" />
+                                            </td>
+                                            <td>
+                                                <span t-field="line.result_value" />
+                                            </td>
+                                            <td>
+                                                <span t-field="line.unit" />
+                                            </td>
+                                            <td>
+                                                <span t-field="line.reference_range" />
+                                            </td>
+                                            <td>
+                                                <span t-field="line.abnormal_flag" />
+                                            </td>
+                                            <td>
+                                                <span t-field="line.notes" />
+                                            </td>
+                                        </tr>
+                                    </t>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <t t-if="doc.interpretation">
+                        <div class="row mb-4">
+                            <div class="col-12">
+                                <h4 style="color: #006A4F;">Interpretation</h4>
+                                <p>
+                                    <span t-field="doc.interpretation" />
+                                </p>
+                            </div>
+                        </div>
+                    </t>
+
+                    <t t-if="doc.remarks">
+                        <div class="row mb-4">
+                            <div class="col-12">
+                                <h4 style="color: #006A4F;">Remarks</h4>
+                                <p>
+                                    <span t-field="doc.remarks" />
+                                </p>
+                            </div>
+                        </div>
+                    </t>
+
+                    <hr />
+
+                    <div class="row">
+                        <div class="col-12">
+                            <p style="font-size: 10px; color: #666;">
+                                This report is generated from YOYA Hospital Ethiopian Hospital ERP.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </t>
+        </t>
+    </t>
+  </template>
+</odoo>
+
+

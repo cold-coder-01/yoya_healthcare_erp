@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_audit_log_list" model="ir.ui.view">
+        <field name="name">hospital.audit.log.list</field>
+        <field name="model">hospital.audit.log</field>
+        <field name="arch" type="xml">
+            <list string="Audit Logs" create="0" edit="0" delete="0">
+                <field name="action_date"/>
+                <field name="user_id"/>
+                <field name="patient_id"/>
+                <field name="model_name"/>
+                <field name="record_id"/>
+                <field name="action_type"/>
+                <field name="description"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_audit_log_form" model="ir.ui.view">
+        <field name="name">hospital.audit.log.form</field>
+        <field name="model">hospital.audit.log</field>
+        <field name="arch" type="xml">
+            <form string="Audit Log" create="0" edit="0" delete="0">
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="user_id" readonly="1"/>
+                            <field name="patient_id" readonly="1"/>
+                            <field name="model_name" readonly="1"/>
+                            <field name="record_id" readonly="1"/>
+                            <field name="action_type" readonly="1"/>
+                        </group>
+                        <group>
+                            <field name="action_date" readonly="1"/>
+                            <field name="active" readonly="1"/>
+                        </group>
+                    </group>
+                    <group>
+                        <field name="description" readonly="1"/>
+                        <field name="old_value" readonly="1"/>
+                        <field name="new_value" readonly="1"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_audit_log_search" model="ir.ui.view">
+        <field name="name">hospital.audit.log.search</field>
+        <field name="model">hospital.audit.log</field>
+        <field name="arch" type="xml">
+            <search string="Audit Logs">
+                <field name="user_id"/>
+                <field name="patient_id"/>
+                <field name="model_name"/>
+                <field name="record_id"/>
+                <field name="action_type"/>
+                <field name="action_date"/>
+                <field name="description"/>
+                <filter string="Create" name="action_create" domain="[('action_type', '=', 'create')]"/>
+                <filter string="Update" name="action_update" domain="[('action_type', '=', 'update')]"/>
+                <filter string="State Change" name="action_state_change" domain="[('action_type', '=', 'state_change')]"/>
+                <filter string="Consent Change" name="action_consent_change" domain="[('action_type', '=', 'consent_change')]"/>
+                <filter string="Archive" name="action_archive" domain="[('action_type', '=', 'archive')]"/>
+                <filter string="Delete Attempt" name="action_delete_attempt" domain="[('action_type', '=', 'delete_attempt')]"/>
+                <group expand="0" string="Group By">
+                    <filter string="User" name="group_by_user" context="{'group_by': 'user_id'}"/>
+                    <filter string="Patient" name="group_by_patient" context="{'group_by': 'patient_id'}"/>
+                    <filter string="Model" name="group_by_model" context="{'group_by': 'model_name'}"/>
+                    <filter string="Action Type" name="group_by_action_type" context="{'group_by': 'action_type'}"/>
+                    <filter string="Date" name="group_by_date" context="{'group_by': 'action_date:day'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_audit_log" model="ir.actions.act_window">
+        <field name="name">Audit Logs</field>
+        <field name="res_model">hospital.audit.log</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_audit_log_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Review sensitive hospital compliance and accountability events.
+            </p>
+        </field>
+    </record>
+
+</odoo>

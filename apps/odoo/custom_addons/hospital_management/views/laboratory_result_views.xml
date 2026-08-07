@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_hospital_laboratory_result_tree" model="ir.ui.view">
+        <field name="name">hospital.laboratory.result.tree</field>
+        <field name="model">hospital.laboratory.result</field>
+        <field name="arch" type="xml">
+            <list>
+                <field name="name" />
+                <field name="result_date" />
+                <field name="request_id" />
+                <field name="patient_id" />
+                <field name="physician_id" />
+                <field name="lab_technician_id" />
+                <field name="state" />
+                <field name="active" />
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_laboratory_result_form" model="ir.ui.view">
+        <field name="name">hospital.laboratory.result.form</field>
+        <field name="model">hospital.laboratory.result</field>
+        <field name="arch" type="xml">
+            <form>
+                <header>
+                    <button name="action_mark_entered" string="Mark Entered" type="object" class="oe_highlight" invisible="state != 'draft'" />
+                    <button name="action_validate" string="Validate" type="object" class="oe_highlight" invisible="state != 'entered'" />
+                    <button name="action_release" string="Release" type="object" class="oe_highlight" invisible="state != 'validated'" />
+                    <!-- Validation is a permanent clinical boundary: cancellation
+                         and reset are pre-validation actions only. -->
+                    <button name="action_cancel" string="Cancel" type="object" invisible="state not in ['draft', 'entered']" />
+                    <button name="action_reset_to_draft" string="Reset to Draft" type="object" invisible="state not in ['entered', 'cancelled']" />
+                    <field name="state" widget="statusbar" statusbar_visible="draft,entered,validated,released,cancelled" />
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="toggle_active" type="object" class="oe_stat_button" icon="fa-archive">
+                            <field name="active" widget="boolean_button" options='{"terminology": "archive"}' />
+                        </button>
+                    </div>
+                    <h1>
+                        <field name="name" />
+                    </h1>
+                    <group>
+                        <group>
+                            <field name="request_locked" invisible="1" />
+                            <field name="request_id"
+                                readonly="request_locked"
+                                options="{'no_create': True}" />
+                            <field name="patient_id"
+                                readonly="request_id"
+                                force_save="1" />
+                            <field name="physician_id"
+                                readonly="request_id"
+                                force_save="1" />
+                        </group>
+                        <group>
+                            <field name="lab_technician_id"
+                                readonly="state in ('validated', 'released')" />
+                            <field name="result_date"
+                                readonly="state in ('validated', 'released')" />
+                            <field name="active" />
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Result Lines" name="result_lines">
+                            <!-- Structure mirrors the laboratory request: lines are
+                                 generated from the ordered tests, never added or
+                                 deleted by hand. Values/units/ranges/flags/notes
+                                 remain editable; provenance columns are locked. -->
+                            <field name="line_ids">
+                                <list editable="bottom" create="0" delete="0">
+                                    <field name="sequence" widget="handle" />
+                                    <field name="request_line_id" column_invisible="1" />
+                                    <field name="test_id" readonly="1" force_save="1" />
+                                    <!-- Specimen is derived from the request line: readonly always. -->
+                                    <field name="sample_type" readonly="1" force_save="1" />
+                                    <field name="result_value"
+                                        required="parent.state != 'draft'"
+                                        readonly="parent.state in ('validated', 'released')" />
+                                    <field name="unit"
+                                        readonly="parent.state in ('validated', 'released')" />
+                                    <field name="reference_range"
+                                        readonly="parent.state in ('validated', 'released')" />
+                                    <field name="abnormal_flag"
+                                        readonly="parent.state in ('validated', 'released')" />
+                                    <field name="notes"
+                                        readonly="parent.state in ('validated', 'released')" />
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Interpretation" name="interpretation">
+                            <group>
+                                <field name="interpretation"
+                                    readonly="state in ('validated', 'released')" />
+                                <field name="remarks"
+                                    readonly="state in ('validated', 'released')" />
+                            </group>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_laboratory_result_search" model="ir.ui.view">
+        <field name="name">hospital.laboratory.result.search</field>
+        <field name="model">hospital.laboratory.result</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name" />
+                <field name="request_id" />
+                <field name="patient_id" />
+                <field name="physician_id" />
+                <field name="lab_technician_id" />
+                <field name="result_date" />
+                <separator />
+                <filter name="filter_draft" string="Draft" domain="[('state', '=', 'draft')]" />
+                <filter name="filter_entered" string="Entered" domain="[('state', '=', 'entered')]" />
+                <filter name="filter_validated" string="Validated" domain="[('state', '=', 'validated')]" />
+                <filter name="filter_released" string="Released" domain="[('state', '=', 'released')]" />
+                <filter name="filter_cancelled" string="Cancelled" domain="[('state', '=', 'cancelled')]" />
+                <separator />
+                <filter name="filter_active" string="Active" domain="[('active', '=', True)]" />
+                <filter name="filter_inactive" string="Archived" domain="[('active', '=', False)]" />
+                <group expand="0" string="Group By">
+                    <filter name="group_by_patient" string="Patient" context="{'group_by': 'patient_id'}" />
+                    <filter name="group_by_physician" string="Physician" context="{'group_by': 'physician_id'}" />
+                    <filter name="group_by_lab_technician" string="Lab Technician" context="{'group_by': 'lab_technician_id'}" />
+                    <filter name="group_by_state" string="State" context="{'group_by': 'state'}" />
+                    <filter name="group_by_result_date" string="Result Date" context="{'group_by': 'result_date'}" />
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_laboratory_result" model="ir.actions.act_window">
+        <field name="name">Laboratory Results</field>
+        <field name="res_model">hospital.laboratory.result</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_laboratory_result_search" />
+        <field name="context">{}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Enter and release laboratory results for requested patient tests.
+            </p>
+        </field>
+    </record>
+
+</odoo>

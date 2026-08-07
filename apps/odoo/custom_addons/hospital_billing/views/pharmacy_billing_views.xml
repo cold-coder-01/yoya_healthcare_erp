@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_pharmacy_medicine_form_billing" model="ir.ui.view">
+        <field name="name">hospital.pharmacy.medicine.form.billing</field>
+        <field name="model">hospital.pharmacy.medicine</field>
+        <field name="inherit_id" ref="hospital_pharmacy.view_hospital_pharmacy_medicine_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='category']" position="after">
+                <field name="billing_service_id" string="Billing Service" domain="[('service_type', '=', 'pharmacy'), ('active', '=', True)]"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_hospital_pharmacy_dispense_form_billing" model="ir.ui.view">
+        <field name="name">hospital.pharmacy.dispense.form.billing</field>
+        <field name="model">hospital.pharmacy.dispense</field>
+        <field name="inherit_id" ref="hospital_pharmacy.view_hospital_pharmacy_dispense_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//header/button[@name='action_mark_dispensed']" position="before">
+                <button name="action_record_manual_payment" string="Record Manual Payment" type="object" class="btn-secondary" invisible="state not in ('ready', 'partial')" groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+            </xpath>
+            <xpath expr="//sheet" position="inside">
+                <div name="pharmacy_billing_button_box" class="oe_button_box" role="toolbar">
+                    <button name="action_view_charges" type="object" class="oe_stat_button" icon="fa-money" invisible="not id">
+                        <field name="charge_count" widget="statinfo" string="Charges"/>
+                    </button>
+                    <button name="action_view_receipts" type="object" class="oe_stat_button" icon="fa-credit-card" invisible="not id">
+                        <field name="receipt_count" widget="statinfo" string="Receipts"/>
+                    </button>
+                </div>
+            </xpath>
+            <xpath expr="//field[@name='appointment_id']" position="after">
+                <field name="encounter_id" readonly="state not in ('draft', 'ready')"/>
+                <field name="billing_account_id" readonly="1"/>
+                <field name="unified_amount_received" readonly="1"/>
+                <field name="unified_amount_due_for_clearance" readonly="1"/>
+            </xpath>
+            <xpath expr="//field[@name='line_ids']/list/field[@name='dispensed_quantity']" position="after">
+                <field name="charge_line_id" optional="hide" readonly="1"/>
+                <field name="billing_delivered_quantity" optional="hide" readonly="1"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>

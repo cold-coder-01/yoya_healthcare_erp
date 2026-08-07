@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_prescription_list" model="ir.ui.view">
+        <field name="name">hospital.prescription.list</field>
+        <field name="model">hospital.prescription</field>
+        <field name="arch" type="xml">
+            <list string="Prescriptions">
+                <field name="name"/>
+                <field name="prescription_date"/>
+                <field name="patient_id"/>
+                <field name="physician_id"/>
+                <field name="appointment_id"/>
+                <field name="diagnosis_id"/>
+                <field name="state"/>
+                <field name="active"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_prescription_form" model="ir.ui.view">
+        <field name="name">hospital.prescription.form</field>
+        <field name="model">hospital.prescription</field>
+        <field name="arch" type="xml">
+            <form string="Prescription">
+                <header>
+                    <button
+                        name="action_confirm"
+                        string="Confirm"
+                        type="object"
+                        class="btn-primary"
+                        invisible="state != 'draft'"
+                    />
+                    <button
+                        name="action_mark_dispensed"
+                        string="Mark as Dispensed"
+                        type="object"
+                        class="btn-primary"
+                        invisible="state != 'confirmed'"
+                    />
+                    <button
+                        name="action_cancel"
+                        string="Cancel"
+                        type="object"
+                        invisible="state not in ('draft', 'confirmed')"
+                    />
+                    <button
+                        name="action_reset_to_draft"
+                        string="Reset to Draft"
+                        type="object"
+                        invisible="state not in ('cancelled', 'dispensed')"
+                    />
+                    <field
+                        name="state"
+                        widget="statusbar"
+                        statusbar_visible="draft,confirmed,dispensed,cancelled"
+                    />
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1>
+                            <field name="name" readonly="1"/>
+                        </h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="patient_id"/>
+                            <field name="physician_id"/>
+                            <field
+                                name="appointment_id"
+                                domain="[('patient_id', '=', patient_id)]"
+                            />
+                        </group>
+                        <group>
+                            <field
+                                name="diagnosis_id"
+                                domain="[('patient_id', '=', patient_id)]"
+                            />
+                            <field name="prescription_date"/>
+                            <field name="active"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Medicine Lines">
+                            <field name="line_ids">
+                                <list string="Medicine Lines" editable="bottom">
+                                    <field name="sequence" widget="handle"/>
+                                    <field name="medicine_name"/>
+                                    <field name="dosage"/>
+                                    <field name="frequency"/>
+                                    <field name="duration"/>
+                                    <field name="route"/>
+                                    <field name="quantity"/>
+                                    <field name="instructions"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Notes">
+                            <field name="notes" nolabel="1"/>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_prescription_search" model="ir.ui.view">
+        <field name="name">hospital.prescription.search</field>
+        <field name="model">hospital.prescription</field>
+        <field name="arch" type="xml">
+            <search string="Prescriptions">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="physician_id"/>
+                <field name="appointment_id"/>
+                <field name="diagnosis_id"/>
+                <field name="prescription_date"/>
+                <filter string="Draft" name="draft" domain="[('state', '=', 'draft')]"/>
+                <filter string="Confirmed" name="confirmed" domain="[('state', '=', 'confirmed')]"/>
+                <filter string="Dispensed" name="dispensed" domain="[('state', '=', 'dispensed')]"/>
+                <filter string="Cancelled" name="cancelled" domain="[('state', '=', 'cancelled')]"/>
+                <filter string="Archived" name="inactive" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Patient" name="group_patient" context="{'group_by': 'patient_id'}"/>
+                    <filter string="Physician" name="group_physician" context="{'group_by': 'physician_id'}"/>
+                    <filter string="State" name="group_state" context="{'group_by': 'state'}"/>
+                    <filter string="Date" name="group_date" context="{'group_by': 'prescription_date'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_prescription" model="ir.actions.act_window">
+        <field name="name">Prescriptions</field>
+        <field name="res_model">hospital.prescription</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_prescription_search"/>
+        <field name="context">{'default_state': 'draft'}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Create the first prescription.
+            </p>
+        </field>
+    </record>
+</odoo>

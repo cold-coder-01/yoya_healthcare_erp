@@ -1,0 +1,204 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Patient Diagnosis List View -->
+    <record id="view_hospital_patient_diagnosis_list" model="ir.ui.view">
+        <field name="name">hospital.patient.diagnosis.list</field>
+        <field name="model">hospital.patient.diagnosis</field>
+        <field name="arch" type="xml">
+            <list string="Patient Diagnoses">
+                <field name="patient_id"/>
+                <field name="disease_id"/>
+                <field name="category_id"/>
+                <field name="diagnosis_date"/>
+                <field name="diagnosis_type"/>
+                <field name="severity"/>
+                <field name="status"/>
+                <field name="physician_id"/>
+                <field name="active"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- Patient Diagnosis Form View -->
+    <record id="view_hospital_patient_diagnosis_form" model="ir.ui.view">
+        <field name="name">hospital.patient.diagnosis.form</field>
+        <field name="model">hospital.patient.diagnosis</field>
+        <field name="arch" type="xml">
+            <form string="Patient Diagnosis" class="hospital_diagnosis_profile">
+                <sheet class="hospital_diagnosis_card">
+
+                    <!-- Header -->
+                    <div class="hospital_diagnosis_header">
+                        <div class="hospital_diagnosis_icon">
+                            <i class="fa fa-file-text-o"/>
+                        </div>
+                        <div class="hospital_diagnosis_header_text">
+                            <div class="hospital_diagnosis_title">Patient Diagnosis</div>
+                            <div class="hospital_diagnosis_subtitle">Register and manage patient diagnosis information</div>
+                        </div>
+                    </div>
+
+                    <!-- KPI Cards -->
+                    <div class="hospital_diagnosis_kpi_row">
+                        <div class="hospital_diagnosis_kpi_card">
+                            <div class="hospital_diagnosis_kpi_icon"><i class="fa fa-user"/></div>
+                            <div class="hospital_diagnosis_kpi_content">
+                                <div class="hospital_diagnosis_kpi_label"><i class="fa fa-user"/> Patient</div>
+                                <div class="hospital_diagnosis_kpi_value"><field name="patient_id" readonly="1"/></div>
+                            </div>
+                        </div>
+                        <div class="hospital_diagnosis_kpi_card">
+                            <div class="hospital_diagnosis_kpi_icon"><i class="fa fa-user-md"/></div>
+                            <div class="hospital_diagnosis_kpi_content">
+                                <div class="hospital_diagnosis_kpi_label"><i class="fa fa-user-md"/> Physician</div>
+                                <div class="hospital_diagnosis_kpi_value"><field name="physician_id" readonly="1"/></div>
+                            </div>
+                        </div>
+                        <div class="hospital_diagnosis_kpi_card">
+                            <div class="hospital_diagnosis_kpi_icon"><i class="fa fa-calendar"/></div>
+                            <div class="hospital_diagnosis_kpi_content">
+                                <div class="hospital_diagnosis_kpi_label"><i class="fa fa-calendar"/> Diagnosis Date</div>
+                                <div class="hospital_diagnosis_kpi_value"><field name="diagnosis_date" readonly="1"/></div>
+                            </div>
+                        </div>
+                        <div class="hospital_diagnosis_kpi_card">
+                            <div class="hospital_diagnosis_kpi_icon"><i class="fa fa-calendar-check-o"/></div>
+                            <div class="hospital_diagnosis_kpi_content">
+                                <div class="hospital_diagnosis_kpi_label"><i class="fa fa-calendar-check-o"/> Appointment</div>
+                                <div class="hospital_diagnosis_kpi_value"><field name="appointment_id" readonly="1"/></div>
+                            </div>
+                        </div>
+                        <div class="hospital_diagnosis_kpi_card hospital_diagnosis_status_kpi">
+                            <div class="hospital_diagnosis_kpi_icon"><i class="fa fa-check-circle"/></div>
+                            <div class="hospital_diagnosis_kpi_content">
+                                <div class="hospital_diagnosis_kpi_label"><i class="fa fa-check-circle"/> Status</div>
+                                <div class="hospital_diagnosis_kpi_value"><field name="status" readonly="1"/></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Main Card: Diagnosis Information -->
+                    <div class="hospital_diagnosis_main_card">
+                        <div class="hospital_diagnosis_card_title">
+                            <i class="fa fa-file-text-o"/>
+                            <span>Diagnosis Information</span>
+                        </div>
+                        <group class="hospital_diagnosis_compact_group">
+                            <group>
+                                <field name="patient_id"/>
+                                <field name="disease_id"/>
+                                <field name="category_id" readonly="1"/>
+                                <field name="diagnosis_type"/>
+                                <field name="severity"/>
+                                <field name="status"/>
+                                <field name="notes" placeholder="Additional notes"/>
+                            </group>
+                            <group>
+                                <field name="diagnosis_date"/>
+                                <field name="physician_id"/>
+                                <field name="appointment_id"/>
+                                <field name="active"/>
+                            </group>
+                        </group>
+                    </div>
+
+                    <!-- Lower Card Row -->
+                    <div class="hospital_diagnosis_lower_grid">
+
+                        <!-- Disease Details -->
+                        <div class="hospital_diagnosis_card">
+                            <div class="hospital_diagnosis_card_title">
+                                <i class="fa fa-heartbeat"/>
+                                <span>Disease Details</span>
+                            </div>
+                            <group class="hospital_diagnosis_compact_group">
+                                <field name="disease_id" readonly="1"/>
+                                <field name="category_id" readonly="1"/>
+                                <field name="disease_code" readonly="1"/>
+                                <field name="disease_description" readonly="1"/>
+                            </group>
+                        </div>
+
+                        <!-- Diagnosis Classification -->
+                        <div class="hospital_diagnosis_card">
+                            <div class="hospital_diagnosis_card_title">
+                                <i class="fa fa-tags"/>
+                                <span>Diagnosis Classification</span>
+                            </div>
+                            <group class="hospital_diagnosis_compact_group">
+                                <field name="diagnosis_type"/>
+                                <field name="severity" widget="badge"/>
+                                <field name="status" widget="badge"/>
+                                <field name="active"/>
+                            </group>
+                        </div>
+
+                        <!-- Clinical Notes -->
+                        <div class="hospital_diagnosis_card">
+                            <div class="hospital_diagnosis_card_title">
+                                <i class="fa fa-file-text-o"/>
+                                <span>Clinical Notes</span>
+                            </div>
+                            <group class="hospital_diagnosis_compact_group hospital_diagnosis_notes_group">
+                                <field name="notes" nolabel="1" placeholder="Add clinical notes..."/>
+                            </group>
+                        </div>
+
+                    </div>
+
+                    <!-- Bottom Info Notice -->
+                    <div class="hospital_diagnosis_info_notice">
+                        <i class="fa fa-info-circle"/>
+                        <span>This diagnosis record is part of the patient's medical history and will be used for treatment planning and follow-up care.</span>
+                    </div>
+
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!-- Patient Diagnosis Search View -->
+    <record id="view_hospital_patient_diagnosis_search" model="ir.ui.view">
+        <field name="name">hospital.patient.diagnosis.search</field>
+        <field name="model">hospital.patient.diagnosis</field>
+        <field name="arch" type="xml">
+            <search string="Patient Diagnoses">
+                <field name="patient_id"/>
+                <field name="disease_id"/>
+                <field name="category_id"/>
+                <field name="physician_id"/>
+                <filter string="Archived" name="inactive" domain="[('active', '=', False)]"/>
+                <filter string="Primary" name="primary" domain="[('diagnosis_type', '=', 'primary')]"/>
+                <filter string="Secondary" name="secondary" domain="[('diagnosis_type', '=', 'secondary')]"/>
+                <filter string="Active" name="active_status" domain="[('status', '=', 'active')]"/>
+                <filter string="Resolved" name="resolved" domain="[('status', '=', 'resolved')]"/>
+                <filter string="Chronic" name="chronic" domain="[('status', '=', 'chronic')]"/>
+                <filter string="Mild" name="mild" domain="[('severity', '=', 'mild')]"/>
+                <filter string="Moderate" name="moderate" domain="[('severity', '=', 'moderate')]"/>
+                <filter string="Severe" name="severe" domain="[('severity', '=', 'severe')]"/>
+                <filter string="Critical" name="critical" domain="[('severity', '=', 'critical')]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Patient" name="group_by_patient" context="{'group_by': 'patient_id'}"/>
+                    <filter string="Disease" name="group_by_disease" context="{'group_by': 'disease_id'}"/>
+                    <filter string="Category" name="group_by_category" context="{'group_by': 'category_id'}"/>
+                    <filter string="Diagnosis Type" name="group_by_type" context="{'group_by': 'diagnosis_type'}"/>
+                    <filter string="Status" name="group_by_status" context="{'group_by': 'status'}"/>
+                    <filter string="Severity" name="group_by_severity" context="{'group_by': 'severity'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- Patient Diagnosis Action -->
+    <record id="action_hospital_patient_diagnosis" model="ir.actions.act_window">
+        <field name="name">Patient Diagnoses</field>
+        <field name="res_model">hospital.patient.diagnosis</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_patient_diagnosis_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                No diagnoses found. Create one!
+            </p>
+        </field>
+    </record>
+</odoo>

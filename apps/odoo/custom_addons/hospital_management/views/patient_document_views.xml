@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_patient_document_list" model="ir.ui.view">
+        <field name="name">hospital.patient.document.list</field>
+        <field name="model">hospital.patient.document</field>
+        <field name="arch" type="xml">
+            <list string="Patient Documents">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="document_type"/>
+                <field name="document_date"/>
+                <field name="filename"/>
+                <field name="uploaded_by"/>
+                <field name="active"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_patient_document_form" model="ir.ui.view">
+        <field name="name">hospital.patient.document.form</field>
+        <field name="model">hospital.patient.document</field>
+        <field name="arch" type="xml">
+            <form string="Patient Document">
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="patient_id"/>
+                            <field name="name"/>
+                            <field name="document_type"/>
+                            <field name="document_date"/>
+                        </group>
+                        <group>
+                            <field name="attachment" filename="filename"/>
+                            <field name="filename"/>
+                            <field name="uploaded_by" readonly="1"/>
+                            <field name="active"/>
+                        </group>
+                    </group>
+                    <group>
+                        <field name="description"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_patient_document_search" model="ir.ui.view">
+        <field name="name">hospital.patient.document.search</field>
+        <field name="model">hospital.patient.document</field>
+        <field name="arch" type="xml">
+            <search string="Patient Documents">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="document_type"/>
+                <field name="filename"/>
+                <field name="uploaded_by"/>
+                <filter string="Archived" name="inactive" domain="[('active', '=', False)]"/>
+                <filter string="Identification" name="type_identification" domain="[('document_type', '=', 'identification')]"/>
+                <filter string="Referral" name="type_referral" domain="[('document_type', '=', 'referral')]"/>
+                <filter string="Consent" name="type_consent" domain="[('document_type', '=', 'consent')]"/>
+                <filter string="Medical Record" name="type_medical_record" domain="[('document_type', '=', 'medical_record')]"/>
+                <filter string="Lab Result" name="type_lab_result" domain="[('document_type', '=', 'lab_result')]"/>
+                <filter string="Insurance" name="type_insurance" domain="[('document_type', '=', 'insurance')]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Patient" name="group_by_patient" context="{'group_by': 'patient_id'}"/>
+                    <filter string="Document Type" name="group_by_document_type" context="{'group_by': 'document_type'}"/>
+                    <filter string="Uploaded By" name="group_by_uploaded_by" context="{'group_by': 'uploaded_by'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_patient_document" model="ir.actions.act_window">
+        <field name="name">Patient Documents</field>
+        <field name="res_model">hospital.patient.document</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_patient_document_search"/>
+        <field name="context">{'default_document_type': 'other'}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Add patient-related documents while keeping them linked to the patient record.
+            </p>
+        </field>
+    </record>
+</odoo>

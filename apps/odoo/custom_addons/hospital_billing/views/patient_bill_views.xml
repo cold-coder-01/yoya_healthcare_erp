@@ -1,0 +1,354 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_patient_bill_list" model="ir.ui.view">
+        <field name="name">hospital.patient.bill.list</field>
+        <field name="model">hospital.patient.bill</field>
+        <field name="arch" type="xml">
+            <list string="Patient Bills">
+                <field name="name"/>
+                <field name="bill_date"/>
+                <field name="patient_id"/>
+                <field name="physician_id" optional="show"/>
+                <field name="amount_total"/>
+                <field name="amount_paid"/>
+                <field name="amount_due"/>
+                <field name="payment_method" optional="show"/>
+                <field name="state" widget="badge"
+                    decoration-info="state == 'draft'"
+                    decoration-primary="state == 'confirmed'"
+                    decoration-warning="state == 'partially_paid'"
+                    decoration-success="state == 'paid'"
+                    decoration-danger="state == 'cancelled'"
+                />
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_patient_bill_form" model="ir.ui.view">
+        <field name="name">hospital.patient.bill.form</field>
+        <field name="model">hospital.patient.bill</field>
+        <field name="arch" type="xml">
+            <form string="Patient Bill" class="hospital_billing_profile">
+                <header>
+                    <button
+                        name="action_confirm"
+                        string="Confirm Bill"
+                        type="object"
+                        class="btn-primary"
+                        invisible="state != 'draft'"
+                    />
+                    <button
+                        name="action_register_payment"
+                        string="Register Payment"
+                        type="object"
+                        class="btn-primary"
+                        invisible="state not in ('confirmed', 'partially_paid')"
+                    />
+                    <button
+                        name="action_mark_paid"
+                        string="Mark as Paid"
+                        type="object"
+                        invisible="state not in ('confirmed', 'partially_paid')"
+                    />
+                    <button
+                        name="action_cancel"
+                        string="Cancel"
+                        type="object"
+                        invisible="state not in ('draft', 'confirmed', 'partially_paid')"
+                    />
+                    <button
+                        name="action_reset_to_draft"
+                        string="Reset to Draft"
+                        type="object"
+                        invisible="state != 'cancelled'"
+                    />
+                    <field
+                        name="state"
+                        widget="statusbar"
+                        statusbar_visible="draft,confirmed,partially_paid,paid"
+                    />
+                </header>
+                <sheet class="hospital_billing_profile">
+
+                    <!-- ═══ HERO HEADER ═══ -->
+                    <div class="billing_hero">
+                        <div class="billing_hero_icon">
+                            <i class="fa fa-file-text-o"/>
+                        </div>
+                        <div class="billing_hero_content">
+                            <div class="billing_hero_label">Patient Bill / Receipt</div>
+                            <div class="billing_hero_ref">
+                                <field name="name" readonly="1"/>
+                            </div>
+                            <div class="billing_hero_sub">
+                                <field name="patient_id" readonly="1" options="{'no_open': True}"/>
+                            </div>
+                        </div>
+                        <div class="billing_hero_right">
+                            <div class="billing_hero_meta">
+                                <div class="billing_meta_item">
+                                    <span class="billing_meta_label">Bill Date</span>
+                                    <span class="billing_meta_value">
+                                        <field name="bill_date" readonly="1"/>
+                                    </span>
+                                </div>
+                                <div class="billing_meta_item">
+                                    <span class="billing_meta_label">Cashier</span>
+                                    <span class="billing_meta_value">
+                                        <field name="cashier_id" readonly="1" options="{'no_open': True}"/>
+                                    </span>
+                                </div>
+                                <div class="billing_meta_item">
+                                    <span class="billing_meta_label">Currency</span>
+                                    <span class="billing_meta_value">
+                                        <field name="currency_id" readonly="1" options="{'no_open': True}"/>
+                                    </span>
+                                </div>
+                                <div class="billing_meta_item">
+                                    <span class="billing_meta_label">Payments</span>
+                                    <span class="billing_meta_value">
+                                        <field name="payment_count" readonly="1"/>
+                                    </span>
+                                </div>
+                            </div>
+                            <!-- State Ribbons -->
+                            <div class="billing_state_ribbon billing_state_paid"
+                                invisible="state != 'paid'">
+                                <i class="fa fa-check-circle"/> PAID
+                            </div>
+                            <div class="billing_state_ribbon billing_state_partial"
+                                invisible="state != 'partially_paid'">
+                                <i class="fa fa-clock-o"/> PARTIALLY PAID
+                            </div>
+                            <div class="billing_state_ribbon billing_state_confirmed"
+                                invisible="state != 'confirmed'">
+                                <i class="fa fa-check"/> CONFIRMED
+                            </div>
+                            <div class="billing_state_ribbon billing_state_draft"
+                                invisible="state != 'draft'">
+                                <i class="fa fa-pencil"/> DRAFT
+                            </div>
+                            <div class="billing_state_ribbon billing_state_cancelled"
+                                invisible="state != 'cancelled'">
+                                <i class="fa fa-times-circle"/> CANCELLED
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ═══ KPI SUMMARY ROW ═══ -->
+                    <div class="billing_kpi_row">
+                        <!-- Patient -->
+                        <div class="billing_kpi_card">
+                            <div class="billing_kpi_icon">
+                                <i class="fa fa-user"/>
+                            </div>
+                            <div class="billing_kpi_body">
+                                <span class="billing_kpi_label">Patient</span>
+                                <div class="billing_kpi_value">
+                                    <field name="patient_id" readonly="1" options="{'no_open': True}"/>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Bill Total -->
+                        <div class="billing_kpi_card">
+                            <div class="billing_kpi_icon">
+                                <i class="fa fa-calculator"/>
+                            </div>
+                            <div class="billing_kpi_body">
+                                <span class="billing_kpi_label">Bill Total</span>
+                                <div class="billing_kpi_value">
+                                    <field name="amount_total" readonly="1"/>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Amount Paid -->
+                        <div class="billing_kpi_card">
+                            <div class="billing_kpi_icon">
+                                <i class="fa fa-money"/>
+                            </div>
+                            <div class="billing_kpi_body">
+                                <span class="billing_kpi_label">Amount Paid</span>
+                                <div class="billing_kpi_value billing_kpi_value_green">
+                                    <field name="amount_paid" readonly="1"/>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Amount Due -->
+                        <div class="billing_kpi_card">
+                            <div class="billing_kpi_icon billing_kpi_icon_amber"
+                                invisible="state == 'paid'">
+                                <i class="fa fa-exclamation-triangle"/>
+                            </div>
+                            <div class="billing_kpi_icon billing_kpi_icon_green"
+                                invisible="state != 'paid'">
+                                <i class="fa fa-check-circle"/>
+                            </div>
+                            <div class="billing_kpi_body">
+                                <span class="billing_kpi_label">Amount Due</span>
+                                <div class="billing_kpi_value">
+                                    <field name="amount_due" readonly="1"/>
+                                </div>
+                                <div class="billing_kpi_due_paid_note"
+                                    invisible="state != 'paid'">
+                                    ✓ Settled
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Status -->
+                        <div class="billing_kpi_card">
+                            <div class="billing_kpi_icon">
+                                <i class="fa fa-info-circle"/>
+                            </div>
+                            <div class="billing_kpi_body">
+                                <span class="billing_kpi_label">Status</span>
+                                <div class="billing_kpi_value">
+                                    <field name="state" widget="badge"
+                                        decoration-info="state == 'draft'"
+                                        decoration-primary="state == 'confirmed'"
+                                        decoration-warning="state == 'partially_paid'"
+                                        decoration-success="state == 'paid'"
+                                        decoration-danger="state == 'cancelled'"
+                                        readonly="1"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ═══ FULLY PAID BADGE ═══ -->
+                    <div class="billing_fully_paid_chip" invisible="state != 'paid'">
+                        <i class="fa fa-check-circle"/> Bill fully settled — no outstanding balance
+                    </div>
+
+                    <!-- ═══ TWO-COLUMN INFO GRID ═══ -->
+                    <div class="billing_info_grid">
+                        <!-- LEFT: Bill Information -->
+                        <div class="billing_info_card">
+                            <div class="billing_card_title">
+                                <i class="fa fa-clipboard"/> Bill Information
+                            </div>
+                            <group class="billing_compact_group">
+                                <field name="patient_id"
+                                    domain="[('active', '=', True)]"
+                                    context="{'default_active': True}"
+                                />
+                                <field name="appointment_id"
+                                    domain="[('patient_id', '=', patient_id)]"
+                                    context="{'default_patient_id': patient_id}"
+                                />
+                                <field name="physician_id"/>
+                                <field name="bill_date"/>
+                                <field name="cashier_id"/>
+                                <field name="active"/>
+                            </group>
+                        </div>
+                        <!-- RIGHT: Payment Details -->
+                        <div class="billing_info_card">
+                            <div class="billing_card_title">
+                                <i class="fa fa-credit-card"/> Payment Details
+                            </div>
+                            <group class="billing_compact_group">
+                                <field name="currency_id"/>
+                                <field name="payment_method"/>
+                                <field name="payment_reference"
+                                    invisible="not payment_method or payment_method == 'cash'"
+                                />
+                            </group>
+                            <div class="billing_totals_separator">Totals</div>
+                            <group class="billing_compact_group oe_subtotal_footer">
+                                <field name="amount_untaxed" string="Subtotal" readonly="1"/>
+                                <field name="discount_amount" readonly="1"/>
+                                <field name="amount_total" readonly="1"/>
+                                <field name="amount_paid" readonly="1"/>
+                                <field name="amount_due" readonly="1"/>
+                            </group>
+                        </div>
+                    </div>
+
+                    <!-- ═══ NOTEBOOK ═══ -->
+                    <notebook>
+                        <page string="Bill Lines" name="bill_lines">
+                            <field name="line_ids">
+                                <list editable="bottom">
+                                    <field name="sequence" widget="handle"/>
+                                    <field name="service_id"/>
+                                    <field name="description"/>
+                                    <field name="source_type"/>
+                                    <field name="quantity"/>
+                                    <field name="unit_price"/>
+                                    <field name="discount"/>
+                                    <field name="subtotal" readonly="1"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Payments" name="payments">
+                            <div class="billing_section_title">
+                                <i class="fa fa-history"/> Payment History
+                            </div>
+                            <field name="payment_ids" readonly="1">
+                                <list>
+                                    <field name="name"/>
+                                    <field name="payment_date"/>
+                                    <field name="amount" sum="Total Paid"/>
+                                    <field name="payment_method"/>
+                                    <field name="payment_reference"/>
+                                    <field name="cashier_id"/>
+                                    <field name="notes"/>
+                                </list>
+                            </field>
+                            <div class="billing_payment_total">
+                                <span class="billing_payment_total_label">Total Paid:</span>
+                                <span class="billing_payment_total_value">
+                                    <field name="amount_paid" readonly="1"/>
+                                </span>
+                            </div>
+                        </page>
+                        <page string="Notes" name="notes">
+                            <div class="billing_notes_card">
+                                <div class="billing_notes_title">
+                                    <i class="fa fa-pencil-square-o"/> Internal Notes
+                                </div>
+                                <field name="notes" placeholder="Internal notes..."/>
+                            </div>
+                        </page>
+                    </notebook>
+
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_patient_bill_search" model="ir.ui.view">
+        <field name="name">hospital.patient.bill.search</field>
+        <field name="model">hospital.patient.bill</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="physician_id"/>
+                <filter string="Draft" name="draft" domain="[('state', '=', 'draft')]"/>
+                <filter string="Confirmed" name="confirmed" domain="[('state', '=', 'confirmed')]"/>
+                <filter string="Partially Paid" name="partially_paid" domain="[('state', '=', 'partially_paid')]"/>
+                <filter string="Paid" name="paid" domain="[('state', '=', 'paid')]"/>
+                <filter string="Cancelled" name="cancelled" domain="[('state', '=', 'cancelled')]"/>
+                <separator/>
+                <filter string="Active" name="active" domain="[('active', '=', True)]"/>
+                <filter string="Archived" name="archived" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Patient" name="group_by_patient" context="{'group_by': 'patient_id'}"/>
+                    <filter string="State" name="group_by_state" context="{'group_by': 'state'}"/>
+                    <filter string="Bill Date" name="group_by_date" context="{'group_by': 'bill_date:month'}"/>
+                    <filter string="Payment Method" name="group_by_payment" context="{'group_by': 'payment_method'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_patient_bill" model="ir.actions.act_window">
+        <field name="name">Patient Bills</field>
+        <field name="res_model">hospital.patient.bill</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_patient_bill_search"/>
+        <field name="context">{'search_default_active': 1}</field>
+    </record>
+</odoo>

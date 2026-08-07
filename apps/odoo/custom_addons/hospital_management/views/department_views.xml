@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_department_list" model="ir.ui.view">
+        <field name="name">hospital.department.list</field>
+        <field name="model">hospital.department</field>
+        <field name="arch" type="xml">
+            <list string="Departments">
+                <field name="name"/>
+                <field name="code"/>
+                <field name="manager_id"/>
+                <field name="active"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_department_form" model="ir.ui.view">
+        <field name="name">hospital.department.form</field>
+        <field name="model">hospital.department</field>
+        <field name="arch" type="xml">
+            <form string="Department">
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="name"/>
+                            <field name="code"/>
+                            <field name="manager_id"/>
+                            <field name="active"/>
+                        </group>
+                        <group>
+                            <field name="description" placeholder="Department purpose, services, or internal notes."/>
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_department_search" model="ir.ui.view">
+        <field name="name">hospital.department.search</field>
+        <field name="model">hospital.department</field>
+        <field name="arch" type="xml">
+            <search string="Departments">
+                <field name="name"/>
+                <field name="code"/>
+                <field name="manager_id"/>
+                <filter string="Archived" name="inactive" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Manager" name="group_by_manager" context="{'group_by': 'manager_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_department" model="ir.actions.act_window">
+        <field name="name">Departments</field>
+        <field name="res_model">hospital.department</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_department_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Create the hospital departments used for patient care and administration.
+            </p>
+        </field>
+    </record>
+
+</odoo>

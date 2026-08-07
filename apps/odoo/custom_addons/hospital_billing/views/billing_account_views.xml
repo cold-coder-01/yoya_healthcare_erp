@@ -1,0 +1,263 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_billing_account_list" model="ir.ui.view">
+        <field name="name">hospital.billing.account.list</field>
+        <field name="model">hospital.billing.account</field>
+        <field name="arch" type="xml">
+            <list string="Billing Accounts">
+                <field name="name"/>
+                <field name="encounter_id"/>
+                <field name="patient_id"/>
+                <field name="payer_type"/>
+                <field name="financial_clearance_state" widget="badge" optional="show"/>
+                <field name="amount_estimated" sum="Estimated"/>
+                <field name="amount_delivered" sum="Delivered" optional="show"/>
+                <field name="amount_to_invoice" sum="To Invoice" optional="hide"/>
+                <field name="amount_invoiced" sum="Invoiced" optional="show"/>
+                <field name="amount_credited" sum="Credited" optional="hide"/>
+                <field name="amount_received" sum="Received"/>
+                <field name="amount_applied_to_invoice" sum="Applied" optional="hide"/>
+                <field name="amount_refunded" sum="Refunded" optional="hide"/>
+                <field name="amount_outstanding" sum="Outstanding"/>
+                <field name="amount_prepayment_held" sum="Advance Held" optional="show"/>
+                <field name="amount_patient_credit" sum="Patient Credit" optional="hide"/>
+                <field name="adjustment_required_count" optional="hide"/>
+                <field name="operational_funding_state" widget="badge" optional="show"
+                    decoration-success="operational_funding_state == 'funded'"
+                    decoration-warning="operational_funding_state == 'partially_funded'"/>
+                <field name="accounting_receipt_state" widget="badge" optional="show"
+                    decoration-warning="accounting_receipt_state in ('unposted', 'partially_posted')"
+                    decoration-success="accounting_receipt_state == 'posted'"/>
+                <field name="invoice_state" widget="badge" optional="show"/>
+                <field name="settlement_state" widget="badge" optional="show"
+                    decoration-success="settlement_state == 'settled'"/>
+                <field name="state" widget="badge"
+                    decoration-info="state == 'open'"
+                    decoration-warning="state == 'partially_billed'"
+                    decoration-success="state in ('settled', 'closed')"
+                    decoration-danger="state == 'cancelled'"
+                />
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_billing_account_form" model="ir.ui.view">
+        <field name="name">hospital.billing.account.form</field>
+        <field name="model">hospital.billing.account</field>
+        <field name="arch" type="xml">
+            <form string="Billing Account">
+                <header>
+                    <button name="action_record_payment" type="object"
+                        string="Record Payment / Advance" class="btn-primary"
+                        invisible="state in ('closed', 'cancelled')"
+                        groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <button name="action_settle" string="Mark Accounting Settled" type="object"
+                        class="btn-primary"
+                        invisible="state in ('settled', 'closed', 'cancelled') or settlement_state != 'settled'"/>
+                    <button name="action_close" string="Close" type="object" class="btn-primary"
+                        invisible="state != 'settled'"/>
+                    <button name="action_cancel" string="Cancel" type="object"
+                        invisible="state in ('closed', 'cancelled')"/>
+                    <field name="state" widget="statusbar"
+                        statusbar_visible="open,partially_billed,settled,closed"/>
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_view_charge_lines" type="object"
+                            class="oe_stat_button" icon="fa-list-ul">
+                            <field name="charge_line_count" widget="statinfo" string="Charges"/>
+                        </button>
+                        <button name="action_view_receipts" type="object"
+                            class="oe_stat_button" icon="fa-file-text-o"
+                            groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
+                            <field name="receipt_count" widget="statinfo" string="Receipts"/>
+                        </button>
+                    </div>
+                    <widget name="web_ribbon" title="Cancelled" bg_color="text-bg-danger"
+                        invisible="state != 'cancelled'"/>
+                    <div class="oe_title">
+                        <h1><field name="name" readonly="1"/></h1>
+                    </div>
+                    <group>
+                        <group string="Encounter">
+                            <field name="encounter_id" options="{'no_create': True}"/>
+                            <field name="patient_id"/>
+                            <field name="company_id" groups="base.group_multi_company"/>
+                            <field name="currency_id" groups="base.group_multi_currency"/>
+                            <field name="active"/>
+                        </group>
+                        <group string="Payer">
+                            <field name="payer_type"/>
+                            <field name="payer_id"
+                                required="payer_type != 'self_pay'"
+                                invisible="payer_type == 'self_pay'"/>
+                            <field name="financial_clearance_state"/>
+                        </group>
+                    </group>
+                    <group string="Estimated / Delivered (indicative)">
+                        <group>
+                            <field name="amount_estimated" readonly="1"/>
+                            <field name="amount_delivered" readonly="1"/>
+                            <field name="amount_eligible" readonly="1"/>
+                            <field name="amount_to_invoice" readonly="1"/>
+                        </group>
+                        <group>
+                            <field name="amount_authorized" readonly="1"/>
+                            <field name="amount_bypassed" readonly="1"
+                                invisible="not amount_bypassed"/>
+                            <field name="amount_due_for_clearance" readonly="1"/>
+                            <field name="adjustment_required_count" readonly="1"/>
+                        </group>
+                    </group>
+                    <group string="Independent Financial Lifecycles">
+                        <group>
+                            <field name="operational_funding_state" widget="badge" readonly="1"/>
+                            <field name="accounting_receipt_state" widget="badge" readonly="1"/>
+                            <field name="invoice_state" widget="badge" readonly="1"/>
+                        </group>
+                        <group>
+                            <field name="settlement_state" widget="badge" readonly="1"/>
+                            <field name="fiscal_state" widget="badge" readonly="1"/>
+                            <div class="text-muted" colspan="2">
+                                Funded means operational cash is allocated. Settled is reserved
+                                for posted and reconciled accounting receivables.
+                            </div>
+                        </group>
+                    </group>
+                    <group string="Accounting (invoiced fiscal facts)">
+                        <group>
+                            <field name="amount_invoiced" readonly="1"/>
+                            <field name="amount_credited" readonly="1"/>
+                            <field name="net_invoiced_amount" readonly="1"/>
+                        </group>
+                        <group>
+                            <field name="receivable_balance" readonly="1"/>
+                            <field name="amount_outstanding" readonly="1"/>
+                        </group>
+                    </group>
+                    <group string="Operational Funding Allocation">
+                        <group>
+                            <field name="amount_received" readonly="1"/>
+                            <field name="amount_applied_to_invoice" readonly="1"/>
+                            <field name="amount_refunded_from_advance" readonly="1"/>
+                            <field name="amount_refunded_from_credit" readonly="1"/>
+                            <field name="amount_refunded" readonly="1"/>
+                        </group>
+                        <group>
+                            <field name="amount_prepayment_held" readonly="1"/>
+                            <field name="amount_patient_credit" readonly="1"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Charge Lines" name="charge_lines">
+                            <field name="charge_line_ids" readonly="1">
+                                <list>
+                                    <field name="name"/>
+                                    <field name="description"/>
+                                    <field name="service_id" optional="show"/>
+                                    <field name="qty_billable"/>
+                                    <field name="qty_invoiced" optional="hide"/>
+                                    <field name="qty_credited" optional="hide"/>
+                                    <field name="unit_price"/>
+                                    <field name="discount" optional="hide"/>
+                                    <field name="amount_estimated" sum="Estimated"/>
+                                    <field name="amount_invoiced" sum="Invoiced" optional="hide"/>
+                                    <field name="amount_outstanding" sum="Outstanding" optional="hide"/>
+                                    <field name="charge_state" widget="badge"/>
+                                    <field name="delivery_state" widget="badge" optional="show"/>
+                                    <field name="invoice_state" widget="badge" optional="show"/>
+                                    <field name="operational_funding_state" widget="badge"/>
+                                    <field name="accounting_receipt_state" widget="badge" optional="show"/>
+                                    <field name="settlement_state" widget="badge" optional="hide"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Notes" name="notes">
+                            <field name="notes" placeholder="Internal notes..."/>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_billing_account_search" model="ir.ui.view">
+        <field name="name">hospital.billing.account.search</field>
+        <field name="model">hospital.billing.account</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="encounter_id"/>
+                <filter string="Open" name="open" domain="[('state', '=', 'open')]"/>
+                <filter string="Settled" name="settled" domain="[('state', '=', 'settled')]"/>
+                <filter string="Closed" name="closed" domain="[('state', '=', 'closed')]"/>
+                <separator/>
+                <filter string="Outstanding Balance" name="outstanding" domain="[('amount_outstanding', '>', 0)]"/>
+                <filter string="To Invoice" name="to_invoice" domain="[('amount_to_invoice', '>', 0)]"/>
+                <filter string="Clearance Pending" name="clearance_pending"
+                    domain="[('financial_clearance_state', '=', 'pending')]"/>
+                <filter string="Patient Credit Owed" name="patient_credit"
+                    domain="[('amount_patient_credit', '>', 0)]"/>
+                <filter string="Advance Held" name="advance_held"
+                    domain="[('amount_prepayment_held', '>', 0)]"/>
+                <filter string="Operationally Funded" name="funded"
+                    domain="[('operational_funding_state', '=', 'funded')]"/>
+                <filter string="Receipt Accounting Unposted" name="accounting_unposted"
+                    domain="[('accounting_receipt_state', '=', 'unposted')]"/>
+                <filter string="Not Invoiced" name="not_invoiced"
+                    domain="[('invoice_state', '=', 'not_invoiced')]"/>
+                <filter string="Adjustment Required" name="adjustment_required"
+                    domain="[('adjustment_required_count', '>', 0)]"/>
+                <separator/>
+                <filter string="Active" name="active" domain="[('active', '=', True)]"/>
+                <filter string="Archived" name="archived" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Patient" name="group_by_patient" context="{'group_by': 'patient_id'}"/>
+                    <filter string="State" name="group_by_state" context="{'group_by': 'state'}"/>
+                    <filter string="Payer Type" name="group_by_payer_type" context="{'group_by': 'payer_type'}"/>
+                    <filter string="Operational Funding" name="group_by_funding"
+                        context="{'group_by': 'operational_funding_state'}"/>
+                    <filter string="Receipt Accounting" name="group_by_accounting_receipt"
+                        context="{'group_by': 'accounting_receipt_state'}"/>
+                    <filter string="Invoice State" name="group_by_invoice_state"
+                        context="{'group_by': 'invoice_state'}"/>
+                    <filter string="Settlement" name="group_by_settlement"
+                        context="{'group_by': 'settlement_state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_billing_account" model="ir.actions.act_window">
+        <field name="name">Billing Accounts</field>
+        <field name="res_model">hospital.billing.account</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_billing_account_search"/>
+        <field name="context">{'search_default_active': 1}</field>
+    </record>
+
+    <record id="view_hospital_encounter_form_billing" model="ir.ui.view">
+        <field name="name">hospital.encounter.form.billing</field>
+        <field name="model">hospital.encounter</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_encounter_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button name="action_view_billing_account" type="object"
+                    class="oe_stat_button" icon="fa-money"
+                    invisible="not billing_account_id">
+                    <div class="o_stat_info">
+                        <span class="o_stat_text">Billing</span>
+                        <span class="o_stat_text">Account</span>
+                    </div>
+                </button>
+            </xpath>
+            <xpath expr="//group[@name='payer']" position="after">
+                <group string="Billing" invisible="not billing_account_id">
+                    <field name="billing_account_id" readonly="1"/>
+                    <field name="financial_clearance_state" readonly="1"/>
+                </group>
+            </xpath>
+        </field>
+    </record>
+</odoo>

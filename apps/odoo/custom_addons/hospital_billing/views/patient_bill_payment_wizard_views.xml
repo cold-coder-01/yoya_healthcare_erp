@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_patient_bill_payment_wizard_form" model="ir.ui.view">
+        <field name="name">hospital.patient.bill.payment.wizard.form</field>
+        <field name="model">hospital.patient.bill.payment.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Register Payment">
+                <group>
+                    <group string="Bill">
+                        <field name="bill_id" readonly="1"/>
+                        <field name="amount_due" string="Remaining Due" readonly="1"/>
+                        <field name="currency_id" invisible="1"/>
+                    </group>
+                    <group string="Payment">
+                        <field name="payment_date"/>
+                        <field name="amount"/>
+                        <field name="payment_method"/>
+                        <field name="payment_reference"
+                            invisible="payment_method == 'cash' or not payment_method"
+                        />
+                    </group>
+                </group>
+                <group>
+                    <field name="notes" placeholder="Notes..."/>
+                </group>
+                <footer>
+                    <button
+                        name="action_confirm_payment"
+                        string="Confirm Payment"
+                        type="object"
+                        class="btn-primary"
+                    />
+                    <button string="Cancel" class="btn-secondary" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+</odoo>

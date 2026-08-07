@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo noupdate="1">
+    <record id="seq_hospital_patient" model="ir.sequence">
+        <field name="name">Patient Sequence</field>
+        <field name="code">hospital.patient.sequence</field>
+        <field name="prefix">HMS</field>
+        <field name="padding">4</field>
+        <field name="number_next">1</field>
+        <field name="number_increment">1</field>
+    </record>
+
+    <record id="seq_hospital_appointment" model="ir.sequence">
+        <field name="name">Appointment Sequence</field>
+        <field name="code">hospital.appointment.sequence</field>
+        <field name="prefix">APP</field>
+        <field name="padding">4</field>
+        <field name="number_next">1</field>
+        <field name="number_increment">1</field>
+    </record>
+
+    <record id="seq_hospital_patient_consent" model="ir.sequence">
+        <field name="name">Patient Consent Sequence</field>
+        <field name="code">hospital.patient.consent.sequence</field>
+        <field name="prefix">CONS</field>
+        <field name="padding">4</field>
+        <field name="number_next">1</field>
+        <field name="number_increment">1</field>
+    </record>
+
+    <record id="seq_hospital_prescription" model="ir.sequence">
+        <field name="name">Prescription Sequence</field>
+        <field name="code">hospital.prescription.sequence</field>
+        <field name="prefix">RX</field>
+        <field name="padding">4</field>
+        <field name="number_next">1</field>
+        <field name="number_increment">1</field>
+    </record>
+
+    <record id="seq_hospital_treatment_plan" model="ir.sequence">
+        <field name="name">Treatment Plan Sequence</field>
+        <field name="code">hospital.treatment.plan.sequence</field>
+        <field name="prefix">TP</field>
+        <field name="padding">4</field>
+        <field name="number_next">1</field>
+        <field name="number_increment">1</field>
+    </record>
+
+    <record id="seq_hospital_laboratory_request" model="ir.sequence">
+        <field name="name">Laboratory Request Sequence</field>
+        <field name="code">hospital.laboratory.request.sequence</field>
+        <field name="prefix">LABREQ</field>
+        <field name="padding">4</field>
+        <field name="number_next">1</field>
+        <field name="number_increment">1</field>
+    </record>
+
+    <record id="seq_hospital_laboratory_result" model="ir.sequence">
+        <field name="name">Laboratory Result Sequence</field>
+        <field name="code">hospital.laboratory.result.sequence</field>
+        <field name="prefix">LABRES</field>
+        <field name="padding">4</field>
+        <field name="number_next">1</field>
+        <field name="number_increment">1</field>
+    </record>
+
+    <record id="seq_hospital_encounter" model="ir.sequence">
+        <field name="name">Encounter Sequence</field>
+        <field name="code">hospital.encounter.sequence</field>
+        <field name="prefix">ENC</field>
+        <field name="padding">5</field>
+        <field name="number_next">1</field>
+        <field name="number_increment">1</field>
+    </record>
+</odoo>

@@ -1,0 +1,583 @@
+/* ================================================================
+   Hospital Billing — Patient Bill Form UI Pattern V1 (Task 25B)
+   Scoped under .hospital_billing_profile
+   ================================================================ */
+
+.hospital_billing_profile {
+    --billing-primary:      #006A4F;
+    --billing-primary-dark: #005A43;
+    --billing-primary-soft: rgba(0, 106, 79, 0.08);
+    --billing-border:       rgba(0, 106, 79, 0.14);
+    --billing-border-plain: #dfe7e3;
+    --billing-card:         #ffffff;
+    --billing-page:         #f7faf9;
+    --billing-text:         #1f2933;
+    --billing-muted:        #6b7280;
+    --billing-shadow:       0 6px 18px rgba(0, 0, 0, 0.06);
+    --billing-shadow-sm:    0 2px 6px rgba(31, 41, 51, 0.04);
+    --billing-radius:       8px;
+    --billing-amber:        #F59E0B;
+    --billing-danger:       #DC2626;
+}
+
+/* ── Sheet ───────────────────────────────────── */
+
+.hospital_billing_profile .o_form_sheet,
+.o_form_sheet.hospital_billing_profile {
+    background-color: var(--billing-page) !important;
+    border: 1px solid var(--billing-border-plain) !important;
+    border-radius: 10px !important;
+    box-shadow: var(--billing-shadow) !important;
+    color: var(--billing-text);
+    margin-top: 10px !important;
+    max-width: none !important;
+    padding: 18px 22px 24px !important;
+}
+
+/* ── Statusbar ───────────────────────────────── */
+
+.hospital_billing_profile .o_form_statusbar,
+.hospital_billing_profile .o_statusbar_status {
+    background-color: #ffffff !important;
+}
+
+.hospital_billing_profile .o_statusbar_status .o_arrow_button_current,
+.hospital_billing_profile .o_statusbar_status .o_arrow_button_current.disabled,
+.hospital_billing_profile .o_statusbar_status .o_arrow_button_current:disabled {
+    background-color: var(--billing-primary) !important;
+    border-color: var(--billing-primary) !important;
+    color: #ffffff !important;
+}
+
+.hospital_billing_profile .o_statusbar_status .o_arrow_button:not(.o_arrow_button_current) {
+    background-color: #f4f7f6 !important;
+    color: #52616b !important;
+}
+
+/* ── Workflow Buttons ────────────────────────── */
+
+.hospital_billing_profile header .btn-primary {
+    background-color: var(--billing-primary) !important;
+    border-color: var(--billing-primary) !important;
+    color: #ffffff !important;
+    font-weight: 600 !important;
+}
+
+.hospital_billing_profile header .btn-primary:hover,
+.hospital_billing_profile header .btn-primary:focus {
+    background-color: var(--billing-primary-dark) !important;
+    border-color: var(--billing-primary-dark) !important;
+}
+
+/* ── Hero Header ─────────────────────────────── */
+
+.hospital_billing_profile .billing_hero {
+    align-items: center;
+    background-color: var(--billing-card);
+    border: 1px solid var(--billing-border-plain);
+    border-radius: 10px;
+    box-shadow: var(--billing-shadow-sm);
+    display: flex;
+    gap: 16px;
+    margin-bottom: 16px;
+    padding: 16px 20px;
+}
+
+.hospital_billing_profile .billing_hero_icon {
+    align-items: center;
+    background-color: var(--billing-primary);
+    border-radius: 12px;
+    color: #ffffff;
+    display: flex;
+    flex: 0 0 72px;
+    font-size: 32px;
+    height: 72px;
+    justify-content: center;
+    width: 72px;
+}
+
+.hospital_billing_profile .billing_hero_content {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.hospital_billing_profile .billing_hero_label {
+    color: var(--billing-muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    line-height: 1.2;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+}
+
+.hospital_billing_profile .billing_hero_ref .o_field_widget,
+.hospital_billing_profile .billing_hero_ref .o_field_char,
+.hospital_billing_profile .billing_hero_ref span {
+    color: var(--billing-text) !important;
+    font-size: 28px !important;
+    font-weight: 700 !important;
+    line-height: 1.1;
+}
+
+.hospital_billing_profile .billing_hero_ref input {
+    border: 0 !important;
+    color: var(--billing-text) !important;
+    font-size: 28px !important;
+    font-weight: 700 !important;
+    line-height: 1.1;
+    padding: 0 !important;
+}
+
+.hospital_billing_profile .billing_hero_sub {
+    color: var(--billing-muted);
+    font-size: 13px;
+    margin-top: 3px;
+}
+
+.hospital_billing_profile .billing_hero_right {
+    align-items: flex-end;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex-shrink: 0;
+}
+
+.hospital_billing_profile .billing_hero_meta {
+    display: grid;
+    gap: 4px 20px;
+    grid-template-columns: 1fr 1fr;
+}
+
+.hospital_billing_profile .billing_meta_item {
+    display: flex;
+    flex-direction: column;
+    min-width: 110px;
+}
+
+.hospital_billing_profile .billing_meta_label {
+    color: var(--billing-muted);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    line-height: 1.2;
+    text-transform: uppercase;
+}
+
+.hospital_billing_profile .billing_meta_value,
+.hospital_billing_profile .billing_meta_value .o_field_widget,
+.hospital_billing_profile .billing_meta_value span {
+    color: var(--billing-text) !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    line-height: 1.4;
+}
+
+.hospital_billing_profile .billing_meta_value .o_field_widget input {
+    border: 0 !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    padding: 0 !important;
+}
+
+/* ── State Ribbon ────────────────────────────── */
+
+.hospital_billing_profile .billing_state_ribbon {
+    align-items: center;
+    border-radius: 8px;
+    display: flex;
+    font-size: 13px;
+    font-weight: 700;
+    gap: 7px;
+    letter-spacing: 0.03em;
+    padding: 8px 18px;
+    white-space: nowrap;
+}
+
+.hospital_billing_profile .billing_state_ribbon .fa {
+    font-size: 15px;
+}
+
+.hospital_billing_profile .billing_state_paid {
+    background-color: var(--billing-primary);
+    color: #ffffff;
+}
+
+.hospital_billing_profile .billing_state_partial {
+    background-color: var(--billing-amber);
+    color: #ffffff;
+}
+
+.hospital_billing_profile .billing_state_confirmed {
+    background-color: var(--billing-primary-soft);
+    border: 1px solid var(--billing-border);
+    color: var(--billing-primary);
+}
+
+.hospital_billing_profile .billing_state_draft {
+    background-color: #f3f4f6;
+    color: #6b7280;
+}
+
+.hospital_billing_profile .billing_state_cancelled {
+    background-color: rgba(220, 38, 38, 0.08);
+    color: var(--billing-danger);
+}
+
+/* ── KPI Summary Row ─────────────────────────── */
+
+.hospital_billing_profile .billing_kpi_row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.hospital_billing_profile .billing_kpi_card {
+    align-items: center;
+    background-color: var(--billing-card);
+    border: 1px solid var(--billing-border-plain);
+    border-radius: var(--billing-radius);
+    box-shadow: var(--billing-shadow-sm);
+    display: flex;
+    flex: 1 1 168px;
+    gap: 12px;
+    min-height: 70px;
+    min-width: 0;
+    padding: 10px 14px;
+}
+
+.hospital_billing_profile .billing_kpi_icon {
+    align-items: center;
+    background-color: var(--billing-primary-soft);
+    border-radius: var(--billing-radius);
+    color: var(--billing-primary);
+    display: flex;
+    flex: 0 0 40px;
+    font-size: 19px;
+    height: 40px;
+    justify-content: center;
+    width: 40px;
+}
+
+.hospital_billing_profile .billing_kpi_icon_amber {
+    background-color: rgba(245, 158, 11, 0.1);
+    color: var(--billing-amber);
+}
+
+.hospital_billing_profile .billing_kpi_icon_green {
+    background-color: var(--billing-primary-soft);
+    color: var(--billing-primary);
+}
+
+.hospital_billing_profile .billing_kpi_body {
+    min-width: 0;
+    overflow: hidden;
+}
+
+.hospital_billing_profile .billing_kpi_label {
+    color: var(--billing-muted);
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    line-height: 1.2;
+    margin-bottom: 3px;
+    text-transform: uppercase;
+}
+
+.hospital_billing_profile .billing_kpi_value,
+.hospital_billing_profile .billing_kpi_value .o_field_widget {
+    color: var(--billing-text) !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    line-height: 1.25;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.hospital_billing_profile .billing_kpi_value a {
+    color: var(--billing-primary) !important;
+    font-weight: 600 !important;
+    text-decoration: none !important;
+}
+
+.hospital_billing_profile .billing_kpi_value_green,
+.hospital_billing_profile .billing_kpi_value_green .o_field_widget {
+    color: var(--billing-primary) !important;
+}
+
+.hospital_billing_profile .billing_kpi_value .badge {
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    padding: 4px 10px !important;
+}
+
+.hospital_billing_profile .billing_kpi_due_paid_note {
+    color: var(--billing-primary);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    margin-top: 2px;
+    text-transform: uppercase;
+}
+
+/* ── Two-Column Info Grid ────────────────────── */
+
+.hospital_billing_profile .billing_info_grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    margin-bottom: 14px;
+}
+
+.hospital_billing_profile .billing_info_card {
+    background-color: var(--billing-card);
+    border: 1px solid var(--billing-border-plain);
+    border-radius: var(--billing-radius);
+    box-shadow: var(--billing-shadow-sm);
+    min-width: 0;
+    padding: 12px 16px 14px;
+}
+
+.hospital_billing_profile .billing_card_title {
+    align-items: center;
+    border-bottom: 1px solid var(--billing-border-plain);
+    color: var(--billing-primary);
+    display: flex;
+    font-size: 11.5px;
+    font-weight: 700;
+    gap: 8px;
+    letter-spacing: 0.05em;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    text-transform: uppercase;
+}
+
+.hospital_billing_profile .billing_card_title .fa {
+    color: var(--billing-primary);
+    font-size: 13px;
+}
+
+/* Compact group inside info cards */
+.hospital_billing_profile .billing_compact_group .o_inner_group,
+.hospital_billing_profile .billing_compact_group {
+    margin-bottom: 0 !important;
+}
+
+.hospital_billing_profile .billing_compact_group .o_inner_group > tbody > tr > td {
+    padding-bottom: 5px !important;
+    padding-top: 5px !important;
+}
+
+.hospital_billing_profile .billing_compact_group .o_td_label label {
+    color: var(--billing-text) !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    white-space: nowrap;
+}
+
+.hospital_billing_profile .billing_compact_group .o_field_widget {
+    font-size: 13px;
+}
+
+.hospital_billing_profile .billing_compact_group .badge {
+    font-size: 12px !important;
+    padding: 3px 10px !important;
+}
+
+/* Totals separator inside Payment Details card */
+.hospital_billing_profile .billing_totals_separator {
+    border-top: 1px solid var(--billing-border-plain);
+    color: var(--billing-muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    margin: 10px 0 6px;
+    padding-top: 8px;
+    text-transform: uppercase;
+}
+
+/* Fully Paid Badge */
+.hospital_billing_profile .billing_fully_paid_chip {
+    align-items: center;
+    background-color: var(--billing-primary-soft);
+    border: 1px solid rgba(0, 106, 79, 0.2);
+    border-radius: 20px;
+    color: var(--billing-primary);
+    display: inline-flex;
+    font-size: 12px;
+    font-weight: 700;
+    gap: 6px;
+    margin-top: 10px;
+    padding: 4px 14px;
+}
+
+/* ── Notebook / Tabs ─────────────────────────── */
+
+.hospital_billing_profile .o_notebook .nav-tabs .nav-link {
+    color: var(--billing-muted) !important;
+    font-weight: 500 !important;
+}
+
+.hospital_billing_profile .o_notebook .nav-tabs .nav-link:hover,
+.hospital_billing_profile .o_notebook .nav-tabs .nav-link:focus {
+    background-color: #e6f2ef !important;
+    border-color: #b8d8cf #b8d8cf #dee2e6 !important;
+    color: var(--billing-primary) !important;
+}
+
+.hospital_billing_profile .o_notebook .nav-tabs .nav-link.active {
+    border-top: 2px solid var(--billing-primary) !important;
+    color: var(--billing-primary) !important;
+    font-weight: 700 !important;
+}
+
+.hospital_billing_profile .o_notebook .tab-content {
+    background-color: var(--billing-card);
+    border: 1px solid var(--billing-border-plain);
+    border-radius: 0 0 var(--billing-radius) var(--billing-radius);
+    border-top: 0;
+    padding: 14px 16px;
+}
+
+/* ── Bill Lines Table ────────────────────────── */
+
+.hospital_billing_profile .o_list_renderer thead th {
+    background-color: #f3f8f6 !important;
+    color: var(--billing-text) !important;
+    font-size: 12px !important;
+    font-weight: 700 !important;
+}
+
+.hospital_billing_profile .o_list_renderer tbody td {
+    font-size: 12.5px;
+}
+
+/* Totals block in Bill Lines tab */
+.hospital_billing_profile .oe_subtotal_footer .o_td_label label {
+    color: var(--billing-text) !important;
+    font-weight: 600 !important;
+}
+
+.hospital_billing_profile .oe_subtotal_footer .o_field_widget {
+    font-weight: 600;
+}
+
+/* ── Payments Tab ────────────────────────────── */
+
+.hospital_billing_profile .billing_section_title {
+    align-items: center;
+    color: var(--billing-primary);
+    display: flex;
+    font-size: 11.5px;
+    font-weight: 700;
+    gap: 8px;
+    letter-spacing: 0.05em;
+    margin-bottom: 10px;
+    text-transform: uppercase;
+}
+
+.hospital_billing_profile .billing_section_title .fa {
+    font-size: 13px;
+}
+
+.hospital_billing_profile .billing_payment_total {
+    align-items: center;
+    border-top: 1px solid var(--billing-border-plain);
+    display: flex;
+    font-weight: 600;
+    gap: 10px;
+    justify-content: flex-end;
+    margin-top: 10px;
+    padding-top: 8px;
+}
+
+.hospital_billing_profile .billing_payment_total_label {
+    color: var(--billing-muted);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.hospital_billing_profile .billing_payment_total_value,
+.hospital_billing_profile .billing_payment_total_value .o_field_widget {
+    color: var(--billing-primary) !important;
+    font-size: 14px !important;
+    font-weight: 700 !important;
+}
+
+/* ── Notes Tab ───────────────────────────────── */
+
+.hospital_billing_profile .billing_notes_card .billing_notes_title {
+    align-items: center;
+    color: var(--billing-primary);
+    display: flex;
+    font-size: 11.5px;
+    font-weight: 700;
+    gap: 8px;
+    letter-spacing: 0.05em;
+    margin-bottom: 10px;
+    text-transform: uppercase;
+}
+
+.hospital_billing_profile .billing_notes_card .billing_notes_title .fa {
+    font-size: 13px;
+}
+
+.hospital_billing_profile .billing_notes_card .o_field_widget {
+    width: 100%;
+}
+
+.hospital_billing_profile .billing_notes_card textarea {
+    background-color: #f7faf9;
+    border: 1px solid var(--billing-border-plain) !important;
+    border-radius: 6px;
+    min-height: 90px;
+    width: 100%;
+}
+
+/* ── Responsive ──────────────────────────────── */
+
+@media (max-width: 991.98px) {
+    .hospital_billing_profile .billing_info_grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .hospital_billing_profile .billing_kpi_card {
+        flex-basis: calc(50% - 10px);
+    }
+
+    .hospital_billing_profile .billing_hero_right {
+        display: none;
+    }
+}
+
+@media (max-width: 575.98px) {
+    .hospital_billing_profile .o_form_sheet,
+    .o_form_sheet.hospital_billing_profile {
+        padding: 12px !important;
+    }
+
+    .hospital_billing_profile .billing_kpi_card {
+        flex-basis: 100%;
+    }
+
+    .hospital_billing_profile .billing_hero {
+        flex-wrap: wrap;
+    }
+
+    .hospital_billing_profile .billing_hero_icon {
+        flex: 0 0 54px;
+        font-size: 24px;
+        height: 54px;
+        width: 54px;
+    }
+
+    .hospital_billing_profile .billing_hero_ref .o_field_widget,
+    .hospital_billing_profile .billing_hero_ref span,
+    .hospital_billing_profile .billing_hero_ref input {
+        font-size: 22px !important;
+    }
+}

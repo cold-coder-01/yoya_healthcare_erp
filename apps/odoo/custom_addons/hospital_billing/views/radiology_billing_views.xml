@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_radiology_exam_form_billing" model="ir.ui.view">
+        <field name="name">hospital.radiology.exam.form.billing</field>
+        <field name="model">hospital.radiology.exam</field>
+        <field name="inherit_id" ref="hospital_radiology.view_hospital_radiology_exam_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//group/group[2]" position="inside">
+                <field name="billing_service_id"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_hospital_radiology_request_form_billing" model="ir.ui.view">
+        <field name="name">hospital.radiology.request.form.billing</field>
+        <field name="model">hospital.radiology.request</field>
+        <field name="inherit_id" ref="hospital_radiology.view_hospital_radiology_request_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//header/button[@name='action_mark_in_progress']" position="before">
+                <button name="action_record_payment" string="Record Payment / Advance" type="object" class="btn-secondary" invisible="state not in ('requested', 'scheduled')" groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+            </xpath>
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button name="action_view_charges" type="object" class="oe_stat_button" icon="fa-money" invisible="not id">
+                    <field name="charge_count" widget="statinfo" string="Charges"/>
+                </button>
+                <button name="action_view_receipts" type="object" class="oe_stat_button" icon="fa-credit-card" invisible="not id">
+                    <field name="receipt_count" widget="statinfo" string="Receipts"/>
+                </button>
+            </xpath>
+            <xpath expr="//sheet" position="inside">
+                <div class="alert alert-warning" invisible="not billing_blocked">
+                    <strong>Financial clearance required.</strong>
+                    <field name="billing_clearance_message" readonly="1" nolabel="1"/>
+                </div>
+            </xpath>
+            <xpath expr="//field[@name='diagnosis_id']" position="after">
+                <field name="encounter_id" readonly="state not in ('draft', 'requested')"/>
+                <field name="completed_at" readonly="1" invisible="state != 'completed'"/>
+                <field name="completed_by_id" readonly="1" invisible="state != 'completed'"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>

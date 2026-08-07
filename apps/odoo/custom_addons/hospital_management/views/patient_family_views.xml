@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_patient_family_list" model="ir.ui.view">
+        <field name="name">hospital.patient.family.list</field>
+        <field name="model">hospital.patient.family</field>
+        <field name="arch" type="xml">
+            <list string="Patient Family Members">
+                <field name="patient_id"/>
+                <field name="name"/>
+                <field name="relation"/>
+                <field name="phone"/>
+                <field name="email"/>
+                <field name="is_emergency_contact"/>
+                <field name="has_medical_history"/>
+                <field name="active"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_patient_family_form" model="ir.ui.view">
+        <field name="name">hospital.patient.family.form</field>
+        <field name="model">hospital.patient.family</field>
+        <field name="arch" type="xml">
+            <form string="Patient Family Member">
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="patient_id"/>
+                            <field name="name"/>
+                            <field name="relation"/>
+                            <field name="phone"/>
+                            <field name="email"/>
+                        </group>
+                        <group>
+                            <field name="is_emergency_contact"/>
+                            <field name="has_medical_history"/>
+                            <field name="active"/>
+                        </group>
+                    </group>
+                    <group>
+                        <field name="address"/>
+                        <field name="medical_history_notes"/>
+                        <field name="notes"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_patient_family_search" model="ir.ui.view">
+        <field name="name">hospital.patient.family.search</field>
+        <field name="model">hospital.patient.family</field>
+        <field name="arch" type="xml">
+            <search string="Patient Family Members">
+                <field name="patient_id"/>
+                <field name="name"/>
+                <field name="phone"/>
+                <field name="email"/>
+                <filter string="Emergency Contacts" name="emergency_contacts" domain="[('is_emergency_contact', '=', True)]"/>
+                <filter string="Has Medical History" name="has_medical_history" domain="[('has_medical_history', '=', True)]"/>
+                <filter string="Archived" name="inactive" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Patient" name="group_by_patient" context="{'group_by': 'patient_id'}"/>
+                    <filter string="Relation" name="group_by_relation" context="{'group_by': 'relation'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_patient_family" model="ir.actions.act_window">
+        <field name="name">Family Members</field>
+        <field name="res_model">hospital.patient.family</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_patient_family_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Record patient family members and emergency contacts.
+            </p>
+        </field>
+    </record>
+</odoo>

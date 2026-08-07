@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_medical_alert_list" model="ir.ui.view">
+        <field name="name">hospital.medical.alert.list</field>
+        <field name="model">hospital.medical.alert</field>
+        <field name="arch" type="xml">
+            <list string="Medical Alerts">
+                <field name="name"/>
+                <field name="severity"/>
+                <field name="active"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_medical_alert_form" model="ir.ui.view">
+        <field name="name">hospital.medical.alert.form</field>
+        <field name="model">hospital.medical.alert</field>
+        <field name="arch" type="xml">
+            <form string="Medical Alert">
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="name"/>
+                            <field name="severity"/>
+                            <field name="active"/>
+                        </group>
+                        <group>
+                            <field name="description" placeholder="Describe the alert and how clinicians should respond."/>
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_medical_alert_search" model="ir.ui.view">
+        <field name="name">hospital.medical.alert.search</field>
+        <field name="model">hospital.medical.alert</field>
+        <field name="arch" type="xml">
+            <search string="Medical Alerts">
+                <field name="name"/>
+                <field name="severity"/>
+                <filter string="Low" name="severity_low" domain="[('severity', '=', 'low')]"/>
+                <filter string="Medium" name="severity_medium" domain="[('severity', '=', 'medium')]"/>
+                <filter string="High" name="severity_high" domain="[('severity', '=', 'high')]"/>
+                <filter string="Critical" name="severity_critical" domain="[('severity', '=', 'critical')]"/>
+                <filter string="Archived" name="inactive" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Severity" name="group_by_severity" context="{'group_by': 'severity'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_medical_alert" model="ir.actions.act_window">
+        <field name="name">Medical Alerts</field>
+        <field name="res_model">hospital.medical.alert</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_medical_alert_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Create reusable medical alerts for patient safety and clinical risk awareness.
+            </p>
+        </field>
+    </record>
+
+</odoo>

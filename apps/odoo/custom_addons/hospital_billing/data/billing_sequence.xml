@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- noupdate="1" is LOAD-BEARING: without it every `-u hospital_billing` rewrites these
+     ir.sequence records from XML, resetting number_next to 1 and reissuing identifiers
+     that are already in use. That is what produced three different charges all named
+     CHRG000063 on the test clone. -->
+<odoo noupdate="1">
+    <record id="sequence_hospital_patient_bill" model="ir.sequence">
+        <field name="name">Patient Bill Sequence</field>
+        <field name="code">hospital.patient.bill.sequence</field>
+        <field name="prefix">BILL</field>
+        <field name="padding">5</field>
+        <field name="number_next">1</field>
+    </record>
+
+    <record id="sequence_hospital_patient_bill_payment" model="ir.sequence">
+        <field name="name">Patient Bill Payment Sequence</field>
+        <field name="code">hospital.patient.bill.payment.sequence</field>
+        <field name="prefix">PAY</field>
+        <field name="padding">5</field>
+        <field name="number_next">1</field>
+    </record>
+
+    <record id="sequence_hospital_billing_account" model="ir.sequence">
+        <field name="name">Billing Account Sequence</field>
+        <field name="code">hospital.billing.account.sequence</field>
+        <field name="prefix">ACC</field>
+        <field name="padding">5</field>
+        <field name="number_next">1</field>
+    </record>
+
+    <record id="sequence_hospital_charge_receipt" model="ir.sequence">
+        <field name="name">Charge Payment Receipt Sequence</field>
+        <field name="code">hospital.charge.receipt.sequence</field>
+        <field name="prefix">RCPT</field>
+        <field name="padding">6</field>
+        <field name="number_next">1</field>
+    </record>
+
+    <record id="sequence_hospital_charge_line" model="ir.sequence">
+        <field name="name">Charge Line Sequence</field>
+        <field name="code">hospital.charge.line.sequence</field>
+        <field name="prefix">CHRG</field>
+        <field name="padding">6</field>
+        <field name="number_next">1</field>
+    </record>
+</odoo>

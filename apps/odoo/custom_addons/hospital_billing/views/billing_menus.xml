@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="menu_hospital_billing_root" model="ir.ui.menu">
+        <field name="name">Billing</field>
+        <field name="sequence">50</field>
+        <field name="parent_id" eval="False"/>
+        <field name="web_icon">hospital_management,static/description/hospital.svg</field>
+        <field name="groups_id" eval="[(6, 0, [
+            ref('hospital_management.group_hospital_system_administrator'),
+            ref('hospital_management.group_hospital_manager'),
+            ref('hospital_management.group_hospital_accountant'),
+            ref('hospital_management.group_hospital_receptionist'),
+            ref('hospital_management.group_hospital_doctor'),
+            ref('hospital_management.group_hospital_nurse'),
+            ref('hospital_management.group_hospital_pharmacist'),
+            ref('hospital_management.group_hospital_lab_technician'),
+            ref('hospital_management.group_hospital_data_protection_officer'),
+            ref('base.group_system')
+        ])]"/>
+    </record>
+
+    <record id="menu_hospital_patient_bills" model="ir.ui.menu">
+        <field name="name">Patient Bills</field>
+        <field name="parent_id" ref="menu_hospital_billing_root"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_patient_bill')"/>
+        <field name="sequence">10</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_billing_accounts" model="ir.ui.menu">
+        <field name="name">Billing Accounts</field>
+        <field name="parent_id" ref="menu_hospital_billing_root"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_billing_account')"/>
+        <field name="sequence">12</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_charge_lines" model="ir.ui.menu">
+        <field name="name">Charge Lines</field>
+        <field name="parent_id" ref="menu_hospital_billing_root"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_charge_line')"/>
+        <field name="sequence">14</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_charge_receipts" model="ir.ui.menu">
+        <field name="name">Payment Receipts</field>
+        <field name="parent_id" ref="menu_hospital_billing_root"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_charge_receipt')"/>
+        <field name="sequence">16</field>
+        <field name="web_icon" eval="False"/>
+        <field name="groups_id" eval="[(6, 0, [
+            ref('hospital_management.group_hospital_receptionist'),
+            ref('hospital_management.group_hospital_accountant'),
+            ref('hospital_management.group_hospital_manager'),
+            ref('hospital_management.group_hospital_system_administrator'),
+            ref('base.group_system')
+        ])]"/>
+    </record>
+
+    <record id="menu_hospital_billing_services_main" model="ir.ui.menu">
+        <field name="name">Billing Services</field>
+        <field name="parent_id" ref="menu_hospital_billing_root"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_billing_service')"/>
+        <field name="sequence">20</field>
+        <field name="web_icon" eval="False"/>
+        <field name="groups_id" eval="[(6, 0, [
+            ref('hospital_management.group_hospital_system_administrator'),
+            ref('hospital_management.group_hospital_manager'),
+            ref('hospital_management.group_hospital_accountant'),
+            ref('base.group_system')
+        ])]"/>
+    </record>
+
+    <record id="menu_hospital_billing_configuration" model="ir.ui.menu">
+        <field name="name">Configuration</field>
+        <field name="parent_id" ref="menu_hospital_billing_root"/>
+        <field name="sequence">90</field>
+        <field name="web_icon" eval="False"/>
+        <field name="groups_id" eval="[(6, 0, [
+            ref('hospital_management.group_hospital_system_administrator'),
+            ref('hospital_management.group_hospital_manager'),
+            ref('hospital_management.group_hospital_accountant'),
+            ref('base.group_system')
+        ])]"/>
+    </record>
+
+    <record id="menu_hospital_billing_configuration_services" model="ir.ui.menu">
+        <field name="name">Billing Services</field>
+        <field name="parent_id" ref="menu_hospital_billing_configuration"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_billing_service')"/>
+        <field name="sequence">10</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+</odoo>

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_pain_level_guide_form" model="ir.ui.view">
+        <field name="name">hospital.pain.level.guide.form</field>
+        <field name="model">hospital.pain.level.guide</field>
+        <field name="arch" type="xml">
+            <form string="Pain Level">
+                <sheet>
+                    <field name="guide_html" nolabel="1" readonly="1"/>
+                </sheet>
+                <footer>
+                    <button string="Close" special="cancel" class="btn-primary"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+</odoo>

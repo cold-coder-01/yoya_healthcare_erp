@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_patient_evaluation_list" model="ir.ui.view">
+        <field name="name">hospital.patient.evaluation.list</field>
+        <field name="model">hospital.patient.evaluation</field>
+        <field name="arch" type="xml">
+            <list string="Patient Evaluations">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="physician_id"/>
+                <field name="evaluation_date"/>
+                <field name="temperature"/>
+                <field name="heart_rate"/>
+                <field name="systolic_bp"/>
+                <field name="diastolic_bp"/>
+                <field name="bmi"/>
+                <field name="pain_level"/>
+                <field name="state"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_patient_evaluation_form" model="ir.ui.view">
+        <field name="name">hospital.patient.evaluation.form</field>
+        <field name="model">hospital.patient.evaluation</field>
+        <field name="arch" type="xml">
+            <form string="Patient Evaluation" class="hospital_evaluation_profile">
+                <header>
+                    <button name="action_done" string="Done" type="object" class="btn-primary hospital_eval_action_primary" invisible="state != 'draft'"/>
+                    <button name="action_cancel" string="Cancel" type="object" class="hospital_eval_action_secondary" invisible="state == 'cancelled'"/>
+                    <button name="action_reset_to_draft" string="Reset to Draft" type="object" class="hospital_eval_action_secondary" invisible="state not in ('done', 'cancelled')"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,done,cancelled"/>
+                </header>
+                <sheet class="hospital_evaluation_profile hospital_evaluation_sheet">
+                    <div class="oe_title hospital_eval_title">
+                        <h1><field name="name" readonly="1"/></h1>
+                        <div class="hospital_eval_subtitle">Patient Evaluation</div>
+                    </div>
+
+                    <div class="hospital_eval_kpi_row">
+                        <div class="hospital_eval_kpi_card">
+                            <div class="hospital_eval_kpi_icon"><i class="fa fa-user"/></div>
+                            <div class="hospital_eval_kpi_content"><div class="hospital_eval_kpi_label">Patient</div><div class="hospital_eval_kpi_value"><field name="patient_id" readonly="1"/></div></div>
+                        </div>
+                        <div class="hospital_eval_kpi_card">
+                            <div class="hospital_eval_kpi_icon"><i class="fa fa-user-md"/></div>
+                            <div class="hospital_eval_kpi_content"><div class="hospital_eval_kpi_label">Physician</div><div class="hospital_eval_kpi_value"><field name="physician_id" readonly="1"/></div></div>
+                        </div>
+                        <div class="hospital_eval_kpi_card">
+                            <div class="hospital_eval_kpi_icon"><i class="fa fa-calendar"/></div>
+                            <div class="hospital_eval_kpi_content"><div class="hospital_eval_kpi_label">Evaluation Date</div><div class="hospital_eval_kpi_value"><field name="evaluation_date" readonly="1"/></div></div>
+                        </div>
+                        <div class="hospital_eval_kpi_card">
+                            <div class="hospital_eval_kpi_icon"><i class="fa fa-calendar-check-o"/></div>
+                            <div class="hospital_eval_kpi_content"><div class="hospital_eval_kpi_label">Appointment</div><div class="hospital_eval_kpi_value"><field name="appointment_id" readonly="1"/></div></div>
+                        </div>
+                        <div class="hospital_eval_kpi_card hospital_eval_state_kpi">
+                            <div class="hospital_eval_kpi_icon"><i class="fa fa-check-circle"/></div>
+                            <div class="hospital_eval_kpi_content"><div class="hospital_eval_kpi_label">State</div><div class="hospital_eval_kpi_value"><field name="state" readonly="1"/></div></div>
+                        </div>
+                    </div>
+
+                    <div class="hospital_eval_top_grid">
+                        <div class="hospital_eval_card hospital_eval_information_card">
+                            <div class="hospital_card_title"><i class="fa fa-clipboard"/><span>Evaluation</span></div>
+                            <group class="hospital_eval_compact_group">
+                                <field name="patient_id"/>
+                                <field name="physician_id"/>
+                                <field name="evaluation_date"/>
+                                <field name="appointment_id"/>
+                                <field name="age" readonly="1"/>
+                            </group>
+                        </div>
+                        <div class="hospital_eval_card hospital_eval_patient_card">
+                            <div class="hospital_card_title"><i class="fa fa-id-card-o"/><span>Patient Summary</span></div>
+                            <div class="hospital_eval_patient_summary">
+                                <group class="hospital_eval_compact_group hospital_eval_patient_fields">
+                                    <field name="active"/>
+                                    <field name="age" readonly="1"/>
+                                    <field name="patient_id" string="Patient ID" readonly="1"/>
+                                </group>
+                                <div class="hospital_eval_photo_block">
+                                    <span class="hospital_eval_photo_label">Patient Photo</span>
+                                    <field name="patient_image_1920" widget="image" class="oe_avatar hospital_eval_photo" options="{'preview_image': 'patient_image_1920'}"/>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <notebook class="hospital_eval_notebook">
+                        <page string="Details">
+                            <div class="hospital_eval_details_grid">
+                                <div class="hospital_eval_card hospital_eval_metric_card">
+                                    <div class="hospital_card_title"><i class="fa fa-balance-scale"/><span>Measurements</span></div>
+                                    <div class="hospital_eval_metric_rows">
+                                        <div class="hospital_eval_metric_row"><span class="hospital_eval_metric_label">Weight</span><field name="weight"/><span class="hospital_eval_unit">kg</span></div>
+                                        <div class="hospital_eval_metric_row"><span class="hospital_eval_metric_label">Height</span><field name="height"/><span class="hospital_eval_unit">cm</span></div>
+                                        <div class="hospital_eval_metric_row"><span class="hospital_eval_metric_label">Head Circumference</span><field name="head_circumference"/><span class="hospital_eval_unit">cm</span></div>
+                                        <div class="hospital_eval_metric_row"><span class="hospital_eval_metric_label">Body Mass Index</span><field name="bmi" readonly="1"/><span class="hospital_eval_unit">kg/m²</span></div>
+                                        <div class="hospital_eval_metric_row"><span class="hospital_eval_metric_label">BMI State</span><field name="bmi_state" readonly="1"/><span class="hospital_eval_unit"/></div>
+                                    </div>
+                                </div>
+                                <div class="hospital_eval_card hospital_eval_metric_card">
+                                    <div class="hospital_card_title"><i class="fa fa-heartbeat"/><span>Vital Signs</span></div>
+                                    <div class="hospital_eval_metric_rows">
+                                        <div class="hospital_eval_metric_row"><span class="hospital_eval_metric_label">Temp</span><field name="temperature"/><span class="hospital_eval_unit">°C</span></div>
+                                        <div class="hospital_eval_metric_row"><span class="hospital_eval_metric_label">HR</span><field name="heart_rate"/><span class="hospital_eval_unit">bpm</span></div>
+                                        <div class="hospital_eval_metric_row"><span class="hospital_eval_metric_label">RR</span><field name="respiratory_rate"/><span class="hospital_eval_unit">breaths/min</span></div>
+                                        <div class="hospital_eval_metric_row"><span class="hospital_eval_metric_label">Systolic BP</span><field name="systolic_bp"/><span class="hospital_eval_unit">mmHg</span></div>
+                                        <div class="hospital_eval_metric_row"><span class="hospital_eval_metric_label">Diastolic BP</span><field name="diastolic_bp"/><span class="hospital_eval_unit">mmHg</span></div>
+                                        <div class="hospital_eval_metric_row"><span class="hospital_eval_metric_label">SpO2</span><field name="spo2"/><span class="hospital_eval_unit">%</span></div>
+                                        <div class="hospital_eval_metric_row"><span class="hospital_eval_metric_label">RBS</span><field name="rbs"/><span class="hospital_eval_unit">mg/dL</span></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="hospital_eval_card hospital_eval_pain_card">
+                                <div class="hospital_card_title hospital_eval_pain_title">
+                                    <div><i class="fa fa-exclamation-circle"/><span>Pain Assessment</span></div>
+                                    <button name="action_open_pain_level_guide" string="Pain Level Guide" type="object" class="btn-secondary hospital_eval_pain_guide" icon="fa-info-circle"/>
+                                </div>
+                                <div class="hospital_eval_pain_layout">
+                                    <div class="hospital_eval_pain_scale">
+                                        <span class="hospital_eval_pain_field_label">Pain Level</span>
+                                        <field name="pain_level" widget="radio" options="{'horizontal': true}"/>
+                                        <div class="hospital_eval_pain_bar" aria-hidden="true"/>
+                                        <div class="hospital_eval_pain_legend"><span>No Pain</span><span>Moderate Pain</span><span>Worst Pain</span></div>
+                                    </div>
+                                    <div class="hospital_eval_pain_note">
+                                        <span class="hospital_eval_pain_field_label">Pain Note</span>
+                                        <field name="pain_note" nolabel="1" placeholder="Add a note about the patient's pain..."/>
+                                    </div>
+                                </div>
+                            </div>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_patient_evaluation_search" model="ir.ui.view">
+        <field name="name">hospital.patient.evaluation.search</field>
+        <field name="model">hospital.patient.evaluation</field>
+        <field name="arch" type="xml">
+            <search string="Patient Evaluations">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="physician_id"/>
+                <field name="appointment_id"/>
+                <field name="evaluation_date"/>
+                <filter string="Draft" name="state_draft" domain="[('state', '=', 'draft')]"/>
+                <filter string="Done" name="state_done" domain="[('state', '=', 'done')]"/>
+                <filter string="Cancelled" name="state_cancelled" domain="[('state', '=', 'cancelled')]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Patient" name="group_by_patient" context="{'group_by': 'patient_id'}"/>
+                    <filter string="Physician" name="group_by_physician" context="{'group_by': 'physician_id'}"/>
+                    <filter string="Status" name="group_by_state" context="{'group_by': 'state'}"/>
+                    <filter string="Date" name="group_by_date" context="{'group_by': 'evaluation_date:day'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_patient_evaluation" model="ir.actions.act_window">
+        <field name="name">Patient Evaluations</field>
+        <field name="res_model">hospital.patient.evaluation</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_patient_evaluation_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Record patient vital signs and clinical assessment measurements.
+            </p>
+        </field>
+    </record>
+</odoo>

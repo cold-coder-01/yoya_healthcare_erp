@@ -1,0 +1,209 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ============ PAYMENT INTAKE WIZARD ============ -->
+    <record id="view_hospital_charge_payment_wizard_form" model="ir.ui.view">
+        <field name="name">hospital.charge.payment.wizard.form</field>
+        <field name="model">hospital.charge.payment.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Record Payment / Advance">
+
+                <div class="alert alert-warning" role="alert">
+                    <i class="fa fa-exclamation-triangle"/>
+                    <strong> Operational payment only. </strong>
+                    This records operational payment/advance clearance only. It does not
+                    create an accounting entry or fiscal receipt.
+                </div>
+
+                <group>
+                    <group string="Payer">
+                        <field name="patient_id" readonly="1"/>
+                        <field name="encounter_id" readonly="1"/>
+                        <field name="billing_account_id" readonly="1"/>
+                        <field name="currency_id" invisible="1"/>
+                    </group>
+                    <group string="Payment">
+                        <field name="payment_method"/>
+                        <field name="payment_reference"
+                            required="payment_method != 'cash'"
+                            placeholder="Transaction ID / slip / terminal ref"
+                            invisible="payment_method == 'cash'"/>
+                        <field name="received_at"/>
+                    </group>
+                </group>
+
+                <!-- Every allocation is VISIBLE and editable. Nothing is applied by a
+                     hidden rule: the cashier sees exactly which charge each birr goes to. -->
+                <separator string="Allocation"/>
+                <!-- create/delete disabled: the cashier may only edit the amount, never
+                     add, remove or re-point an allocation row. charge_line_id is carried
+                     as a forced-save hidden column so the web client ALWAYS persists the
+                     charge identity. A readonly field absent from the subview gets dropped
+                     from the create command, which was the reported ValidationError. The
+                     server re-validates the identity regardless (see action_confirm). -->
+                <field name="line_ids" nolabel="1">
+                    <list editable="bottom" create="false" delete="false">
+                        <field name="charge_line_id" column_invisible="1" force_save="1"/>
+                        <field name="charge_name" string="Charge" readonly="1"/>
+                        <field name="service_id" string="Service" readonly="1"/>
+                        <field name="description" optional="hide" readonly="1"/>
+                        <field name="currency_id" column_invisible="1"/>
+                        <field name="amount_due" widget="monetary" sum="Total Due"
+                            readonly="1"/>
+                        <field name="amount_available" widget="monetary" optional="hide"
+                            readonly="1"/>
+                        <field name="amount" widget="monetary" sum="Total Allocated"/>
+                    </list>
+                </field>
+
+                <group class="oe_subtotal_footer">
+                    <field name="amount_due_total" widget="monetary" readonly="1"/>
+                    <field name="amount_total" widget="monetary" readonly="1"
+                        class="oe_subtotal_footer_separator"/>
+                </group>
+
+                <group string="Note">
+                    <field name="note" nolabel="1"
+                        placeholder="Required to justify an overpayment..."/>
+                </group>
+
+                <field name="source_charge_id" invisible="1"/>
+                <field name="source_billing_account_id" invisible="1"/>
+                <field name="source_lab_request_id" invisible="1"/>
+                <field name="source_radiology_request_id" invisible="1"/>
+                <field name="receipt_id" invisible="1"/>
+                <field name="intake_token" invisible="1"/>
+
+                <footer>
+                    <button name="action_confirm" string="Record Payment" type="object"
+                        class="btn-primary" data-hotkey="q"/>
+                    <button string="Cancel" special="cancel" class="btn-secondary"
+                        data-hotkey="x"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <!-- ============ OPERATIONAL RECEIPT ============ -->
+    <record id="view_hospital_charge_receipt_list" model="ir.ui.view">
+        <field name="name">hospital.charge.receipt.list</field>
+        <field name="model">hospital.charge.receipt</field>
+        <field name="arch" type="xml">
+            <list string="Payment Receipts">
+                <field name="name"/>
+                <field name="received_at"/>
+                <field name="patient_id"/>
+                <field name="allocation_count" string="Charges" optional="show"/>
+                <field name="encounter_id" optional="hide"/>
+                <field name="payment_method"/>
+                <field name="payment_reference" optional="show"/>
+                <field name="amount" sum="Total Received"/>
+                <field name="received_by_id" optional="show"/>
+                <field name="accounting_posted" widget="boolean_toggle" readonly="1"/>
+                <field name="fiscalized" widget="boolean_toggle" readonly="1"/>
+                <field name="state" widget="badge"
+                    decoration-success="state == 'confirmed'"
+                    decoration-danger="state == 'cancelled'"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_charge_receipt_form" model="ir.ui.view">
+        <field name="name">hospital.charge.receipt.form</field>
+        <field name="model">hospital.charge.receipt</field>
+        <field name="arch" type="xml">
+            <form string="Payment Receipt">
+                <sheet>
+                    <div class="alert alert-info" role="alert">
+                        <i class="fa fa-info-circle"/>
+                        <strong> Operational receipt. </strong>
+                        This records operational payment/advance clearance only. It is
+                        <strong>not</strong> an accounting entry and <strong>not</strong>
+                        a fiscal receipt.
+                    </div>
+                    <div class="oe_title">
+                        <h1><field name="name" readonly="1"/></h1>
+                    </div>
+                    <group>
+                        <group string="Payment">
+                            <field name="amount" widget="monetary" readonly="1"/>
+                            <field name="currency_id" invisible="1"/>
+                            <field name="payment_method" readonly="1"/>
+                            <field name="payment_reference" readonly="1"
+                                invisible="payment_method == 'cash'"/>
+                            <field name="received_at" readonly="1"/>
+                            <field name="received_by_id" readonly="1"/>
+                            <field name="state" readonly="1"/>
+                        </group>
+                        <group string="Payer">
+                            <field name="billing_account_id" readonly="1"/>
+                            <field name="encounter_id" readonly="1"/>
+                            <field name="patient_id" readonly="1"/>
+                            <field name="payer_id" readonly="1" invisible="not payer_id"/>
+                        </group>
+                    </group>
+                    <separator string="Allocation"/>
+                    <field name="allocation_ids" readonly="1">
+                        <list>
+                            <field name="charge_line_id" string="Charge"/>
+                            <field name="service_id" string="Service"/>
+                            <field name="description" optional="show"/>
+                            <field name="currency_id" column_invisible="1"/>
+                            <field name="amount" widget="monetary" sum="Total Received"/>
+                        </list>
+                    </field>
+                    <group string="Downstream Status (set by future bridges)">
+                        <group>
+                            <field name="accounting_posted" readonly="1"/>
+                            <field name="accounting_reference" readonly="1"
+                                invisible="not accounting_reference"/>
+                        </group>
+                        <group>
+                            <field name="fiscalized" readonly="1"/>
+                            <field name="fiscal_reference" readonly="1"
+                                invisible="not fiscal_reference"/>
+                        </group>
+                    </group>
+                    <group string="Note" invisible="not note">
+                        <field name="note" nolabel="1" readonly="1"/>
+                    </group>
+                    <group string="Audit" invisible="not audit_log_id">
+                        <field name="audit_log_id" readonly="1"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_charge_receipt_search" model="ir.ui.view">
+        <field name="name">hospital.charge.receipt.search</field>
+        <field name="model">hospital.charge.receipt</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="payment_reference"/>
+                <filter string="Not Posted to Accounting" name="not_posted"
+                    domain="[('accounting_posted', '=', False)]"/>
+                <filter string="Not Fiscalized" name="not_fiscalized"
+                    domain="[('fiscalized', '=', False)]"/>
+                <separator/>
+                <filter string="Confirmed" name="confirmed" domain="[('state', '=', 'confirmed')]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Patient" name="gb_patient" context="{'group_by': 'patient_id'}"/>
+                    <filter string="Method" name="gb_method" context="{'group_by': 'payment_method'}"/>
+                    <filter string="Cashier" name="gb_user" context="{'group_by': 'received_by_id'}"/>
+                    <filter string="Date" name="gb_date" context="{'group_by': 'received_at:day'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_charge_receipt" model="ir.actions.act_window">
+        <field name="name">Payment Receipts</field>
+        <field name="res_model">hospital.charge.receipt</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_charge_receipt_search"/>
+    </record>
+
+</odoo>

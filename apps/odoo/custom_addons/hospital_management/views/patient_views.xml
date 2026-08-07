@@ -1,0 +1,614 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_patient_list" model="ir.ui.view">
+        <field name="name">hospital.patient.list</field>
+        <field name="model">hospital.patient</field>
+        <field name="arch" type="xml">
+            <list string="Patients">
+                <field name="identification_code"/>
+                <field name="name"/>
+                <field name="gender"/>
+                <field name="age"/>
+                <field name="phone"/>
+                <field name="mobile"/>
+                <field name="primary_care_doctor_id"/>
+                <field name="blood_group"/>
+                <field name="active"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_patient_form" model="ir.ui.view">
+        <field name="name">hospital.patient.form</field>
+        <field name="model">hospital.patient</field>
+        <field name="arch" type="xml">
+            <form string="Patient" class="hospital_patient_profile">
+                <header>
+                    <field name="identification_code" readonly="1"/>
+                    <field name="active" widget="boolean_toggle"/>
+                </header>
+                <sheet class="hospital_patient_profile">
+                    <!-- Patient hero / profile header -->
+                    <div class="hospital_pt_hero">
+                        <div class="hospital_pt_hero_photo">
+                            <field name="image_1920" widget="image" class="oe_avatar hospital_patient_photo"/>
+                        </div>
+                        <div class="hospital_pt_hero_main">
+                            <div class="oe_title hospital_patient_title">
+                                <h1 class="hospital_patient_name_line">
+                                    <field
+                                        name="is_favorite"
+                                        widget="boolean_favorite"
+                                        nolabel="1"
+                                        class="hospital_patient_favorite"
+                                    />
+                                    <field name="name" placeholder="Patient Name"/>
+                                </h1>
+                            </div>
+                            <div class="hospital_pt_hero_meta">
+                                <span class="hospital_patient_code">
+                                    <field name="identification_code" readonly="1" nolabel="1"/>
+                                </span>
+                                <span class="hospital_pt_badge hospital_pt_badge_active" invisible="not active">
+                                    <i class="fa fa-check-circle"/> Active Patient
+                                </span>
+                                <span class="hospital_pt_badge hospital_pt_badge_archived" invisible="active">
+                                    <i class="fa fa-archive"/> Archived
+                                </span>
+                            </div>
+                            <div class="hospital_pt_hero_facts">
+                                <div class="hospital_pt_fact">
+                                    <div class="hospital_pt_fact_icon"><i class="fa fa-venus-mars"/></div>
+                                    <div class="hospital_pt_fact_content">
+                                        <div class="hospital_pt_fact_label">Gender</div>
+                                        <div class="hospital_pt_fact_value"><field name="gender" readonly="1"/></div>
+                                    </div>
+                                </div>
+                                <div class="hospital_pt_fact">
+                                    <div class="hospital_pt_fact_icon"><i class="fa fa-birthday-cake"/></div>
+                                    <div class="hospital_pt_fact_content">
+                                        <div class="hospital_pt_fact_label">Age</div>
+                                        <div class="hospital_pt_fact_value">
+                                            <field name="age" readonly="1"/>
+                                            <span class="hospital_pt_fact_unit">yrs</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="hospital_pt_fact">
+                                    <div class="hospital_pt_fact_icon"><i class="fa fa-tint"/></div>
+                                    <div class="hospital_pt_fact_content">
+                                        <div class="hospital_pt_fact_label">Blood Group</div>
+                                        <div class="hospital_pt_fact_value"><field name="blood_group" readonly="1"/></div>
+                                    </div>
+                                </div>
+                                <div class="hospital_pt_fact">
+                                    <div class="hospital_pt_fact_icon"><i class="fa fa-user-md"/></div>
+                                    <div class="hospital_pt_fact_content">
+                                        <div class="hospital_pt_fact_label">Primary Doctor</div>
+                                        <div class="hospital_pt_fact_value"><field name="primary_care_doctor_id" readonly="1"/></div>
+                                    </div>
+                                </div>
+                                <div class="hospital_pt_fact">
+                                    <div class="hospital_pt_fact_icon"><i class="fa fa-hospital-o"/></div>
+                                    <div class="hospital_pt_fact_content">
+                                        <div class="hospital_pt_fact_label">Departments</div>
+                                        <div class="hospital_pt_fact_value">
+                                            <field name="department_ids" widget="many2many_tags" readonly="1"/>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="hospital_pt_hero_tags">
+                                <field name="patient_tag_ids" widget="many2many_tags" readonly="1" nolabel="1"/>
+                                <field
+                                    name="medical_alert_ids"
+                                    widget="many2many_tags"
+                                    readonly="1"
+                                    nolabel="1"
+                                    class="hospital_pt_alert_tags"
+                                />
+                            </div>
+                        </div>
+                        <div class="hospital_pt_hero_contact">
+                            <div class="hospital_pt_contact_row">
+                                <i class="fa fa-phone"/>
+                                <field name="phone" readonly="1"/>
+                            </div>
+                            <div class="hospital_pt_contact_row">
+                                <i class="fa fa-envelope-o"/>
+                                <field name="email" widget="email" readonly="1"/>
+                            </div>
+                            <div class="hospital_pt_contact_row">
+                                <i class="fa fa-map-marker"/>
+                                <div class="hospital_pt_contact_addr">
+                                    <field name="address" readonly="1"/>
+                                    <div class="hospital_pt_contact_addr_line">
+                                        <field name="city" readonly="1"/>
+                                        <field name="country" readonly="1"/>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Smart summary cards: same actions and counters as the stat buttons -->
+                    <div class="hospital_pt_kpi_grid" invisible="not id">
+                        <button name="action_view_appointments" type="object" class="hospital_pt_kpi">
+                            <div class="hospital_pt_kpi_icon"><i class="fa fa-calendar"/></div>
+                            <div class="hospital_pt_kpi_info">
+                                <span class="hospital_pt_kpi_value"><field name="appointment_count" readonly="1"/></span>
+                                <span class="hospital_pt_kpi_label">Appointments</span>
+                            </div>
+                        </button>
+                        <button name="action_view_consents" type="object" class="hospital_pt_kpi">
+                            <div class="hospital_pt_kpi_icon"><i class="fa fa-check-square-o"/></div>
+                            <div class="hospital_pt_kpi_info">
+                                <span class="hospital_pt_kpi_value"><field name="consent_count" readonly="1"/></span>
+                                <span class="hospital_pt_kpi_label">Consents</span>
+                            </div>
+                        </button>
+                        <button name="action_view_evaluations" type="object" class="hospital_pt_kpi">
+                            <div class="hospital_pt_kpi_icon"><i class="fa fa-stethoscope"/></div>
+                            <div class="hospital_pt_kpi_info">
+                                <span class="hospital_pt_kpi_value"><field name="evaluation_count" readonly="1"/></span>
+                                <span class="hospital_pt_kpi_label">Evaluations</span>
+                            </div>
+                        </button>
+                        <button name="action_view_diagnoses" type="object" class="hospital_pt_kpi">
+                            <div class="hospital_pt_kpi_icon"><i class="fa fa-heartbeat"/></div>
+                            <div class="hospital_pt_kpi_info">
+                                <span class="hospital_pt_kpi_value"><field name="diagnosis_count" readonly="1"/></span>
+                                <span class="hospital_pt_kpi_label">Diagnoses</span>
+                            </div>
+                        </button>
+                        <button name="action_view_prescriptions" type="object" class="hospital_pt_kpi">
+                            <div class="hospital_pt_kpi_icon"><i class="fa fa-medkit"/></div>
+                            <div class="hospital_pt_kpi_info">
+                                <span class="hospital_pt_kpi_value"><field name="prescription_count" readonly="1"/></span>
+                                <span class="hospital_pt_kpi_label">Prescriptions</span>
+                            </div>
+                        </button>
+                        <button name="action_view_treatment_plans" type="object" class="hospital_pt_kpi">
+                            <div class="hospital_pt_kpi_icon"><i class="fa fa-list-alt"/></div>
+                            <div class="hospital_pt_kpi_info">
+                                <span class="hospital_pt_kpi_value"><field name="treatment_plan_count" readonly="1"/></span>
+                                <span class="hospital_pt_kpi_label">Treatment Plans</span>
+                            </div>
+                        </button>
+                        <button name="action_view_laboratory_requests" type="object" class="hospital_pt_kpi">
+                            <div class="hospital_pt_kpi_icon"><i class="fa fa-flask"/></div>
+                            <div class="hospital_pt_kpi_info">
+                                <span class="hospital_pt_kpi_value"><field name="laboratory_request_count" readonly="1"/></span>
+                                <span class="hospital_pt_kpi_label">Lab Requests</span>
+                            </div>
+                        </button>
+                        <button name="action_view_laboratory_results" type="object" class="hospital_pt_kpi">
+                            <div class="hospital_pt_kpi_icon"><i class="fa fa-check-square"/></div>
+                            <div class="hospital_pt_kpi_info">
+                                <span class="hospital_pt_kpi_value"><field name="laboratory_result_count" readonly="1"/></span>
+                                <span class="hospital_pt_kpi_label">Lab Results</span>
+                            </div>
+                        </button>
+                        <button name="action_view_family_members" type="object" class="hospital_pt_kpi">
+                            <div class="hospital_pt_kpi_icon"><i class="fa fa-users"/></div>
+                            <div class="hospital_pt_kpi_info">
+                                <span class="hospital_pt_kpi_value"><field name="family_member_count" readonly="1"/></span>
+                                <span class="hospital_pt_kpi_label">Family Members</span>
+                            </div>
+                        </button>
+                        <button name="action_view_documents" type="object" class="hospital_pt_kpi">
+                            <div class="hospital_pt_kpi_icon"><i class="fa fa-file-text-o"/></div>
+                            <div class="hospital_pt_kpi_info">
+                                <span class="hospital_pt_kpi_value"><field name="document_count" readonly="1"/></span>
+                                <span class="hospital_pt_kpi_label">Documents</span>
+                            </div>
+                        </button>
+                    </div>
+                    <!-- Patient overview strip -->
+                    <div class="hospital_pt_overview" invisible="not id">
+                        <div class="hospital_pt_ov_item">
+                            <div class="hospital_pt_ov_icon"><i class="fa fa-calendar"/></div>
+                            <div class="hospital_pt_ov_content">
+                                <div class="hospital_pt_ov_label">Next Appointment</div>
+                                <div class="hospital_pt_ov_value"><field name="next_appointment_date" readonly="1"/></div>
+                                <div class="hospital_pt_ov_sub" invisible="next_appointment_date">None scheduled</div>
+                            </div>
+                        </div>
+                        <div class="hospital_pt_ov_item">
+                            <div class="hospital_pt_ov_icon"><i class="fa fa-check-circle-o"/></div>
+                            <div class="hospital_pt_ov_content">
+                                <div class="hospital_pt_ov_label">Open Evaluations</div>
+                                <div class="hospital_pt_ov_value"><field name="open_evaluation_count" readonly="1"/></div>
+                                <div class="hospital_pt_ov_sub" invisible="open_evaluation_count">No pending</div>
+                                <div class="hospital_pt_ov_sub" invisible="not open_evaluation_count">Pending completion</div>
+                            </div>
+                        </div>
+                        <div class="hospital_pt_ov_item">
+                            <div class="hospital_pt_ov_icon"><i class="fa fa-medkit"/></div>
+                            <div class="hospital_pt_ov_content">
+                                <div class="hospital_pt_ov_label">Active Medications</div>
+                                <div class="hospital_pt_ov_value"><field name="active_medication_count" readonly="1"/></div>
+                                <div class="hospital_pt_ov_sub">Current</div>
+                            </div>
+                        </div>
+                        <div class="hospital_pt_ov_item">
+                            <div class="hospital_pt_ov_icon hospital_pt_ov_icon_alert"><i class="fa fa-exclamation-triangle"/></div>
+                            <div class="hospital_pt_ov_content">
+                                <div class="hospital_pt_ov_label">Medical Alerts</div>
+                                <div class="hospital_pt_ov_value"><field name="medical_alert_count" readonly="1"/></div>
+                                <div class="hospital_pt_ov_sub" invisible="medical_alert_count">No known alerts</div>
+                                <div class="hospital_pt_ov_sub" invisible="not medical_alert_count">Review alerts</div>
+                            </div>
+                        </div>
+                        <div class="hospital_pt_ov_item">
+                            <div class="hospital_pt_ov_icon"><i class="fa fa-user-md"/></div>
+                            <div class="hospital_pt_ov_content">
+                                <div class="hospital_pt_ov_label">Last Visit</div>
+                                <div class="hospital_pt_ov_value"><field name="last_visit_date" readonly="1"/></div>
+                                <div class="hospital_pt_ov_sub" invisible="not last_visit_doctor_id">
+                                    With <field name="last_visit_doctor_id" readonly="1"/>
+                                </div>
+                                <div class="hospital_pt_ov_sub" invisible="last_visit_date">No completed visits</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="oe_button_box hospital_patient_button_box" name="button_box">
+                        <button
+                            name="action_view_appointments"
+                            type="object"
+                            class="oe_stat_button hospital_pt_native_stat"
+                            icon="fa-calendar"
+                            invisible="1"
+                        >
+                            <field name="appointment_count" widget="statinfo" string="Appointments"/>
+                        </button>
+                        <button
+                            name="action_view_consents"
+                            type="object"
+                            class="oe_stat_button hospital_pt_native_stat"
+                            icon="fa-check-square-o"
+                            invisible="1"
+                        >
+                            <field name="consent_count" widget="statinfo" string="Consents"/>
+                        </button>
+                        <button
+                            name="action_view_evaluations"
+                            type="object"
+                            class="oe_stat_button hospital_pt_native_stat"
+                            icon="fa-stethoscope"
+                            invisible="1"
+                        >
+                            <field name="evaluation_count" widget="statinfo" string="Evaluations"/>
+                        </button>
+                        <button
+                            name="action_view_diagnoses"
+                            type="object"
+                            class="oe_stat_button hospital_pt_native_stat"
+                            icon="fa-heartbeat"
+                            invisible="1"
+                        >
+                            <field name="diagnosis_count" widget="statinfo" string="Diagnoses"/>
+                        </button>
+                        <button
+                            name="action_view_prescriptions"
+                            type="object"
+                            class="oe_stat_button hospital_pt_native_stat"
+                            icon="fa-medkit"
+                            invisible="1"
+                        >
+                            <field name="prescription_count" widget="statinfo" string="Prescriptions"/>
+                        </button>
+                        <button
+                            name="action_view_treatment_plans"
+                            type="object"
+                            class="oe_stat_button hospital_pt_native_stat"
+                            icon="fa-list-alt"
+                            invisible="1"
+                        >
+                            <field name="treatment_plan_count" widget="statinfo" string="Treatment Plans"/>
+                        </button>
+                        <button
+                            name="action_view_laboratory_requests"
+                            type="object"
+                            class="oe_stat_button hospital_pt_native_stat"
+                            icon="fa-flask"
+                            invisible="1"
+                        >
+                            <field name="laboratory_request_count" widget="statinfo" string="Lab Requests"/>
+                        </button>
+                        <button
+                            name="action_view_laboratory_results"
+                            type="object"
+                            class="oe_stat_button hospital_pt_native_stat"
+                            icon="fa-check-square"
+                            invisible="1"
+                        >
+                            <field name="laboratory_result_count" widget="statinfo" string="Lab Results"/>
+                        </button>
+                        <button
+                            name="action_view_family_members"
+                            type="object"
+                            class="oe_stat_button hospital_pt_native_stat"
+                            icon="fa-users"
+                            invisible="1"
+                        >
+                            <field name="family_member_count" widget="statinfo" string="Family Members"/>
+                        </button>
+                        <button
+                            name="action_view_documents"
+                            type="object"
+                            class="oe_stat_button hospital_pt_native_stat"
+                            icon="fa-file-text-o"
+                            invisible="1"
+                        >
+                            <field name="document_count" widget="statinfo" string="Documents"/>
+                        </button>
+                    </div>
+                    <notebook class="hospital_patient_tabs">
+                        <page string="General Information">
+                            <div class="hospital_pt_tab_grid">
+                                <div class="hospital_pt_card">
+                                    <div class="hospital_pt_card_title">
+                                        <i class="fa fa-id-card-o"/>
+                                        <span>Patient Identity</span>
+                                    </div>
+                                    <group class="hospital_pt_compact_group">
+                                        <field name="name" string="Full Name"/>
+                                        <field name="title"/>
+                                        <field name="gender"/>
+                                        <field name="date_of_birth"/>
+                                        <field name="age"/>
+                                        <field name="blood_group"/>
+                                        <field name="primary_care_doctor_id"/>
+                                        <field name="department_ids" widget="many2many_tags"/>
+                                        <field name="patient_tag_ids" widget="many2many_tags"/>
+                                        <field name="active"/>
+                                    </group>
+                                </div>
+                                <div class="hospital_pt_card">
+                                    <div class="hospital_pt_card_title">
+                                        <i class="fa fa-user"/>
+                                        <span>Personal Information</span>
+                                    </div>
+                                    <group class="hospital_pt_compact_group">
+                                        <field name="nationality"/>
+                                        <field name="government_identity"/>
+                                        <field name="passport_number"/>
+                                        <field name="occupation"/>
+                                        <field name="patient_education"/>
+                                        <field name="religion"/>
+                                        <field name="marital_status"/>
+                                    </group>
+                                </div>
+                                <div class="hospital_pt_card">
+                                    <div class="hospital_pt_card_title">
+                                        <i class="fa fa-map-marker"/>
+                                        <span>Contact &amp; Address</span>
+                                    </div>
+                                    <group class="hospital_pt_compact_group">
+                                        <field name="address"/>
+                                        <field name="city"/>
+                                        <field name="state"/>
+                                        <field name="zip_code"/>
+                                        <field name="country"/>
+                                        <field name="phone"/>
+                                        <field name="mobile"/>
+                                        <field name="email" widget="email"/>
+                                    </group>
+                                </div>
+                                <div class="hospital_pt_card">
+                                    <div class="hospital_pt_card_title hospital_pt_card_title_alert">
+                                        <i class="fa fa-phone-square"/>
+                                        <span>Emergency Contact</span>
+                                    </div>
+                                    <group class="hospital_pt_compact_group">
+                                        <field name="emergency_contact_name" string="Name"/>
+                                        <field name="emergency_contact_phone" string="Phone"/>
+                                    </group>
+                                    <div class="hospital_pt_card_subtitle">
+                                        <i class="fa fa-user-md"/>
+                                        <span>Care Team</span>
+                                    </div>
+                                    <group class="hospital_pt_compact_group">
+                                        <field name="primary_care_doctor_id" string="Primary Doctor" readonly="1"/>
+                                        <field name="department_ids" string="Department" widget="many2many_tags" readonly="1"/>
+                                    </group>
+                                </div>
+                            </div>
+                        </page>
+                        <page string="Hospital Info">
+                            <group>
+                                <group>
+                                    <field name="primary_care_doctor_id"/>
+                                    <field name="department_ids" widget="many2many_tags"/>
+                                </group>
+                                <group>
+                                    <field name="blood_group"/>
+                                    <field name="medical_alert_ids" widget="many2many_tags"/>
+                                </group>
+                            </group>
+                        </page>
+                        <page string="Clinical Assessment">
+                            <p class="text-muted">
+                                Details are shown based on last completed patient evaluation.
+                            </p>
+                            <group string="Latest Completed Evaluation">
+                                <group>
+                                    <field name="latest_evaluation_id" readonly="1"/>
+                                    <field name="latest_weight" readonly="1"/>
+                                    <field name="latest_height" readonly="1"/>
+                                    <field name="latest_head_circumference" readonly="1"/>
+                                    <field name="latest_bmi" readonly="1"/>
+                                    <field name="latest_bmi_state" readonly="1"/>
+                                    <field name="latest_pain_level" readonly="1"/>
+                                </group>
+                                <group>
+                                    <field name="latest_temperature" readonly="1"/>
+                                    <field name="latest_heart_rate" readonly="1"/>
+                                    <field name="latest_respiratory_rate" readonly="1"/>
+                                    <field name="latest_systolic_bp" readonly="1"/>
+                                    <field name="latest_diastolic_bp" readonly="1"/>
+                                    <field name="latest_spo2" readonly="1"/>
+                                    <field name="latest_rbs" readonly="1"/>
+                                </group>
+                            </group>
+                            <group>
+                                <field name="disease_history"/>
+                                <field name="past_medical_history"/>
+                            </group>
+                        </page>
+                        <page string="Prescriptions">
+                            <field name="prescription_ids" nolabel="1">
+                                <list string="Prescriptions" editable="bottom">
+                                    <field name="name" readonly="1"/>
+                                    <field name="prescription_date"/>
+                                    <field name="physician_id"/>
+                                    <field name="diagnosis_id"/>
+                                    <field name="state" readonly="1"/>
+                                    <field name="notes"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Treatment Plans">
+                            <field name="treatment_plan_ids" nolabel="1">
+                                <list string="Treatment Plans" editable="bottom">
+                                    <field name="name" readonly="1"/>
+                                    <field name="plan_date"/>
+                                    <field name="physician_id"/>
+                                    <field name="diagnosis_id"/>
+                                    <field name="priority"/>
+                                    <field name="state" readonly="1"/>
+                                    <field name="follow_up_required"/>
+                                    <field name="follow_up_date"/>
+                                    <field name="notes"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Laboratory Requests">
+                            <field name="laboratory_request_ids" nolabel="1">
+                                <list string="Laboratory Requests" editable="bottom">
+                                    <field name="name" readonly="1"/>
+                                    <field name="request_date"/>
+                                    <field name="physician_id"/>
+                                    <field name="diagnosis_id"/>
+                                    <field name="priority"/>
+                                    <field name="state" readonly="1"/>
+                                    <field name="clinical_notes"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Laboratory Results">
+                            <field name="laboratory_result_ids" nolabel="1">
+                                <list string="Laboratory Results" editable="bottom">
+                                    <field name="name" readonly="1"/>
+                                    <field name="result_date"/>
+                                    <field name="request_id"/>
+                                    <field name="physician_id"/>
+                                    <field name="lab_technician_id"/>
+                                    <field name="state" readonly="1"/>
+                                    <field name="interpretation"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Diseases">
+                            <field name="diagnosis_ids" nolabel="1">
+                                <list string="Diagnoses" editable="bottom">
+                                    <field name="diagnosis_date"/>
+                                    <field name="disease_id"/>
+                                    <field name="category_id" readonly="1"/>
+                                    <field name="physician_id"/>
+                                    <field name="diagnosis_type"/>
+                                    <field name="severity"/>
+                                    <field name="status"/>
+                                    <field name="notes"/>
+                                    <field name="active"/>
+                                </list>
+                            </field>
+                            <group>
+                                <label for="disease_history"/>
+                                <field name="disease_history" placeholder="General Disease History Notes"/>
+                            </group>
+                        </page>
+                        <page string="Family">
+                            <group>
+                                <group>
+                                    <field name="family_history"/>
+                                </group>
+                                <group>
+                                    <field name="emergency_contact_name"/>
+                                    <field name="emergency_contact_phone"/>
+                                </group>
+                            </group>
+                            <field name="family_member_ids" nolabel="1" context="{'default_patient_id': id}">
+                                <list string="Family Members" editable="bottom">
+                                    <field name="name"/>
+                                    <field name="relation"/>
+                                    <field name="phone"/>
+                                    <field name="is_emergency_contact"/>
+                                    <field name="has_medical_history"/>
+                                    <field name="medical_history_notes"/>
+                                    <field name="notes"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Documents">
+                            <field name="document_ids" nolabel="1" context="{'default_patient_id': id}">
+                                <list string="Documents" editable="bottom">
+                                    <field name="name"/>
+                                    <field name="document_type"/>
+                                    <field name="document_date"/>
+                                    <field name="filename"/>
+                                    <field name="uploaded_by"/>
+                                    <field name="description"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Notes">
+                            <group>
+                                <field name="notes"/>
+                            </group>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_patient_search" model="ir.ui.view">
+        <field name="name">hospital.patient.search</field>
+        <field name="model">hospital.patient</field>
+        <field name="arch" type="xml">
+            <search string="Patients">
+                <field name="identification_code"/>
+                <field name="name"/>
+                <field name="phone"/>
+                <field name="mobile"/>
+                <field name="email"/>
+                <field name="government_identity"/>
+                <field name="passport_number"/>
+                <field name="primary_care_doctor_id"/>
+                <filter string="Archived" name="inactive" domain="[('active', '=', False)]"/>
+                <filter string="Male" name="gender_male" domain="[('gender', '=', 'male')]"/>
+                <filter string="Female" name="gender_female" domain="[('gender', '=', 'female')]"/>
+                <filter string="Has Medical Alerts" name="has_medical_alerts" domain="[('medical_alert_ids', '!=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Gender" name="group_by_gender" context="{'group_by': 'gender'}"/>
+                    <filter string="Blood Group" name="group_by_blood_group" context="{'group_by': 'blood_group'}"/>
+                    <filter string="Primary Care Doctor" name="group_by_primary_care_doctor" context="{'group_by': 'primary_care_doctor_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_patient" model="ir.actions.act_window">
+        <field name="name">Patients</field>
+        <field name="res_model">hospital.patient</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_patient_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Create patient records for compliant hospital care coordination.
+            </p>
+        </field>
+    </record>
+
+</odoo>

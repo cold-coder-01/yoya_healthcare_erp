@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_treatment_plan_list" model="ir.ui.view">
+        <field name="name">hospital.treatment.plan.list</field>
+        <field name="model">hospital.treatment.plan</field>
+        <field name="arch" type="xml">
+            <list string="Treatment Plans">
+                <field name="name"/>
+                <field name="plan_date"/>
+                <field name="patient_id"/>
+                <field name="physician_id"/>
+                <field name="diagnosis_id"/>
+                <field name="prescription_id"/>
+                <field name="priority"/>
+                <field name="state"/>
+                <field name="follow_up_required"/>
+                <field name="follow_up_date"/>
+                <field name="active"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_treatment_plan_form" model="ir.ui.view">
+        <field name="name">hospital.treatment.plan.form</field>
+        <field name="model">hospital.treatment.plan</field>
+        <field name="arch" type="xml">
+            <form string="Treatment Plan">
+                <header>
+                    <button
+                        name="action_activate"
+                        string="Activate"
+                        type="object"
+                        class="btn-primary"
+                        invisible="state != 'draft'"
+                    />
+                    <button
+                        name="action_mark_completed"
+                        string="Mark Completed"
+                        type="object"
+                        class="btn-primary"
+                        invisible="state != 'active'"
+                    />
+                    <button
+                        name="action_cancel"
+                        string="Cancel"
+                        type="object"
+                        invisible="state not in ('draft', 'active')"
+                    />
+                    <button
+                        name="action_reset_to_draft"
+                        string="Reset to Draft"
+                        type="object"
+                        invisible="state not in ('cancelled', 'completed')"
+                    />
+                    <field
+                        name="state"
+                        widget="statusbar"
+                        statusbar_visible="draft,active,completed,cancelled"
+                    />
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1>
+                            <field name="name" readonly="1"/>
+                        </h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="patient_id"/>
+                            <field name="physician_id"/>
+                            <field
+                                name="appointment_id"
+                                domain="[('patient_id', '=', patient_id)]"
+                            />
+                            <field
+                                name="evaluation_id"
+                                domain="[('patient_id', '=', patient_id)]"
+                            />
+                        </group>
+                        <group>
+                            <field
+                                name="diagnosis_id"
+                                domain="[('patient_id', '=', patient_id)]"
+                            />
+                            <field
+                                name="prescription_id"
+                                domain="[('patient_id', '=', patient_id)]"
+                            />
+                            <field name="plan_date"/>
+                            <field name="priority"/>
+                        </group>
+                    </group>
+                    <group>
+                        <group>
+                            <field name="start_date"/>
+                            <field name="end_date"/>
+                        </group>
+                        <group>
+                            <field name="follow_up_required"/>
+                            <field name="follow_up_date" invisible="not follow_up_required"/>
+                            <field name="active"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Treatment Lines">
+                            <field name="line_ids">
+                                <list string="Treatment Lines" editable="bottom">
+                                    <field name="sequence" widget="handle"/>
+                                    <field name="treatment_type"/>
+                                    <field name="description"/>
+                                    <field name="frequency"/>
+                                    <field name="duration"/>
+                                    <field name="responsible_person"/>
+                                    <field name="instructions"/>
+                                    <field name="state"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Instructions">
+                            <group>
+                                <field name="treatment_goal"/>
+                                <field name="doctor_instructions"/>
+                                <field name="patient_instructions"/>
+                            </group>
+                        </page>
+                        <page string="Notes">
+                            <field name="notes" nolabel="1"/>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_treatment_plan_search" model="ir.ui.view">
+        <field name="name">hospital.treatment.plan.search</field>
+        <field name="model">hospital.treatment.plan</field>
+        <field name="arch" type="xml">
+            <search string="Treatment Plans">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="physician_id"/>
+                <field name="appointment_id"/>
+                <field name="evaluation_id"/>
+                <field name="diagnosis_id"/>
+                <field name="prescription_id"/>
+                <field name="plan_date"/>
+                <filter string="Draft" name="draft" domain="[('state', '=', 'draft')]"/>
+                <filter string="Active" name="active_state" domain="[('state', '=', 'active')]"/>
+                <filter string="Completed" name="completed" domain="[('state', '=', 'completed')]"/>
+                <filter string="Cancelled" name="cancelled" domain="[('state', '=', 'cancelled')]"/>
+                <filter string="Follow-up Required" name="follow_up_required" domain="[('follow_up_required', '=', True)]"/>
+                <filter string="Archived" name="inactive" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Patient" name="group_patient" context="{'group_by': 'patient_id'}"/>
+                    <filter string="Physician" name="group_physician" context="{'group_by': 'physician_id'}"/>
+                    <filter string="Priority" name="group_priority" context="{'group_by': 'priority'}"/>
+                    <filter string="State" name="group_state" context="{'group_by': 'state'}"/>
+                    <filter string="Plan Date" name="group_plan_date" context="{'group_by': 'plan_date'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_treatment_plan" model="ir.actions.act_window">
+        <field name="name">Treatment Plans</field>
+        <field name="res_model">hospital.treatment.plan</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_treatment_plan_search"/>
+        <field name="context">{'default_state': 'draft', 'default_priority': 'routine'}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Create the first treatment plan.
+            </p>
+        </field>
+    </record>
+</odoo>

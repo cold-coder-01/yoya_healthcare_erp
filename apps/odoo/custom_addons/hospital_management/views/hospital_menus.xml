@@ -1,0 +1,324 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="menu_hospital_patient_root" model="ir.ui.menu">
+        <field name="name">Patient</field>
+        <field name="sequence">10</field>
+        <field name="parent_id" eval="False"/>
+        <field name="web_icon">hospital_management,static/description/patients.svg</field>
+        <field name="groups_id" eval="[(6, 0, [
+            ref('hospital_management.group_hospital_system_administrator'),
+            ref('hospital_management.group_hospital_manager'),
+            ref('hospital_management.group_hospital_receptionist'),
+            ref('hospital_management.group_hospital_doctor'),
+            ref('hospital_management.group_hospital_nurse'),
+            ref('hospital_management.group_hospital_data_protection_officer'),
+            ref('base.group_system')
+        ])]"/>
+    </record>
+
+    <record id="menu_hospital_patient_main" model="ir.ui.menu">
+        <field name="name">Patient</field>
+        <field name="parent_id" ref="menu_hospital_patient_root"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_patient')"/>
+        <field name="sequence">10</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_patient_evaluations" model="ir.ui.menu">
+        <field name="name">Patient Evaluations</field>
+        <field name="parent_id" ref="menu_hospital_patient_root"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_patient_evaluation')"/>
+        <field name="sequence">20</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_patient_diagnoses" model="ir.ui.menu">
+        <field name="name">Patient Diagnoses</field>
+        <field name="parent_id" ref="menu_hospital_patient_root"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_patient_diagnosis')"/>
+        <field name="sequence">30</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_patient_prescriptions" model="ir.ui.menu">
+        <field name="name">Prescriptions</field>
+        <field name="parent_id" ref="menu_hospital_patient_root"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_prescription')"/>
+        <field name="sequence">35</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <!-- Deactivated: duplicate of Laboratory app menu; accessible via Laboratory sidebar and patient smart buttons -->
+    <record id="menu_hospital_patient_laboratory_requests" model="ir.ui.menu">
+        <field name="name">Laboratory Requests</field>
+        <field name="parent_id" ref="menu_hospital_patient_root"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_laboratory_request')"/>
+        <field name="sequence">37</field>
+        <field name="active" eval="False"/>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <!-- Deactivated: duplicate of Laboratory app menu; accessible via Laboratory sidebar and patient smart buttons -->
+    <record id="menu_hospital_patient_laboratory_results" model="ir.ui.menu">
+        <field name="name">Laboratory Results</field>
+        <field name="parent_id" ref="menu_hospital_patient_root"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_laboratory_result')"/>
+        <field name="sequence">38</field>
+        <field name="active" eval="False"/>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_patient_encounters" model="ir.ui.menu">
+        <field name="name">Encounters</field>
+        <field name="parent_id" ref="menu_hospital_patient_root"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_encounter')"/>
+        <field name="sequence">39</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_patient_family_members" model="ir.ui.menu">
+        <field name="name">Family Members</field>
+        <field name="parent_id" ref="menu_hospital_patient_root"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_patient_family')"/>
+        <field name="sequence">40</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_patient_documents" model="ir.ui.menu">
+        <field name="name">Patient Documents</field>
+        <field name="parent_id" ref="menu_hospital_patient_root"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_patient_document')"/>
+        <field name="sequence">50</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_patient_configuration" model="ir.ui.menu">
+        <field name="name">Configuration</field>
+        <field name="parent_id" ref="menu_hospital_patient_root"/>
+        <field name="sequence">90</field>
+        <field name="web_icon" eval="False"/>
+        <field name="groups_id" eval="[(6, 0, [
+            ref('hospital_management.group_hospital_system_administrator'),
+            ref('hospital_management.group_hospital_manager'),
+            ref('base.group_system')
+        ])]"/>
+    </record>
+
+    <record id="menu_hospital_medical_alerts" model="ir.ui.menu">
+        <field name="name">Medical Alerts</field>
+        <field name="parent_id" ref="menu_hospital_patient_configuration"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_medical_alert')"/>
+        <field name="sequence">10</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_patient_tags" model="ir.ui.menu">
+        <field name="name">Patient Tags</field>
+        <field name="parent_id" ref="menu_hospital_patient_configuration"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_patient_tag')"/>
+        <field name="sequence">20</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_disease_categories" model="ir.ui.menu">
+        <field name="name">Disease Categories</field>
+        <field name="parent_id" ref="menu_hospital_patient_configuration"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_disease_category')"/>
+        <field name="sequence">30</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_diseases" model="ir.ui.menu">
+        <field name="name">Diseases</field>
+        <field name="parent_id" ref="menu_hospital_patient_configuration"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_disease')"/>
+        <field name="sequence">40</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_physician_root" model="ir.ui.menu">
+        <field name="name">Physician</field>
+        <field name="sequence">20</field>
+        <field name="parent_id" eval="False"/>
+        <field name="web_icon">hospital_management,static/description/doctors.svg</field>
+        <field name="groups_id" eval="[(6, 0, [
+            ref('hospital_management.group_hospital_system_administrator'),
+            ref('hospital_management.group_hospital_manager'),
+            ref('hospital_management.group_hospital_receptionist'),
+            ref('hospital_management.group_hospital_doctor'),
+            ref('hospital_management.group_hospital_nurse'),
+            ref('base.group_system')
+        ])]"/>
+    </record>
+
+    <record id="menu_hospital_doctors" model="ir.ui.menu">
+        <field name="name">Physicians</field>
+        <field name="parent_id" ref="menu_hospital_physician_root"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_doctor')"/>
+        <field name="sequence">10</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_physician_prescriptions" model="ir.ui.menu">
+        <field name="name">Prescriptions</field>
+        <field name="parent_id" ref="menu_hospital_physician_root"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_prescription')"/>
+        <field name="sequence">20</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_physician_configuration" model="ir.ui.menu">
+        <field name="name">Configuration</field>
+        <field name="parent_id" ref="menu_hospital_physician_root"/>
+        <field name="sequence">90</field>
+        <field name="web_icon" eval="False"/>
+        <field name="groups_id" eval="[(6, 0, [
+            ref('hospital_management.group_hospital_system_administrator'),
+            ref('hospital_management.group_hospital_manager'),
+            ref('base.group_system')
+        ])]"/>
+    </record>
+
+    <record id="menu_hospital_departments" model="ir.ui.menu">
+        <field name="name">Departments</field>
+        <field name="parent_id" ref="menu_hospital_physician_configuration"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_department')"/>
+        <field name="sequence">10</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_appointment_root" model="ir.ui.menu">
+        <field name="name">Appointment</field>
+        <field name="sequence">30</field>
+        <field name="parent_id" eval="False"/>
+        <field name="web_icon">hospital_management,static/description/appointments.svg</field>
+        <field name="groups_id" eval="[(6, 0, [
+            ref('hospital_management.group_hospital_system_administrator'),
+            ref('hospital_management.group_hospital_manager'),
+            ref('hospital_management.group_hospital_receptionist'),
+            ref('hospital_management.group_hospital_doctor'),
+            ref('hospital_management.group_hospital_nurse'),
+            ref('base.group_system')
+        ])]"/>
+    </record>
+
+    <record id="menu_hospital_appointments" model="ir.ui.menu">
+        <field name="name">Appointments</field>
+        <field name="parent_id" ref="menu_hospital_appointment_root"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_appointment')"/>
+        <field name="sequence">10</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_laboratory_root" model="ir.ui.menu">
+        <field name="name">Laboratory</field>
+        <field name="sequence">35</field>
+        <field name="parent_id" eval="False"/>
+        <field name="web_icon">hospital_management,static/description/hospital.svg</field>
+        <field name="groups_id" eval="[(6, 0, [
+            ref('hospital_management.group_hospital_system_administrator'),
+            ref('hospital_management.group_hospital_manager'),
+            ref('hospital_management.group_hospital_receptionist'),
+            ref('hospital_management.group_hospital_doctor'),
+            ref('hospital_management.group_hospital_nurse'),
+            ref('hospital_management.group_hospital_lab_technician'),
+            ref('hospital_management.group_hospital_data_protection_officer'),
+            ref('base.group_system')
+        ])]"/>
+    </record>
+
+    <record id="menu_hospital_laboratory_requests" model="ir.ui.menu">
+        <field name="name">Laboratory Requests</field>
+        <field name="parent_id" ref="menu_hospital_laboratory_root"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_laboratory_request')"/>
+        <field name="sequence">10</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_laboratory_results" model="ir.ui.menu">
+        <field name="name">Laboratory Results</field>
+        <field name="parent_id" ref="menu_hospital_laboratory_root"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_laboratory_result')"/>
+        <field name="sequence">15</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_laboratory_tests" model="ir.ui.menu">
+        <field name="name">Laboratory Tests</field>
+        <field name="parent_id" ref="menu_hospital_laboratory_root"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_laboratory_test')"/>
+        <field name="sequence">20</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_laboratory_configuration" model="ir.ui.menu">
+        <field name="name">Configuration</field>
+        <field name="parent_id" ref="menu_hospital_laboratory_root"/>
+        <field name="sequence">90</field>
+        <field name="active" eval="False"/>
+        <field name="web_icon" eval="False"/>
+        <field name="groups_id" eval="[(6, 0, [
+            ref('hospital_management.group_hospital_system_administrator'),
+            ref('hospital_management.group_hospital_manager'),
+            ref('hospital_management.group_hospital_lab_technician'),
+            ref('base.group_system')
+        ])]"/>
+    </record>
+
+    <record id="menu_hospital_laboratory_configuration_tests" model="ir.ui.menu">
+        <field name="name">Laboratory Tests</field>
+        <field name="parent_id" ref="menu_hospital_laboratory_configuration"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_laboratory_test')"/>
+        <field name="sequence">10</field>
+        <field name="active" eval="False"/>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_consent_root" model="ir.ui.menu">
+        <field name="name">Consent Form</field>
+        <field name="sequence">40</field>
+        <field name="parent_id" eval="False"/>
+        <field name="web_icon">hospital_management,static/description/consents.svg</field>
+        <field name="groups_id" eval="[(6, 0, [
+            ref('hospital_management.group_hospital_system_administrator'),
+            ref('hospital_management.group_hospital_manager'),
+            ref('hospital_management.group_hospital_data_protection_officer'),
+            ref('base.group_system')
+        ])]"/>
+    </record>
+
+    <record id="menu_hospital_patient_consents" model="ir.ui.menu">
+        <field name="name">Patient Consents</field>
+        <field name="parent_id" ref="menu_hospital_consent_root"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_patient_consent')"/>
+        <field name="sequence">10</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_consent_compliance" model="ir.ui.menu">
+        <field name="name">Compliance</field>
+        <field name="parent_id" ref="menu_hospital_consent_root"/>
+        <field name="sequence">80</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_audit_logs" model="ir.ui.menu">
+        <field name="name">Audit Logs</field>
+        <field name="parent_id" ref="menu_hospital_consent_compliance"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_audit_log')"/>
+        <field name="sequence">10</field>
+        <field name="web_icon" eval="False"/>
+        <field name="groups_id" eval="[(6, 0, [
+            ref('hospital_management.group_hospital_system_administrator'),
+            ref('hospital_management.group_hospital_manager'),
+            ref('hospital_management.group_hospital_data_protection_officer'),
+            ref('base.group_system')
+        ])]"/>
+    </record>
+
+    <delete model="ir.ui.menu" search="[('name', '=', 'Patients'), ('parent_id.name', '=', 'Ethiopian Hospital ERP')]"/>
+    <delete model="ir.ui.menu" search="[('name', '=', 'Physicians'), ('parent_id.name', '=', 'Ethiopian Hospital ERP')]"/>
+    <delete model="ir.ui.menu" search="[('name', '=', 'Compliance'), ('parent_id.name', '=', 'Ethiopian Hospital ERP')]"/>
+    <delete model="ir.ui.menu" search="[('name', '=', 'Configuration'), ('parent_id.name', '=', 'Ethiopian Hospital ERP')]"/>
+    <delete model="ir.ui.menu" search="[('name', '=', 'Ethiopian Hospital ERP'), ('parent_id', '=', False)]"/>
+</odoo>

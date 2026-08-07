@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_encounter_list" model="ir.ui.view">
+        <field name="name">hospital.encounter.list</field>
+        <field name="model">hospital.encounter</field>
+        <field name="arch" type="xml">
+            <list string="Encounters">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="encounter_type"/>
+                <field name="department_id" optional="show"/>
+                <field name="primary_doctor_id" optional="show"/>
+                <field name="opened_at"/>
+                <field name="payer_type" optional="show"/>
+                <field name="emergency_bypass" optional="hide"/>
+                <field name="state" widget="badge"
+                    decoration-info="state == 'planned'"
+                    decoration-primary="state in ('checked_in', 'active')"
+                    decoration-success="state in ('completed', 'closed')"
+                    decoration-danger="state == 'cancelled'"
+                />
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_encounter_form" model="ir.ui.view">
+        <field name="name">hospital.encounter.form</field>
+        <field name="model">hospital.encounter</field>
+        <field name="arch" type="xml">
+            <form string="Encounter">
+                <header>
+                    <button name="action_check_in" string="Check In" type="object"
+                        class="btn-primary" invisible="state != 'planned'"/>
+                    <button name="action_start" string="Start" type="object"
+                        class="btn-primary" invisible="state not in ('planned', 'checked_in')"/>
+                    <button name="action_complete" string="Complete" type="object"
+                        class="btn-primary" invisible="state != 'active'"/>
+                    <button name="action_close" string="Close" type="object"
+                        class="btn-primary" invisible="state != 'completed'"/>
+                    <button name="action_cancel" string="Cancel" type="object"
+                        invisible="state not in ('planned', 'checked_in', 'active')"/>
+                    <button name="action_reset_to_planned" string="Reset to Planned" type="object"
+                        invisible="state != 'cancelled'"/>
+                    <field name="state" widget="statusbar"
+                        statusbar_visible="planned,checked_in,active,completed,closed"/>
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box"/>
+                    <widget name="web_ribbon" title="Cancelled" bg_color="text-bg-danger"
+                        invisible="state != 'cancelled'"/>
+                    <widget name="web_ribbon" title="Closed" bg_color="text-bg-success"
+                        invisible="state != 'closed'"/>
+                    <div class="oe_title">
+                        <h1><field name="name" readonly="1"/></h1>
+                    </div>
+                    <group>
+                        <group string="Clinical">
+                            <field name="patient_id" options="{'no_create': True}"/>
+                            <field name="appointment_id"
+                                domain="[('patient_id', '=', patient_id)]"
+                                options="{'no_create': True}"/>
+                            <field name="encounter_type"/>
+                            <field name="department_id"/>
+                            <field name="primary_doctor_id"/>
+                        </group>
+                        <group string="Timeline">
+                            <field name="opened_at"/>
+                            <field name="completed_at" invisible="not completed_at"/>
+                            <field name="closed_at" invisible="not closed_at"/>
+                            <field name="company_id" groups="base.group_multi_company"/>
+                            <field name="currency_id" groups="base.group_multi_currency"/>
+                            <field name="active"/>
+                        </group>
+                    </group>
+                    <group>
+                        <group string="Payer" name="payer">
+                            <field name="payer_type"/>
+                            <field name="payer_id"
+                                required="payer_type != 'self_pay'"
+                                invisible="payer_type == 'self_pay'"/>
+                        </group>
+                        <group string="Emergency Bypass" name="emergency_bypass">
+                            <field name="emergency_bypass"/>
+                            <field name="emergency_bypass_reason"
+                                required="emergency_bypass"
+                                invisible="not emergency_bypass"/>
+                            <field name="emergency_bypass_authorized_by"
+                                invisible="not emergency_bypass"/>
+                            <field name="emergency_bypass_at"
+                                invisible="not emergency_bypass"/>
+                        </group>
+                    </group>
+                    <group string="Cancellation" invisible="state != 'cancelled'">
+                        <field name="cancel_reason" nolabel="1"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_encounter_search" model="ir.ui.view">
+        <field name="name">hospital.encounter.search</field>
+        <field name="model">hospital.encounter</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="primary_doctor_id"/>
+                <field name="department_id"/>
+                <filter string="Planned" name="planned" domain="[('state', '=', 'planned')]"/>
+                <filter string="Active" name="state_active" domain="[('state', '=', 'active')]"/>
+                <filter string="Completed" name="completed" domain="[('state', '=', 'completed')]"/>
+                <filter string="Closed" name="closed" domain="[('state', '=', 'closed')]"/>
+                <filter string="Cancelled" name="cancelled" domain="[('state', '=', 'cancelled')]"/>
+                <separator/>
+                <filter string="Emergency Bypass" name="emergency_bypass" domain="[('emergency_bypass', '=', True)]"/>
+                <separator/>
+                <filter string="Active Records" name="active" domain="[('active', '=', True)]"/>
+                <filter string="Archived" name="archived" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Patient" name="group_by_patient" context="{'group_by': 'patient_id'}"/>
+                    <filter string="State" name="group_by_state" context="{'group_by': 'state'}"/>
+                    <filter string="Type" name="group_by_type" context="{'group_by': 'encounter_type'}"/>
+                    <filter string="Payer Type" name="group_by_payer_type" context="{'group_by': 'payer_type'}"/>
+                    <filter string="Opened" name="group_by_opened" context="{'group_by': 'opened_at:month'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_encounter" model="ir.actions.act_window">
+        <field name="name">Encounters</field>
+        <field name="res_model">hospital.encounter</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_encounter_search"/>
+        <field name="context">{'search_default_active': 1}</field>
+    </record>
+
+    <record id="view_hospital_patient_form_encounter" model="ir.ui.view">
+        <field name="name">hospital.patient.form.encounter</field>
+        <field name="model">hospital.patient</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_patient_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button name="action_view_patient_encounters" type="object"
+                    class="oe_stat_button" icon="fa-stethoscope" invisible="not id">
+                    <field name="encounter_count" widget="statinfo" string="Encounters"/>
+                </button>
+            </xpath>
+        </field>
+    </record>
+</odoo>

@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Disease Category List View -->
+    <record id="view_hospital_disease_category_list" model="ir.ui.view">
+        <field name="name">hospital.disease.category.list</field>
+        <field name="model">hospital.disease.category</field>
+        <field name="arch" type="xml">
+            <list string="Disease Categories">
+                <field name="name"/>
+                <field name="code"/>
+                <field name="active"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- Disease Category Form View -->
+    <record id="view_hospital_disease_category_form" model="ir.ui.view">
+        <field name="name">hospital.disease.category.form</field>
+        <field name="model">hospital.disease.category</field>
+        <field name="arch" type="xml">
+            <form string="Disease Category">
+                <sheet>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1>
+                            <field name="name" placeholder="Disease Category Name"/>
+                        </h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="code"/>
+                            <field name="active"/>
+                        </group>
+                        <group>
+                        </group>
+                    </group>
+                    <group>
+                        <field name="description" placeholder="Description"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!-- Disease Category Search View -->
+    <record id="view_hospital_disease_category_search" model="ir.ui.view">
+        <field name="name">hospital.disease.category.search</field>
+        <field name="model">hospital.disease.category</field>
+        <field name="arch" type="xml">
+            <search string="Disease Categories">
+                <field name="name"/>
+                <field name="code"/>
+                <filter string="Archived" name="inactive" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Code" name="group_by_code" context="{'group_by': 'code'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- Disease Category Action -->
+    <record id="action_hospital_disease_category" model="ir.actions.act_window">
+        <field name="name">Disease Categories</field>
+        <field name="res_model">hospital.disease.category</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_disease_category_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                No disease categories found. Create one!
+            </p>
+        </field>
+    </record>
+
+    <!-- Disease List View -->
+    <record id="view_hospital_disease_list" model="ir.ui.view">
+        <field name="name">hospital.disease.list</field>
+        <field name="model">hospital.disease</field>
+        <field name="arch" type="xml">
+            <list string="Diseases">
+                <field name="name"/>
+                <field name="code"/>
+                <field name="category_id"/>
+                <field name="active"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- Disease Form View -->
+    <record id="view_hospital_disease_form" model="ir.ui.view">
+        <field name="name">hospital.disease.form</field>
+        <field name="model">hospital.disease</field>
+        <field name="arch" type="xml">
+            <form string="Disease">
+                <sheet>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1>
+                            <field name="name" placeholder="Disease Name"/>
+                        </h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="code"/>
+                            <field name="category_id"/>
+                            <field name="active"/>
+                        </group>
+                        <group>
+                        </group>
+                    </group>
+                    <group>
+                        <field name="description" placeholder="Description"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!-- Disease Search View -->
+    <record id="view_hospital_disease_search" model="ir.ui.view">
+        <field name="name">hospital.disease.search</field>
+        <field name="model">hospital.disease</field>
+        <field name="arch" type="xml">
+            <search string="Diseases">
+                <field name="name"/>
+                <field name="code"/>
+                <field name="category_id"/>
+                <filter string="Archived" name="inactive" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Category" name="group_by_category" context="{'group_by': 'category_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- Disease Action -->
+    <record id="action_hospital_disease" model="ir.actions.act_window">
+        <field name="name">Diseases</field>
+        <field name="res_model">hospital.disease</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_disease_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                No diseases found. Create one!
+            </p>
+        </field>
+    </record>
+</odoo>

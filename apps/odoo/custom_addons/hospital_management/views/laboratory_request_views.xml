@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- Laboratory Test Views -->
+    <record id="view_hospital_laboratory_test_tree" model="ir.ui.view">
+        <field name="name">hospital.laboratory.test.tree</field>
+        <field name="model">hospital.laboratory.test</field>
+        <field name="arch" type="xml">
+            <list>
+                <field name="code" />
+                <field name="name" />
+                <field name="category" />
+                <field name="sample_type" />
+                <field name="active" />
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_laboratory_test_form" model="ir.ui.view">
+        <field name="name">hospital.laboratory.test.form</field>
+        <field name="model">hospital.laboratory.test</field>
+        <field name="arch" type="xml">
+            <form>
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_view_results" type="object" class="oe_stat_button" icon="fa-flask" invisible="not id">
+                            <field name="result_count" widget="statinfo" string="Results" />
+                        </button>
+                        <button name="toggle_active" type="object" class="oe_stat_button" icon="fa-archive">
+                            <field name="active" widget="boolean_button" options='{"terminology": "archive"}' />
+                        </button>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="name" />
+                            <field name="code" />
+                            <field name="category" />
+                        </group>
+                        <group>
+                            <field name="sample_type" />
+                        </group>
+                    </group>
+                    <group>
+                        <field name="description" />
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_laboratory_test_search" model="ir.ui.view">
+        <field name="name">hospital.laboratory.test.search</field>
+        <field name="model">hospital.laboratory.test</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name" />
+                <field name="code" />
+                <field name="category" />
+                <field name="sample_type" />
+                <separator />
+                <filter name="filter_active" string="Active" domain="[('active', '=', True)]" />
+                <filter name="filter_inactive" string="Archived" domain="[('active', '=', False)]" />
+                <group expand="0" string="Group By">
+                    <filter name="group_by_category" string="Category" context="{'group_by': 'category'}" />
+                    <filter name="group_by_sample_type" string="Sample Type" context="{'group_by': 'sample_type'}" />
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- Laboratory Request Views -->
+    <record id="view_hospital_laboratory_request_tree" model="ir.ui.view">
+        <field name="name">hospital.laboratory.request.tree</field>
+        <field name="model">hospital.laboratory.request</field>
+        <field name="arch" type="xml">
+            <list>
+                <field name="name" />
+                <field name="patient_id" />
+                <field name="physician_id" />
+                <field name="request_date" />
+                <field name="priority" />
+                <field name="state"
+                    decoration-success="state == 'completed'"
+                    decoration-muted="state == 'cancelled'"
+                    decoration-info="state == 'in_progress'"
+                    widget="badge" />
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_laboratory_request_form" model="ir.ui.view">
+        <field name="name">hospital.laboratory.request.form</field>
+        <field name="model">hospital.laboratory.request</field>
+        <field name="arch" type="xml">
+            <form>
+                <header>
+                    <button name="action_confirm_request" string="Confirm Request" type="object" class="oe_highlight" invisible="state != 'draft'" />
+                    <button name="action_mark_sample_collected" string="Mark Sample Collected" type="object" class="oe_highlight" invisible="state != 'requested'" />
+                    <button name="action_mark_in_progress" string="Mark In Progress" type="object" class="oe_highlight" invisible="state != 'sample_collected'" />
+                    <button name="action_cancel" string="Cancel" type="object" invisible="state not in ['draft', 'requested']" />
+                    <button name="action_reset_to_draft" string="Reset to Draft" type="object" invisible="state != 'cancelled'" />
+                    <field name="state" widget="statusbar" statusbar_visible="draft,requested,sample_collected,in_progress,completed" />
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_view_results" type="object" class="oe_stat_button" icon="fa-flask" invisible="not id">
+                            <field name="result_count" widget="statinfo" string="Results" />
+                        </button>
+                        <button name="toggle_active" type="object" class="oe_stat_button" icon="fa-archive">
+                            <field name="active" widget="boolean_button" options='{"terminology": "archive"}' />
+                        </button>
+                    </div>
+                    <h1>
+                        <field name="name" />
+                    </h1>
+                    <group>
+                        <group>
+                            <field name="patient_id" />
+                            <field name="physician_id" />
+                            <field name="request_date" />
+                        </group>
+                        <group>
+                            <field name="appointment_id" />
+                            <field name="priority" />
+                            <field name="active" />
+                        </group>
+                    </group>
+                    <group>
+                        <group>
+                            <field name="evaluation_id" />
+                            <field name="diagnosis_id" />
+                        </group>
+                        <group>
+                            <field name="treatment_plan_id" />
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Requested Tests" name="requested_tests">
+                            <field name="line_ids">
+                                <list editable="bottom">
+                                    <field name="sequence" widget="handle" />
+                                    <field name="test_id" />
+                                    <field name="sample_type" />
+                                    <field name="special_instruction" />
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Clinical Notes" name="clinical_notes">
+                            <field name="clinical_notes" />
+                            <field name="instructions" />
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_laboratory_request_search" model="ir.ui.view">
+        <field name="name">hospital.laboratory.request.search</field>
+        <field name="model">hospital.laboratory.request</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name" />
+                <field name="patient_id" />
+                <field name="physician_id" />
+                <field name="request_date" />
+                <separator />
+                <filter name="filter_draft" string="Draft" domain="[('state', '=', 'draft')]" />
+                <filter name="filter_requested" string="Requested" domain="[('state', '=', 'requested')]" />
+                <filter name="filter_sample_collected" string="Sample Collected" domain="[('state', '=', 'sample_collected')]" />
+                <filter name="filter_in_progress" string="In Progress" domain="[('state', '=', 'in_progress')]" />
+                <filter name="filter_completed" string="Completed" domain="[('state', '=', 'completed')]" />
+                <filter name="filter_cancelled" string="Cancelled" domain="[('state', '=', 'cancelled')]" />
+                <separator />
+                <filter name="filter_open" string="Open (not finished)"
+                    domain="[('state', 'not in', ('completed', 'cancelled'))]" />
+                <separator />
+                <filter name="filter_routine" string="Routine" domain="[('priority', '=', 'routine')]" />
+                <filter name="filter_urgent" string="Urgent" domain="[('priority', '=', 'urgent')]" />
+                <filter name="filter_stat" string="STAT" domain="[('priority', '=', 'stat')]" />
+                <separator />
+                <filter name="filter_active" string="Active" domain="[('active', '=', True)]" />
+                <filter name="filter_inactive" string="Archived" domain="[('active', '=', False)]" />
+                <group expand="0" string="Group By">
+                    <filter name="group_by_patient" string="Patient" context="{'group_by': 'patient_id'}" />
+                    <filter name="group_by_physician" string="Physician" context="{'group_by': 'physician_id'}" />
+                    <filter name="group_by_state" string="State" context="{'group_by': 'state'}" />
+                    <filter name="group_by_priority" string="Priority" context="{'group_by': 'priority'}" />
+                    <filter name="group_by_request_date" string="Request Date" context="{'group_by': 'request_date'}" />
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_laboratory_test" model="ir.actions.act_window">
+        <field name="name">Laboratory Tests</field>
+        <field name="res_model">hospital.laboratory.test</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_laboratory_test_search" />
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Create laboratory test catalog entries for request ordering.
+            </p>
+        </field>
+    </record>
+
+    <record id="action_hospital_laboratory_request" model="ir.actions.act_window">
+        <field name="name">Laboratory Requests</field>
+        <field name="res_model">hospital.laboratory.request</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_laboratory_request_search" />
+        <field name="context">{}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Create laboratory requests for patient diagnostic workups.
+            </p>
+        </field>
+    </record>
+
+</odoo>

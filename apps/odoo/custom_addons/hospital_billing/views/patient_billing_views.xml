@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_patient_billing_form_inherit" model="ir.ui.view">
+        <field name="name">hospital.patient.form.billing.inherit</field>
+        <field name="model">hospital.patient</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_patient_form"/>
+        <field name="arch" type="xml">
+
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button
+                    name="action_view_patient_bills"
+                    type="object"
+                    class="oe_stat_button"
+                    icon="fa-file-text"
+                    invisible="not id"
+                >
+                    <field name="bill_count" widget="statinfo" string="Bills"/>
+                </button>
+            </xpath>
+
+            <xpath expr="//notebook" position="inside">
+                <page string="Bills" invisible="not id">
+                    <field name="bill_ids" readonly="1">
+                        <list>
+                            <field name="name"/>
+                            <field name="bill_date"/>
+                            <field name="amount_total"/>
+                            <field name="amount_paid"/>
+                            <field name="amount_due"/>
+                            <field name="state" widget="badge"
+                                decoration-info="state == 'draft'"
+                                decoration-primary="state == 'confirmed'"
+                                decoration-warning="state == 'partially_paid'"
+                                decoration-success="state == 'paid'"
+                                decoration-danger="state == 'cancelled'"
+                            />
+                        </list>
+                    </field>
+                </page>
+            </xpath>
+
+        </field>
+    </record>
+</odoo>
