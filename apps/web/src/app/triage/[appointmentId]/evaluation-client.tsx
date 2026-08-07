@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import BillingWarning from "@/components/clinical/billing-warning";
+import DoctorSelect from "@/components/clinical/doctor-select";
 import ErrorBanner from "@/components/clinical/error-banner";
 import StatusBadge from "@/components/clinical/status-badge";
 import {
@@ -34,7 +35,8 @@ type FormState = {
   chief_complaint: string;
   triage_notes: string;
   physician_id: string;
-  assigned_nurse_id: string;
+  // assigned_nurse_id is deliberately NOT part of the form: the server derives
+  // it from env.user. See buildPayload().
 };
 
 const EMPTY_FORM: FormState = {
@@ -54,7 +56,6 @@ const EMPTY_FORM: FormState = {
   chief_complaint: "",
   triage_notes: "",
   physician_id: "",
-  assigned_nurse_id: "",
 };
 
 const NUMERIC_FIELDS = [
@@ -74,9 +75,21 @@ function valueToString(value: string | number | null | undefined) {
   return value === null || value === undefined ? "" : String(value);
 }
 
-function formFromEvaluation(evaluation: ClinicalEvaluation): FormState {
+/**
+ * `fallbackPhysicianId` is the appointment's own doctor. It seeds the picker
+ * for an evaluation that has not recorded a physician yet -- typically a brand
+ * new one -- so the clinician who is actually booked for the visit is
+ * pre-selected instead of the field opening empty.
+ */
+function formFromEvaluation(
+  evaluation: ClinicalEvaluation,
+  fallbackPhysicianId?: number | null,
+): FormState {
   if (!evaluation) {
-    return EMPTY_FORM;
+    return {
+      ...EMPTY_FORM,
+      physician_id: valueToString(fallbackPhysicianId ?? undefined),
+    };
   }
 
   return {
@@ -95,8 +108,9 @@ function formFromEvaluation(evaluation: ClinicalEvaluation): FormState {
     triage_priority: valueToString(evaluation.triage_priority),
     chief_complaint: valueToString(evaluation.chief_complaint),
     triage_notes: valueToString(evaluation.triage_notes),
-    physician_id: valueToString(evaluation.physician_id?.id),
-    assigned_nurse_id: valueToString(evaluation.assigned_nurse_id?.id),
+    physician_id: valueToString(
+      evaluation.physician_id?.id ?? fallbackPhysicianId ?? undefined,
+    ),
   };
 }
 
@@ -143,12 +157,24 @@ function buildPayload(form: FormState): EvaluationSavePayload {
   const payload: EvaluationSavePayload = {
     pain_level: form.pain_level || null,
     pain_note: form.pain_note || null,
-    triage_priority: form.triage_priority || null,
+
     chief_complaint: form.chief_complaint || null,
     triage_notes: form.triage_notes || null,
     physician_id: form.physician_id ? Number(form.physician_id) : null,
-    assigned_nurse_id: form.assigned_nurse_id ? Number(form.assigned_nurse_id) : null,
+    // assigned_nurse_id is intentionally OMITTED, not sent as null.
+    //
+    // hospital.patient.evaluation.assigned_nurse_id carries
+    // `default=lambda self: self.env.user`, and Odoo applies a default only
+    // when the key is ABSENT from vals. Sending an explicit null therefore
+    // suppressed that default and created evaluations with no nurse assigned
+    // -- which, for an appointment-less evaluation, is the only thing the
+    // nurse record rule matches on. The server derives the identity from the
+    // authenticated session; the browser must not supply it.
   };
+
+  if (form.triage_priority) {
+    payload.triage_priority = form.triage_priority;
+  }
 
   for (const field of NUMERIC_FIELDS) {
     const raw = form[field].trim();
@@ -274,7 +300,12 @@ export default function EvaluationClient({ appointmentId }: { appointmentId: str
     try {
       const nextDetail = await requestEvaluationDetail(numericAppointmentId);
       setDetail(nextDetail);
-      setForm(formFromEvaluation(nextDetail.evaluation));
+      setForm(
+        formFromEvaluation(
+          nextDetail.evaluation,
+          nextDetail.appointment.doctor_id?.id,
+        ),
+      );
       // A successful fetch clears whatever transient failure preceded it.
       setError(null);
       setBillingError(null);
@@ -303,7 +334,12 @@ export default function EvaluationClient({ appointmentId }: { appointmentId: str
         const nextDetail = await requestEvaluationDetail(numericAppointmentId);
         if (active) {
           setDetail(nextDetail);
-          setForm(formFromEvaluation(nextDetail.evaluation));
+          setForm(
+            formFromEvaluation(
+              nextDetail.evaluation,
+              nextDetail.appointment.doctor_id?.id,
+            ),
+          );
           setError(null);
           setBillingError(null);
         }
@@ -358,7 +394,12 @@ export default function EvaluationClient({ appointmentId }: { appointmentId: str
       setDetail((current) =>
         current ? { ...current, evaluation: payload.data.evaluation } : current,
       );
-      setForm(formFromEvaluation(payload.data.evaluation));
+      setForm(
+        formFromEvaluation(
+          payload.data.evaluation,
+          detail.appointment.doctor_id?.id,
+        ),
+      );
       setError(null);
       setBillingError(null);
     } catch {
@@ -584,8 +625,29 @@ export default function EvaluationClient({ appointmentId }: { appointmentId: str
             <section>
               <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Triage Assessment</h2>
               <div className="mt-3 grid gap-3 md:grid-cols-3">
-                <Field label="Physician ID" type="number" value={form.physician_id} onChange={(value) => setField("physician_id", value)} />
-                <Field label="Assigned nurse ID" type="number" value={form.assigned_nurse_id} onChange={(value) => setField("assigned_nurse_id", value)} />
+                <DoctorSelect
+                  label="Physician"
+                  value={form.physician_id}
+                  onChange={(value) => setField("physician_id", value)}
+                  departmentId={detail.appointment.department_id?.id ?? null}
+                  currentDoctor={detail.evaluation?.physician_id ?? detail.appointment.doctor_id}
+                  helpText={
+                    detail.appointment.department_id
+                      ? `Doctors in ${detail.appointment.department_id.name}`
+                      : undefined
+                  }
+                />
+                <label className="text-sm font-medium text-slate-700">
+                  Assigned nurse
+                  <input
+                    readOnly
+                    value={detail.evaluation?.assigned_nurse_id?.name ?? "Assigned on first save"}
+                    className="mt-1 h-10 w-full rounded-md border border-slate-200 bg-slate-50 px-3 text-sm text-slate-600"
+                  />
+                  <span className="mt-1 block text-xs font-normal text-slate-500">
+                    Taken from your signed-in account.
+                  </span>
+                </label>
                 <label className="text-sm font-medium text-slate-700">
                   Encounter
                   <input readOnly value={detail.encounter?.name ?? "Not linked"} className="mt-1 h-10 w-full rounded-md border border-slate-200 bg-slate-50 px-3 text-sm text-slate-600" />
@@ -598,4 +660,5 @@ export default function EvaluationClient({ appointmentId }: { appointmentId: str
     </div>
   );
 }
+
 
