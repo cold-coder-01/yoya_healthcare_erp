@@ -66,7 +66,7 @@ ALLOCATION_REASON_CTX = "hospital_billing_allocation_reason"
 ALLOCATION_REFERENCE_CTX = "hospital_billing_allocation_reference"
 DELIVERY_REASON_CTX = "hospital_billing_delivery_reason"
 
-# Existing hospital_management groups. No new groups are invented.
+# Existing hospital_management groups.
 G_RECEPTIONIST = "hospital_management.group_hospital_receptionist"
 G_DOCTOR = "hospital_management.group_hospital_doctor"
 G_NURSE = "hospital_management.group_hospital_nurse"
@@ -76,9 +76,25 @@ G_ACCOUNTANT = "hospital_management.group_hospital_accountant"
 G_MANAGER = "hospital_management.group_hospital_manager"
 G_ADMIN = "hospital_management.group_hospital_system_administrator"
 
-# Cash intake is a cashier/front-desk act; the receptionist IS the cashier in this
-# deployment (Task 25 already grants them bill-payment creation).
-RECEIPT_GROUPS = (G_RECEPTIONIST, G_ACCOUNTANT, G_MANAGER, G_ADMIN)
+# Owned by THIS module (security/hospital_billing_groups.xml). Cash intake is a
+# billing act, so the group that authorizes it must be resolvable from billing
+# code without depending on any downstream module.
+G_CASHIER = "hospital_billing.group_hospital_cashier"
+
+# THE authorization boundary for operational cash intake: creating a receipt,
+# allocating it against charges, and confirming it.
+#
+# THE SINGLE SOURCE OF TRUTH. charge_receipt.py and pharmacy_billing.py import
+# this tuple rather than restating it; yoya_emr_api mirrors it for capability
+# reporting and asserts equality in its tests. Three independent copies used to
+# exist, which is how the standalone Cashier group came to be locked out of the
+# only path that actually moves money.
+#
+# The receptionist is deliberately ABSENT. Registering a patient and taking their
+# money are separable duties; a receptionist observes payment state (see
+# OPERATIONAL_MONEY_READ) but cannot create it. Manager and admin are listed
+# explicitly -- manager implies receptionist, not cashier.
+OPERATIONAL_INTAKE_GROUPS = (G_CASHIER, G_ACCOUNTANT, G_MANAGER, G_ADMIN)
 
 # Applying and refunding money is an accounting act.
 ACCOUNTING_GROUPS = (G_ACCOUNTANT, G_MANAGER, G_ADMIN)
@@ -107,8 +123,20 @@ ALLOCATION_FIELDS = set(ALLOCATION_FIELD_GROUPS)
 # Money leaving the hospital always needs a documented reason.
 REFUND_FIELDS = {"amount_refunded_from_advance", "amount_refunded_from_credit"}
 
-# Read visibility, using existing groups only.
-CASHIER_READ = ",".join((G_RECEPTIONIST, G_ACCOUNTANT, G_MANAGER, G_ADMIN))
+# Read visibility for operational money fields (cash in, what is still owed).
+#
+# WIDER than OPERATIONAL_INTAKE_GROUPS on purpose, and the difference is the
+# whole point of the split: the cashier must SEE these to collect, and the
+# receptionist must SEE them to tell a patient why they cannot proceed to
+# triage -- but only the cashier may act on them.
+#
+# The cashier was missing here until now, which meant a cashier could not read
+# amount_received or amount_due_for_clearance at all. Widening the intake tuple
+# without also widening this would have produced a cashier who may take money
+# but cannot see how much to take.
+OPERATIONAL_MONEY_READ = ",".join(
+    (G_CASHIER, G_RECEPTIONIST, G_ACCOUNTANT, G_MANAGER, G_ADMIN)
+)
 ACCOUNTING_READ = ",".join((G_ACCOUNTANT, G_MANAGER, G_ADMIN))
 
 # Quantities that must not be rewritten by hand once anything has been invoiced.
@@ -307,7 +335,7 @@ class HospitalChargeLine(models.Model):
     )
     amount_to_invoice = fields.Float(
         compute="_compute_amounts", store=True, digits=(16, 2),
-        compute_sudo=True, groups=CASHIER_READ,
+        compute_sudo=True, groups=OPERATIONAL_MONEY_READ,
     )
     amount_invoiced = fields.Float(
         compute="_compute_amounts", store=True, digits=(16, 2),
@@ -335,35 +363,35 @@ class HospitalChargeLine(models.Model):
     # so a receipt total and a charge total cannot drift apart.
     allocation_ids = fields.One2many(
         "hospital.charge.receipt.allocation", "charge_line_id",
-        string="Receipt Allocations", groups=CASHIER_READ,
+        string="Receipt Allocations", groups=OPERATIONAL_MONEY_READ,
     )
     amount_received = fields.Float(
         compute="_compute_amount_received", store=True, digits=(16, 2),
-        compute_sudo=True, groups=CASHIER_READ,
+        compute_sudo=True, groups=OPERATIONAL_MONEY_READ,
         help="Cash received against this charge. Reconciles exactly to the sum of the "
         "CONFIRMED receipt allocations for it.",
     )
     amount_prepayment_held = fields.Float(
         string="Advance Held",
         compute="_compute_outstanding", store=True, digits=(16, 2),
-        compute_sudo=True, groups=CASHIER_READ,
+        compute_sudo=True, groups=OPERATIONAL_MONEY_READ,
         help="Cash received but not yet applied to an invoice and not yet refunded. "
         "This is a DEPOSIT, not a debt owed to the patient.",
     )
     amount_outstanding = fields.Float(
         compute="_compute_outstanding", store=True, digits=(16, 2),
-        compute_sudo=True, groups=CASHIER_READ,
+        compute_sudo=True, groups=OPERATIONAL_MONEY_READ,
         help="max(0, receivable_balance). Receivable only.",
     )
     amount_patient_credit = fields.Float(
         compute="_compute_outstanding", store=True, digits=(16, 2),
-        compute_sudo=True, groups=CASHIER_READ,
+        compute_sudo=True, groups=OPERATIONAL_MONEY_READ,
         help="Over-collection against invoiced amounts, net of credit refunds already made. "
         "This IS a debt owed back to the patient.",
     )
     amount_due_for_clearance = fields.Float(
         compute="_compute_outstanding", store=True, digits=(16, 2),
-        compute_sudo=True, groups=CASHIER_READ,
+        compute_sudo=True, groups=OPERATIONAL_MONEY_READ,
         help="OPERATIONAL pre-service payment requirement for prepaid services. "
         "Not an accounting receivable -- it exists before any invoice does.",
     )
@@ -541,10 +569,10 @@ class HospitalChargeLine(models.Model):
     # once on each of them.
     receipt_ids = fields.Many2many(
         "hospital.charge.receipt", string="Payment Receipts",
-        compute="_compute_receipts", compute_sudo=True, groups=CASHIER_READ,
+        compute="_compute_receipts", compute_sudo=True, groups=OPERATIONAL_MONEY_READ,
     )
     receipt_count = fields.Integer(
-        compute="_compute_receipts", compute_sudo=True, groups=CASHIER_READ,
+        compute="_compute_receipts", compute_sudo=True, groups=OPERATIONAL_MONEY_READ,
     )
 
     reversal_of_id = fields.Many2one("hospital.charge.line", readonly=True, copy=False)
@@ -1282,7 +1310,7 @@ class HospitalChargeLine(models.Model):
     def action_record_payment(self):
         """Open the controlled payment-intake wizard. amount_received stays readonly."""
         self.ensure_one()
-        self._assert_group(RECEIPT_GROUPS, "record a payment")
+        self._assert_group(OPERATIONAL_INTAKE_GROUPS, "record a payment")
         if self.charge_state != "active":
             raise UserError(
                 f"Charge {self.name} is {self.charge_state}. Payment can only be recorded "

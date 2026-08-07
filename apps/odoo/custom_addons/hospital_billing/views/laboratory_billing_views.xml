@@ -68,7 +68,7 @@
                 <button name="action_view_charges" type="object"
                     class="oe_stat_button" icon="fa-money"
                     invisible="not id or charge_count == 0"
-                    groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
+                    groups="hospital_billing.group_hospital_cashier,hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
                     <field name="charge_count" widget="statinfo" string="Charges"
                         readonly="1"/>
                 </button>
@@ -77,7 +77,7 @@
                 <button name="action_view_receipts" type="object"
                     class="oe_stat_button" icon="fa-file-text-o"
                     invisible="not id or receipt_count == 0"
-                    groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
+                    groups="hospital_billing.group_hospital_cashier,hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
                     <field name="receipt_count" widget="statinfo" string="Receipts"
                         readonly="1"/>
                 </button>
@@ -88,7 +88,7 @@
                 <button name="action_record_payment" type="object"
                     string="Record Payment / Advance" class="btn-primary"
                     invisible="charge_count == 0 or state == 'cancelled'"
-                    groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    groups="hospital_billing.group_hospital_cashier,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
             </xpath>
 
             <xpath expr="//sheet" position="inside">

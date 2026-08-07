@@ -26,13 +26,14 @@ from odoo.exceptions import AccessError, UserError, ValidationError
 
 from .charge_line import (
     AMOUNT_TOLERANCE,
-    G_ACCOUNTANT,
     G_ADMIN,
     G_MANAGER,
-    G_RECEPTIONIST,
+    OPERATIONAL_INTAKE_GROUPS,
 )
 
-INTAKE_GROUPS = (G_RECEPTIONIST, G_ACCOUNTANT, G_MANAGER, G_ADMIN)
+# Imported, not restated. This module used to declare its own copy of the intake
+# tuple under a different name, so widening one did not widen the other.
+INTAKE_GROUPS = OPERATIONAL_INTAKE_GROUPS
 OVERPAY_GROUPS = (G_MANAGER, G_ADMIN)
 
 PAYMENT_METHODS = [
@@ -560,6 +561,34 @@ class HospitalChargePaymentWizard(models.TransientModel):
     # ------------------------------------------------------------------
     def action_confirm(self):
         self.ensure_one()
+
+        # THE authorization boundary for taking money. It belongs HERE, before
+        # anything else happens, because this method is the only place a receipt
+        # is actually created and confirmed -- and because everything below it
+        # runs under sudo().
+        #
+        # Every other control on this path is weaker than it looks:
+        #   - the `groups=` attributes on the launcher buttons are UI only; a
+        #     client can call this method over RPC without ever seeing a button,
+        #   - the ACL on this transient wizard was, until now, the only thing
+        #     standing between an authenticated user and a confirmed receipt,
+        #   - _assert_intake_group on the allocation model cannot fire here: the
+        #     create below is a .sudo() call, and that guard returns early under
+        #     env.su by design.
+        #
+        # So: assert real group membership as the CALLING user, before the first
+        # sudo(). The sudo() calls that follow are still required -- the cashier
+        # legitimately may not write receipt state directly -- but they are now
+        # preceded by a check that a forged context, a hidden button or a raw
+        # RPC call cannot get past.
+        #
+        # The launchers (charge line, billing account, lab request, radiology
+        # request) deliberately do NOT repeat this check. They only open a
+        # wizard; no money moves until confirm. One boundary, at the money.
+        self.env["hospital.charge.receipt.allocation"]._assert_intake_group(
+            "record a payment"
+        )
+
         Receipt = self.env["hospital.charge.receipt"]
 
         # IDEMPOTENCY, at the PAYMENT-HEADER level. A retry of this same submission

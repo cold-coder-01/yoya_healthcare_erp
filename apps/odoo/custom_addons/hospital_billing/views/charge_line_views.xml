@@ -78,7 +78,7 @@
                     <button name="action_record_payment" type="object"
                         string="Record Payment / Advance" class="btn-primary"
                         invisible="charge_state != 'active'"
-                        groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                        groups="hospital_billing.group_hospital_cashier,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
                     <button name="action_activate" string="Activate" type="object"
                         class="btn-secondary" invisible="charge_state != 'draft'"/>
                     <button name="action_cancel" string="Cancel" type="object"
@@ -88,7 +88,7 @@
                 </header>
                 <sheet>
                     <div class="oe_button_box" name="button_box"
-                        groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
+                        groups="hospital_billing.group_hospital_cashier,hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
                         <button name="action_view_receipts" type="object"
                             class="oe_stat_button" icon="fa-money">
                             <field name="receipt_count" widget="statinfo" string="Receipts"/>
@@ -196,7 +196,7 @@
                         </group>
                     </group>
                     <group string="Operational Funding Allocation"
-                        groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
+                        groups="hospital_billing.group_hospital_cashier,hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
                         <group string="Buckets">
                             <field name="amount_received" readonly="1"/>
                             <field name="amount_applied_to_invoice" readonly="1"
@@ -224,7 +224,7 @@
                     </group>
                     <notebook>
                         <page string="Payment Receipts" name="receipts"
-                            groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
+                            groups="hospital_billing.group_hospital_cashier,hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
                             <div class="alert alert-info" role="alert">
                                 <i class="fa fa-info-circle"/>
                                 Operational payment intake only — not an accounting entry

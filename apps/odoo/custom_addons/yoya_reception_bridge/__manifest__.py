@@ -10,7 +10,8 @@ Phase 1A - security hardening
     * Emergency bypass on hospital.encounter becomes an authorized act.
     * action_start_consultation is restricted to the assigned doctor,
       hospital managers and system administrators.
-    * A dedicated cashier group is introduced.
+    * A dedicated cashier group is used (declared in hospital_billing, which
+      owns cash intake; this module only grants it reception-side access).
     * Record rules are added for the new models and, conservatively, for
       hospital.appointment and hospital.encounter.
 
@@ -28,7 +29,7 @@ This module never edits hospital_management or hospital_billing. Every
 charge is raised through hospital.billing.engine.create_or_update_charge so
 idempotency, the commercial snapshot and audit stay in one place.
 """,
-    "version": "18.0.1.0.0",
+    "version": "18.0.1.1.0",
     "category": "Healthcare",
     "author": "YOYA Healthcare",
     "license": "LGPL-3",

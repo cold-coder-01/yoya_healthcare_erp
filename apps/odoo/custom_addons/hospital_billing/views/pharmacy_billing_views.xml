@@ -17,7 +17,7 @@
         <field name="inherit_id" ref="hospital_pharmacy.view_hospital_pharmacy_dispense_form"/>
         <field name="arch" type="xml">
             <xpath expr="//header/button[@name='action_mark_dispensed']" position="before">
-                <button name="action_record_manual_payment" string="Record Manual Payment" type="object" class="btn-secondary" invisible="state not in ('ready', 'partial')" groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                <button name="action_record_manual_payment" string="Record Manual Payment" type="object" class="btn-secondary" invisible="state not in ('ready', 'partial')" groups="hospital_billing.group_hospital_cashier,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
             </xpath>
             <xpath expr="//sheet" position="inside">
                 <div name="pharmacy_billing_button_box" class="oe_button_box" role="toolbar">

@@ -31,7 +31,7 @@
         <record id="rule_card_issue_front_office" model="ir.rule">
             <field name="name">Patient card issuance: all (receptionist / cashier)</field>
             <field name="model_id" ref="model_hospital_patient_card_issue"/>
-            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_receptionist')), (4, ref('group_hospital_cashier'))]"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_receptionist')), (4, ref('hospital_billing.group_hospital_cashier'))]"/>
             <field name="domain_force">[(1, '=', 1)]</field>
             <field name="perm_read" eval="True"/>
             <field name="perm_write" eval="True"/>
@@ -81,7 +81,7 @@
         <record id="rule_appointment_cashier" model="ir.rule">
             <field name="name">Appointment: read all (cashier)</field>
             <field name="model_id" ref="hospital_management.model_hospital_appointment"/>
-            <field name="groups" eval="[(4, ref('group_hospital_cashier'))]"/>
+            <field name="groups" eval="[(4, ref('hospital_billing.group_hospital_cashier'))]"/>
             <field name="domain_force">[(1, '=', 1)]</field>
             <field name="perm_read" eval="True"/>
             <field name="perm_write" eval="False"/>
@@ -156,7 +156,7 @@
         <record id="rule_encounter_service_desks" model="ir.rule">
             <field name="name">Encounter: read all (pharmacist / lab technician / accountant / cashier / DPO)</field>
             <field name="model_id" ref="hospital_management.model_hospital_encounter"/>
-            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_pharmacist')), (4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_accountant')), (4, ref('group_hospital_cashier')), (4, ref('hospital_management.group_hospital_data_protection_officer'))]"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_pharmacist')), (4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_accountant')), (4, ref('hospital_billing.group_hospital_cashier')), (4, ref('hospital_management.group_hospital_data_protection_officer'))]"/>
             <!-- These desks work a cross-encounter queue of their own; scoping
                  them by department would break dispensing and lab workflows.
                  Unrestricted READ is a deliberate decision, not an omission. -->

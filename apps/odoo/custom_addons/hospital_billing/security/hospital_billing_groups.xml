@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="0">
+
+        <!--
+            Operational cash intake is a BILLING concept, so the group that
+            authorizes it lives here, in the module that owns the receipt,
+            the allocation and the payment wizard.
+
+            It was previously declared in yoya_reception_bridge. That could
+            never work as the authorization boundary: yoya_reception_bridge
+            DEPENDS ON hospital_billing, so this module can neither reference
+            the group in its own ACLs nor name it in its Python guards without
+            a circular dependency, and has_group() on an xmlid belonging to
+            an uninstalled module raises. The group is re-homed here by
+            migrations/18.0.1.5.0/pre-migrate.py, which re-points the existing
+            ir.model.data row so current members are preserved.
+
+            Deliberately implies nothing. Taking money and registering patients
+            are separable duties: a cashier is not a receptionist, and a
+            receptionist is not a cashier.
+        -->
+
+        <record id="group_hospital_cashier" model="res.groups">
+            <field name="name">Hospital Cashier</field>
+            <field name="category_id" ref="hospital_management.module_category_hospital_management"/>
+            <field name="comment">Records operational payment receipts and allocates them
+                against charges. Deliberately implies neither Receptionist nor Accountant,
+                so taking money and registering patients can be separated duties. Holds no
+                accounting authority: applying an advance, refunding, and posting to
+                accounting remain with the Accountant and above.</field>
+        </record>
+
+    </data>
+</odoo>

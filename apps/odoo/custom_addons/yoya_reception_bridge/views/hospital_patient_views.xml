@@ -2,62 +2,45 @@
 <odoo>
 
     <!--
-        Hide the "New" button on the Patients list for receptionists, while
-        leaving it untouched for everyone else, specifically including
-        managers and system administrators, even though they hold the
-        Receptionist group TOO (group_hospital_manager's implied_ids include
-        it, and system administrator implies manager).
+        REMOVED: view_hospital_patient_list_receptionist_no_create (priority 32,
+        groups_id=[receptionist]) and view_hospital_patient_list_manager_create_override
+        (priority 40, groups_id=[manager, admin]).
 
-        That implication is exactly why this needs two views layered by
-        priority rather than one:
+        They hid the "New" button on the Patients list from receptionists while
+        layering a higher-priority override to give it back to managers and
+        admins, who hold the Receptionist group implicitly.
 
-          1. RESTRICTIVE (priority 32, groups_id=[receptionist]) sets
-             create="0". It applies to every user holding the Receptionist
-             group, which includes managers and admins.
-          2. OVERRIDE (priority 40, groups_id=[manager, admin], applied
-             AFTER the restrictive view because it has the higher priority)
-             sets create="1" again, for exactly the two groups that must
-             keep full access.
+        The pair is invalid AND inoperative on Odoo 18:
 
-        A plain receptionist matches only view 1: create stays 0. A manager
-        matches both; view 2 is combined after view 1 and its create="1"
-        wins. Doctor, nurse and every other role hold neither group, so
-        neither view applies to them and the base hospital_management view
-        is completely unaffected.
+          * ir.ui.view._check_groups rejects groups_id on any view that has an
+            inherit_id and mode != 'primary', which is what aborted the upgrade.
 
-        This is a UI convenience only. The authoritative control is
-        hospital.patient's create() override in
-        models/hospital_patient.py, which blocks the same action server-side
-        regardless of what any view shows or what a raw RPC call sends.
+          * Even without that constraint the mechanism no longer works.
+            _get_inheriting_views selects extension views on `active` and
+            mode='extension' ONLY (it does not filter by groups_id at all),
+            so both views would be combined into one arch for every user and
+            the priority-40 create="1" would simply win for everybody.
+
+        It cannot be re-expressed with node-level groups="..." either, which is
+        what the constraint's message recommends. That works on ELEMENTS: the
+        combined arch keeps the attribute and _postprocess drops nodes the user
+        cannot see. Here the restriction is a ROOT ATTRIBUTE applied through
+        <xpath position="attributes">, and attribute specs are consumed during
+        inheritance (odoo/tools/template_inheritance.py handles no groups) so
+        they never survive to be filtered per user.
+
+        Nothing is lost from the security boundary. The authoritative control
+        always was, and remains, _assert_can_create_directly() in
+        models/hospital_patient.py: it blocks direct creation by a receptionist
+        on every path including raw RPC, and it is unaffected by what any view
+        shows. A receptionist now sees the New button and gets that method's
+        explicit "use the reception workflow" error; managers and admins keep
+        the button working exactly as before.
+
+        Restoring the nudge per role needs a bridge-owned action carrying
+        context={'create': False} behind a group-restricted menu, because the
+        patient menus belong to hospital_management, which this module does not
+        edit.
     -->
-
-    <record id="view_hospital_patient_list_receptionist_no_create" model="ir.ui.view">
-        <field name="name">hospital.patient.list.receptionist.no.create</field>
-        <field name="model">hospital.patient</field>
-        <field name="inherit_id" ref="hospital_management.view_hospital_patient_list"/>
-        <field name="priority">32</field>
-        <field name="groups_id" eval="[(6, 0, [ref('hospital_management.group_hospital_receptionist')])]"/>
-        <field name="arch" type="xml">
-            <xpath expr="//list" position="attributes">
-                <attribute name="create">0</attribute>
-            </xpath>
-        </field>
-    </record>
-
-    <record id="view_hospital_patient_list_manager_create_override" model="ir.ui.view">
-        <field name="name">hospital.patient.list.manager.create.override</field>
-        <field name="model">hospital.patient</field>
-        <field name="inherit_id" ref="hospital_management.view_hospital_patient_list"/>
-        <field name="priority">40</field>
-        <field name="groups_id" eval="[(6, 0, [
-            ref('hospital_management.group_hospital_manager'),
-            ref('hospital_management.group_hospital_system_administrator')
-        ])]"/>
-        <field name="arch" type="xml">
-            <xpath expr="//list" position="attributes">
-                <attribute name="create">1</attribute>
-            </xpath>
-        </field>
-    </record>
 
 </odoo>

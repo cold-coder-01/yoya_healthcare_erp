@@ -3,13 +3,14 @@
 from odoo import api, fields, models
 from odoo.exceptions import UserError, ValidationError
 
-from .charge_line import AMOUNT_TOLERANCE, G_ACCOUNTANT, G_ADMIN, G_MANAGER, G_RECEPTIONIST
+from .charge_line import AMOUNT_TOLERANCE, OPERATIONAL_INTAKE_GROUPS
 
 
 PHARMACY_EVENT = "pharmacy_dispense"
 SOURCE_MODEL = "hospital.pharmacy.dispense"
 LIVE_CHARGE_STATES = ("draft", "active")
-RECEIPT_GROUPS = (G_RECEPTIONIST, G_ACCOUNTANT, G_MANAGER, G_ADMIN)
+# Imported, not restated: this module used to carry a third copy of the tuple.
+RECEIPT_GROUPS = OPERATIONAL_INTAKE_GROUPS
 QTY_TOLERANCE = 0.0005
 
 

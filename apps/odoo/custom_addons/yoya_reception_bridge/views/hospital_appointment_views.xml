@@ -54,42 +54,25 @@
     </record>
 
     <!--
-        Same priority-layered technique as views/hospital_patient_views.xml,
-        and for the same reason: group_hospital_manager's implied_ids include
-        Receptionist, so a naive single restrictive view would also hide
-        "New" from managers and admins. See the comment there for the full
-        mechanism; the authoritative control is
-        hospital.appointment's create() override in
-        models/hospital_appointment.py.
+        REMOVED: view_hospital_appointment_list_receptionist_no_create (priority
+        32, groups_id=[receptionist]) and
+        view_hospital_appointment_list_manager_create_override (priority 40,
+        groups_id=[manager, admin]).
+
+        Same priority-layered technique as views/hospital_patient_views.xml, and
+        removed for the same reasons; see the full explanation there. In short:
+        Odoo 18's ir.ui.view._check_groups rejects groups_id on an extension
+        view (this is the record that aborted the upgrade), _get_inheriting_views
+        would ignore it anyway, and a root attribute set through
+        <xpath position="attributes"> cannot be re-expressed with node-level
+        groups="..." because attribute specs never survive inheritance.
+
+        The authoritative control is unchanged: _assert_can_create_directly() in
+        models/hospital_appointment.py refuses direct creation by a receptionist
+        on every path, and points them at
+        hospital.reception.workflow.create_visit(), which is what keeps clearance
+        persistence, the reception_workflow_managed marker and encounter check-in
+        consistent. Managers and admins keep the New button working as before.
     -->
-
-    <record id="view_hospital_appointment_list_receptionist_no_create" model="ir.ui.view">
-        <field name="name">hospital.appointment.list.receptionist.no.create</field>
-        <field name="model">hospital.appointment</field>
-        <field name="inherit_id" ref="hospital_management.view_hospital_appointment_list"/>
-        <field name="priority">32</field>
-        <field name="groups_id" eval="[(6, 0, [ref('hospital_management.group_hospital_receptionist')])]"/>
-        <field name="arch" type="xml">
-            <xpath expr="//list" position="attributes">
-                <attribute name="create">0</attribute>
-            </xpath>
-        </field>
-    </record>
-
-    <record id="view_hospital_appointment_list_manager_create_override" model="ir.ui.view">
-        <field name="name">hospital.appointment.list.manager.create.override</field>
-        <field name="model">hospital.appointment</field>
-        <field name="inherit_id" ref="hospital_management.view_hospital_appointment_list"/>
-        <field name="priority">40</field>
-        <field name="groups_id" eval="[(6, 0, [
-            ref('hospital_management.group_hospital_manager'),
-            ref('hospital_management.group_hospital_system_administrator')
-        ])]"/>
-        <field name="arch" type="xml">
-            <xpath expr="//list" position="attributes">
-                <attribute name="create">1</attribute>
-            </xpath>
-        </field>
-    </record>
 
 </odoo>

@@ -5,7 +5,7 @@ from .charge_line import (
     ACCOUNTING_READ,
     ACCOUNTING_RECEIPT_STATES,
     AMOUNT_TOLERANCE,
-    CASHIER_READ,
+    OPERATIONAL_MONEY_READ,
     CHARGE_FISCAL_STATES,
     OPERATIONAL_FUNDING_STATES,
     SETTLEMENT_STATES,
@@ -137,7 +137,7 @@ class HospitalBillingAccount(models.Model):
     charge_line_count = fields.Integer(compute="_compute_charge_line_count", compute_sudo=True)
     receipt_ids = fields.One2many(
         "hospital.charge.receipt", "billing_account_id", string="Payment Receipts",
-        groups=CASHIER_READ,
+        groups=OPERATIONAL_MONEY_READ,
     )
     receipt_count = fields.Integer(compute="_compute_charge_line_count", compute_sudo=True)
 
@@ -156,29 +156,29 @@ class HospitalBillingAccount(models.Model):
     # Cashier-visible operational figures.
     amount_to_invoice = fields.Float(
         compute="_compute_amounts", store=True, digits=(16, 2),
-        compute_sudo=True, groups=CASHIER_READ)
+        compute_sudo=True, groups=OPERATIONAL_MONEY_READ)
     amount_received = fields.Float(
         compute="_compute_amounts", store=True, digits=(16, 2),
-        compute_sudo=True, groups=CASHIER_READ)
+        compute_sudo=True, groups=OPERATIONAL_MONEY_READ)
     amount_outstanding = fields.Float(
         compute="_compute_amounts", store=True, digits=(16, 2),
-        compute_sudo=True, groups=CASHIER_READ,
+        compute_sudo=True, groups=OPERATIONAL_MONEY_READ,
         help="Sum of the charge lines' receivables. No cross-line netting.",
     )
     amount_prepayment_held = fields.Float(
         string="Advance Held",
         compute="_compute_amounts", store=True, digits=(16, 2),
-        compute_sudo=True, groups=CASHIER_READ,
+        compute_sudo=True, groups=OPERATIONAL_MONEY_READ,
         help="Cash received but not applied and not refunded. A deposit, not a debt.",
     )
     amount_patient_credit = fields.Float(
         compute="_compute_amounts", store=True, digits=(16, 2),
-        compute_sudo=True, groups=CASHIER_READ,
+        compute_sudo=True, groups=OPERATIONAL_MONEY_READ,
         help="Over-collection owed back to the patient/payer, net of credit refunds made.",
     )
     amount_due_for_clearance = fields.Float(
         compute="_compute_amounts", store=True, digits=(16, 2),
-        compute_sudo=True, groups=CASHIER_READ,
+        compute_sudo=True, groups=OPERATIONAL_MONEY_READ,
         help="Operational pre-service payment requirement. Not an accounting receivable.",
     )
 

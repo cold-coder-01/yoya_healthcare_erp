@@ -47,10 +47,13 @@
         <field name="arch" type="xml">
             <form string="Billing Account">
                 <header>
+                    <!-- Cash intake, not front-desk registration: the receptionist can
+                         see the account and what is owed, but may not take the money.
+                         The real boundary is action_confirm; this only hides the button. -->
                     <button name="action_record_payment" type="object"
                         string="Record Payment / Advance" class="btn-primary"
                         invisible="state in ('closed', 'cancelled')"
-                        groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                        groups="hospital_billing.group_hospital_cashier,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
                     <button name="action_settle" string="Mark Accounting Settled" type="object"
                         class="btn-primary"
                         invisible="state in ('settled', 'closed', 'cancelled') or settlement_state != 'settled'"/>
@@ -69,7 +72,7 @@
                         </button>
                         <button name="action_view_receipts" type="object"
                             class="oe_stat_button" icon="fa-file-text-o"
-                            groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
+                            groups="hospital_billing.group_hospital_cashier,hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
                             <field name="receipt_count" widget="statinfo" string="Receipts"/>
                         </button>
                     </div>

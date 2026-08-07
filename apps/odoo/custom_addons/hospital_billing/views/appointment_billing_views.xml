@@ -23,7 +23,7 @@
             <xpath expr="//sheet" position="inside">
                 <group string="Billing" name="billing"
                     invisible="not encounter_id"
-                    groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
+                    groups="hospital_billing.group_hospital_cashier,hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
                     <field name="encounter_id" readonly="1"/>
                     <field name="consultation_charge_id" readonly="1"/>
                     <field name="billing_blocked" invisible="1"/>

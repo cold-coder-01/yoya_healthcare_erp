@@ -3,12 +3,26 @@
     <data noupdate="0">
 
         <!--
-            Both groups are standalone by design.
+            This group is standalone by design.
 
             Nothing here edits a record owned by hospital_management. Manager and
             system-administrator access is granted explicitly in every ACL row,
             record rule and Python guard this module adds, rather than by mutating
             another module's implied_ids.
+
+            group_hospital_cashier USED TO BE DECLARED HERE. It now lives in
+            hospital_billing (security/hospital_billing_groups.xml), because cash
+            intake is a billing act and hospital_billing (which this module
+            depends on) must be able to name the group in its own ACLs and
+            Python guards. Declaring it downstream made that impossible without a
+            circular dependency, which is why the standalone cashier could not
+            record a payment. References below now use the
+            hospital_billing.group_hospital_cashier external id;
+            hospital_billing's 18.0.1.5.0 pre-migration re-points the existing
+            record so current members keep the group.
+
+            Emergency authorization stays here: it is clinical governance, not
+            billing.
         -->
 
         <record id="group_hospital_emergency_authorizer" model="res.groups">
@@ -18,14 +32,6 @@
                 service delivery before financial clearance. Granting this group is a
                 clinical-governance decision: the holder can waive every payment gate on
                 an encounter. It implies no other role.</field>
-        </record>
-
-        <record id="group_hospital_cashier" model="res.groups">
-            <field name="name">Hospital Cashier</field>
-            <field name="category_id" ref="hospital_management.module_category_hospital_management"/>
-            <field name="comment">Handles cash intake and receipts. Deliberately implies
-                neither Receptionist nor Accountant, so taking money and registering
-                patients can be separated duties.</field>
         </record>
 
     </data>
