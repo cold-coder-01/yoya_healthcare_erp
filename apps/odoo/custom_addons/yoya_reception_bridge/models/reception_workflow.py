@@ -24,7 +24,13 @@ G_RECEPTIONIST = "hospital_management.group_hospital_receptionist"
 G_MANAGER = "hospital_management.group_hospital_manager"
 G_ADMIN = "hospital_management.group_hospital_system_administrator"
 
-REGISTRATION_GROUPS = (G_RECEPTIONIST, G_MANAGER, G_ADMIN)
+# The entrance is staffed by nurses at this hospital, so the intake workflow has
+# to be callable by a front-desk nurse. Declared in this module's own
+# security/yoya_reception_groups.xml. It implies Hospital Nurse (triage rights)
+# and NOTHING financial -- see that file for exactly what it grants.
+G_FRONT_DESK_NURSE = "yoya_reception_bridge.group_hospital_front_desk_nurse"
+
+REGISTRATION_GROUPS = (G_FRONT_DESK_NURSE, G_RECEPTIONIST, G_MANAGER, G_ADMIN)
 MIGRATION_GROUPS = (G_MANAGER, G_ADMIN)
 
 # Only these may be supplied when registering a patient. identification_code is
@@ -319,28 +325,24 @@ class HospitalReceptionWorkflow(models.AbstractModel):
         # action_mark_paid re-reads charge.payment_state itself.
         self._sync_card_payment_states(appointment.patient_id, encounter)
 
-        # Encounter-wide clearance. NOT appointment.billing_blocked, which
-        # hospital_billing deliberately scopes to the consultation charge alone
-        # and would let a patient through having paid 300 of 1,500.
+        # NO FINANCIAL GATE HERE, deliberately.
+        #
+        # The people at this hospital's entrance are nurses. They triage on
+        # arrival, and the patient walks to the cashier AFTER the nursing
+        # evaluation. Blocking triage on payment inverted that and does not match
+        # how the hospital works.
+        #
+        # Financial clearance is NOT removed from the system -- it moved to the
+        # gate that belongs to it. hospital_billing's
+        # action_start_consultation() still calls
+        # hospital.billing.engine.check_financial_clearance(persist=True) before
+        # care commences, and hospital_appointment._assert_triage_completed()
+        # still requires a completed evaluation. An unpaid patient can therefore
+        # be triaged but still cannot see the doctor.
+        #
+        # The clearance summary is returned below for information, so the desk
+        # can tell the patient what to pay -- it no longer decides anything here.
         clearance = encounter._reception_clearance_summary()
-        if not clearance["cleared"]:
-            raise UserError(
-                "%s cannot be sent to triage yet.\n\n"
-                "Required before service: %.2f\n"
-                "Received: %.2f\n"
-                "Outstanding: %.2f\n\n"
-                "%s\n\n"
-                "Take the outstanding payment, record a payer authorization, or "
-                "authorize an emergency bypass on encounter %s."
-                % (
-                    appointment.patient_id.display_name,
-                    clearance["required"],
-                    clearance["paid"],
-                    clearance["outstanding"],
-                    clearance["reason"],
-                    encounter.name,
-                )
-            )
 
         if destination != appointment.triage_destination_id:
             appointment.write({"triage_destination_id": destination.id})
@@ -351,6 +353,7 @@ class HospitalReceptionWorkflow(models.AbstractModel):
             "triage_destination": destination,
             "clearance": clearance,
             "queue_stage": appointment.clinical_queue_stage,
+            "front_desk_stage": appointment.front_desk_stage,
         }
 
     @api.model

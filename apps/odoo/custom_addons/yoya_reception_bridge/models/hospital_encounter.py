@@ -12,11 +12,17 @@ res.groups membership. There is no context flag to forge.
 from odoo import api, fields, models
 from odoo.exceptions import AccessError, ValidationError
 
+from .reception_capability import has_reception_workflow_capability
+
 G_MANAGER = "hospital_management.group_hospital_manager"
 G_ADMIN = "hospital_management.group_hospital_system_administrator"
 G_EMERGENCY_AUTHORIZER = "yoya_reception_bridge.group_hospital_emergency_authorizer"
+G_FRONT_DESK_NURSE = "yoya_reception_bridge.group_hospital_front_desk_nurse"
+G_RECEPTIONIST = "hospital_management.group_hospital_receptionist"
+G_DOCTOR = "hospital_management.group_hospital_doctor"
 
 EMERGENCY_AUTHORIZER_GROUPS = (G_EMERGENCY_AUTHORIZER, G_MANAGER, G_ADMIN)
+ENCOUNTER_CREATE_ALLOWED_GROUPS = (G_RECEPTIONIST, G_DOCTOR, G_MANAGER, G_ADMIN)
 
 # Every field that asserts a bypass or records who authorised it. Writing any of
 # them -- enabling, disabling, editing the reason, or forging the attribution --
@@ -207,11 +213,26 @@ class HospitalEncounter(models.Model):
                 "clinical justification."
             )
 
+    @api.model
+    def _is_front_desk_direct_create_blocked(self):
+        if self.env.su or has_reception_workflow_capability():
+            return False
+        user = self.env.user
+        if not user.has_group(G_FRONT_DESK_NURSE):
+            return False
+        return not any(user.has_group(group) for group in ENCOUNTER_CREATE_ALLOWED_GROUPS)
+
     # ------------------------------------------------------------------
     # CRUD guards
     # ------------------------------------------------------------------
     @api.model_create_multi
     def create(self, vals_list):
+        if self._is_front_desk_direct_create_blocked():
+            raise AccessError(
+                "Front Desk Nurses may open encounters only through the "
+                "authoritative reception workflow."
+            )
+
         for vals in vals_list:
             touched = BYPASS_GUARDED_FIELDS.intersection(vals)
             if not touched:

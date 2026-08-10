@@ -34,5 +34,66 @@
                 an encounter. It implies no other role.</field>
         </record>
 
+        <!--
+            FRONT DESK NURSE.
+
+            Why a group at all: the people at this hospital's entrance are nurses,
+            not receptionists. Hospital Nurse already holds everything needed for
+            the clinical half of that job (hospital.patient.evaluation read/write/
+            create, danger-sign read, patient read/write) but is missing the intake
+            half: hospital_management grants perm_create=0 to Nurse on
+            hospital.patient, hospital.appointment and hospital.encounter, and only
+            read on hospital.patient.card.issue. Stacking Receptionist onto a nurse
+            would work, but Odoo ORs ACLs and record rules across groups, so it
+            hands over the whole receptionist surface to get four create bits.
+
+            IMPLIES Hospital Nurse, deliberately, so the clinical triage ACLs are
+            inherited rather than duplicated.
+
+            IMPLIES NOTHING ELSE. Specifically NOT:
+              hospital_billing.group_hospital_cashier          (no cash intake)
+              hospital_management.group_hospital_accountant    (no accounting)
+              hospital_management.group_hospital_manager       (no override)
+              hospital_management.group_hospital_system_administrator
+              hospital_management.group_hospital_receptionist
+              yoya_reception_bridge.group_hospital_emergency_authorizer
+
+            WHAT IT ADDS on top of Hospital Nurse (security/ir.model.access.csv):
+              hospital.patient              + create
+              hospital.appointment          + create
+              hospital.encounter            + create
+              hospital.patient.card.issue   + write, + create
+            and, in security/yoya_reception_rules.xml, unrestricted record rules on
+            hospital.appointment / hospital.encounter / hospital.patient.card.issue,
+            because the entrance triages every arrival regardless of department.
+            The department-scoped Nurse rule would otherwise hide most of the queue.
+
+            WHAT IT CANNOT DO, and where that is enforced:
+              record an operational payment  hospital_billing OPERATIONAL_INTAKE_GROUPS
+                                             (charge_line.py): group absent
+              post accounting                assert_invoice_authorized
+                                             (hospital_billing_accounting)
+              start a consultation           hospital_appointment.py
+                                             _assert_may_start_consultation:
+                                             assigned doctor / manager / admin only
+              read cash amounts              groups=OPERATIONAL_MONEY_READ on the
+                                             money fields: group absent
+
+            Assigned to NO user by this module. Membership is an operational
+            decision, taken deliberately.
+        -->
+        <record id="group_hospital_front_desk_nurse" model="res.groups">
+            <field name="name">Hospital Front Desk Nurse</field>
+            <field name="category_id" ref="hospital_management.module_category_hospital_management"/>
+            <field name="implied_ids" eval="[(4, ref('hospital_management.group_hospital_nurse'))]"/>
+            <field name="comment">Nursing staff working the hospital entrance. Registers
+                patients, opens visits and performs arrival triage. Implies Hospital Nurse
+                for clinical triage rights and adds only the intake create rights Nurse
+                lacks. Holds NO cash-intake, accounting, payer-authorization, emergency-
+                authorization or consultation-start authority: a front desk nurse can
+                triage an unpaid patient but can neither take their money nor start their
+                consultation.</field>
+        </record>
+
     </data>
 </odoo>

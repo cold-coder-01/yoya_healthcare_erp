@@ -4,3 +4,4 @@ from . import clinical
 from . import reception
 
 from . import cashier
+from . import front_desk

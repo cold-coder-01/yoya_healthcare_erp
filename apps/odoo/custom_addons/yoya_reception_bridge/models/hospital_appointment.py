@@ -13,14 +13,51 @@ from .reception_capability import has_reception_workflow_capability
 G_MANAGER = "hospital_management.group_hospital_manager"
 G_ADMIN = "hospital_management.group_hospital_system_administrator"
 G_RECEPTIONIST = "hospital_management.group_hospital_receptionist"
+G_FRONT_DESK_NURSE = "yoya_reception_bridge.group_hospital_front_desk_nurse"
 
 CONSULTATION_OVERRIDE_GROUPS = (G_MANAGER, G_ADMIN)
 DIRECT_CREATE_GROUPS = (G_MANAGER, G_ADMIN)
+
+# Roles holding perm_create here that must still go through
+# hospital.reception.workflow.create_visit(). See
+# hospital_patient.WORKFLOW_ONLY_CREATE_GROUPS.
+WORKFLOW_ONLY_CREATE_GROUPS = (G_RECEPTIONIST, G_FRONT_DESK_NURSE)
 
 # Exact operator-facing wording for the triage gate.
 TRIAGE_REQUIRED_MESSAGE = (
     "Nursing triage must be completed before consultation can start."
 )
+
+# THE canonical front-desk queue vocabulary, in workflow order.
+#
+# This is the order the hospital actually works in: the people at the entrance
+# are nurses, they triage on arrival, and the cashier comes AFTER the nursing
+# evaluation -- not before it.
+FRONT_DESK_STAGES = (
+    ("new", "New"),
+    ("intake", "Intake"),
+    ("triage", "Triage"),
+    ("awaiting_cashier", "Awaiting Cashier"),
+    ("ready_doctor", "Ready For Doctor"),
+    ("in_consultation", "In Consultation"),
+    ("completed", "Completed"),
+    ("cancelled", "Cancelled"),
+)
+
+# The legacy clinical_queue_stage vocabulary is DERIVED from the canonical one
+# above rather than computed separately, so the two can never disagree. Existing
+# readers of clinical_queue_stage (Odoo views, the reception API and its Next.js
+# client) keep the exact selection values they already know.
+LEGACY_STAGE_BY_FRONT_DESK = {
+    "new": "registered",
+    "intake": "awaiting_triage",
+    "triage": "in_triage",
+    "awaiting_cashier": "awaiting_payment",
+    "ready_doctor": "awaiting_doctor",
+    "in_consultation": "in_consultation",
+    "completed": "completed",
+    "cancelled": "cancelled",
+}
 
 
 class HospitalAppointment(models.Model):
@@ -87,6 +124,15 @@ class HospitalAppointment(models.Model):
         "clearance and any emergency bypass. It is never written directly.",
     )
 
+    front_desk_stage = fields.Selection(
+        FRONT_DESK_STAGES,
+        compute="_compute_front_desk_stage",
+        string="Front Desk Stage",
+        help="Canonical front-desk queue stage, derived from the appointment "
+        "state, the nursing evaluation and encounter-wide financial clearance. "
+        "Never written directly.",
+    )
+
     # ------------------------------------------------------------------
     # Queue stage
     # ------------------------------------------------------------------
@@ -98,6 +144,19 @@ class HospitalAppointment(models.Model):
     # wrong -- worse than one that is recomputed on read. Queue filtering is
     # done in the API by composing the underlying domains.
     #
+    # Both fields go through _resolve_front_desk_stage(), the single derivation.
+    # Reading either on a RECORDSET batches the compute, which is what keeps the
+    # front-desk worklist off a per-row query path.
+    #
+    @api.depends(
+        "state",
+        "evaluation_ids.state",
+        "evaluation_ids.started_at",
+    )
+    def _compute_front_desk_stage(self):
+        for appointment in self:
+            appointment.front_desk_stage = appointment._resolve_front_desk_stage()
+
     @api.depends(
         "state",
         "evaluation_ids.state",
@@ -107,7 +166,19 @@ class HospitalAppointment(models.Model):
         for appointment in self:
             appointment.clinical_queue_stage = appointment._resolve_queue_stage()
 
-    def _resolve_queue_stage(self):
+    def _resolve_front_desk_stage(self):
+        """THE derivation. Everything else maps from this.
+
+        Order matters, and this order is the workflow change: the nursing
+        evaluation is consulted BEFORE money. Triage is a clinical act performed
+        by the nurse at the entrance and must never wait on the cashier. Money
+        is only asked about once triage is complete, which is exactly when the
+        patient physically walks to the cashier.
+
+        No new persisted handoff state was added: 'awaiting_cashier' is derived
+        from facts that already exist (evaluation.state plus encounter-wide
+        clearance), so it cannot drift out of sync with the money or the triage.
+        """
         self.ensure_one()
 
         if self.state == "cancelled":
@@ -117,20 +188,26 @@ class HospitalAppointment(models.Model):
         if self.state == "in_consultation":
             return "in_consultation"
         if self.state == "draft":
-            return "registered"
+            return "new"
 
-        # state == 'confirmed': the patient is checked in.
+        # state == 'confirmed': the patient is checked in and physically here.
         evaluation = self._latest_evaluation()
-        if evaluation:
-            if evaluation.state == "done":
-                return "awaiting_doctor"
-            if evaluation.state == "draft" and evaluation.started_at:
-                return "in_triage"
+        if not evaluation or evaluation.state == "cancelled":
+            return "intake"
+        if evaluation.state == "draft":
+            # started_at is what distinguishes a claimed evaluation from a
+            # queued one; the base model adds no extra state for it.
+            return "triage" if evaluation.started_at else "intake"
 
-        # An emergency bypass must never park a patient in a payment queue.
+        # Triage is DONE. Only now does money decide where the patient goes.
         if self._is_payment_blocking():
-            return "awaiting_payment"
-        return "awaiting_triage"
+            return "awaiting_cashier"
+        return "ready_doctor"
+
+    def _resolve_queue_stage(self):
+        """Legacy vocabulary, mapped from the canonical derivation."""
+        self.ensure_one()
+        return LEGACY_STAGE_BY_FRONT_DESK[self._resolve_front_desk_stage()]
 
     def _latest_evaluation(self):
         self.ensure_one()
@@ -141,22 +218,28 @@ class HospitalAppointment(models.Model):
         return evaluations[:1]
 
     def _is_payment_blocking(self):
-        """True when money is genuinely standing between the patient and triage.
+        """True when money still stands between the patient and the DOCTOR.
+
+        Not between the patient and triage -- nothing does, any more. This is
+        consulted only after the nursing evaluation is complete, and it is what
+        separates 'awaiting_cashier' from 'ready_doctor'.
 
         Uses ENCOUNTER-WIDE clearance, not appointment.billing_blocked.
         hospital_billing scopes billing_blocked to the consultation charge
         alone (appointment_billing.py:82-84), which is right for gating a
         consultation but wrong here: a new patient who paid only the 300 ETB
         consultation while 1,200 ETB of card fee stood unpaid would otherwise
-        flip from awaiting_payment to awaiting_triage.
+        be shown as ready for the doctor with money still owed at the desk.
+
+        Being encounter-wide makes this CONSERVATIVE with respect to the
+        authoritative doctor gate: encounter-wide clearance implies the
+        consultation-scoped clearance that action_start_consultation enforces,
+        so 'ready_doctor' can never over-promise. The reverse is deliberate --
+        a patient who owes only the card fee is kept at the cashier.
         """
         self.ensure_one()
         encounter = self.encounter_id
         if encounter and encounter.emergency_bypass:
-            return False
-        if self.visit_type == "emergency":
-            # Emergency arrivals are screened and triaged first; billing is
-            # resolved afterwards.
             return False
         if encounter:
             return not encounter.reception_clearance_ok
@@ -194,7 +277,7 @@ class HospitalAppointment(models.Model):
         user = self.env.user
         if any(user.has_group(group) for group in DIRECT_CREATE_GROUPS):
             return
-        if user.has_group(G_RECEPTIONIST):
+        if any(user.has_group(group) for group in WORKFLOW_ONLY_CREATE_GROUPS):
             raise AccessError(
                 "Appointments cannot be created directly. Use "
                 "hospital.reception.workflow.create_visit(), which opens the "

@@ -26,9 +26,34 @@ GROUP_CASHIER = "hospital_billing.group_hospital_cashier"
 GROUP_EMERGENCY_AUTHORIZER = (
     "yoya_reception_bridge.group_hospital_emergency_authorizer"
 )
+GROUP_FRONT_DESK_NURSE = (
+    "yoya_reception_bridge.group_hospital_front_desk_nurse"
+)
 
 # Who may run the guided registration workflow at all.
-RECEPTION_GROUPS = (GROUP_RECEPTIONIST, GROUP_MANAGER, GROUP_SYSADMIN)
+#
+# MIRRORS hospital.reception.workflow.REGISTRATION_GROUPS, which enforces this
+# again inside every workflow method. This copy is a fail-fast for the HTTP
+# layer, never the only control -- and test_front_desk_worklist asserts the two
+# tuples agree, so a change in the model cannot silently widen the API.
+RECEPTION_GROUPS = (
+    GROUP_FRONT_DESK_NURSE,
+    GROUP_RECEPTIONIST,
+    GROUP_MANAGER,
+    GROUP_SYSADMIN,
+)
+
+# Who may work the front-desk worklist: the intake roles above, plus a plain
+# Hospital Nurse, who does the triage half of the job today. Deliberately
+# EXCLUDES Cashier -- the cashier has their own payment endpoint and must gain
+# no clinical-edit surface from this read model.
+FRONT_DESK_GROUPS = (
+    GROUP_FRONT_DESK_NURSE,
+    GROUP_NURSE,
+    GROUP_RECEPTIONIST,
+    GROUP_MANAGER,
+    GROUP_SYSADMIN,
+)
 
 # Who may authorize an emergency bypass. Mirrors
 # yoya_reception_bridge.hospital_encounter.EMERGENCY_AUTHORIZER_GROUPS; the
@@ -125,6 +150,55 @@ def may_authorize_payer(env):
 
 def may_record_payment(env):
     return _in_any(env, RECEIPT_GROUPS)
+
+
+def may_front_desk(env):
+    """May this user open the front-desk worklist at all."""
+    return _in_any(env, FRONT_DESK_GROUPS)
+
+
+def may_intake(env):
+    """May this user register patients and open visits."""
+    return _in_any(env, RECEPTION_GROUPS)
+
+
+def may_triage(env):
+    """May this user record and complete a nursing evaluation.
+
+    hospital.patient.evaluation grants read/write/create to Nurse, Doctor,
+    Manager and Admin in hospital_management's ACL; Front Desk Nurse inherits it
+    by implying Nurse. The receptionist holds READ only and is absent here on
+    purpose -- triage is a clinical act.
+    """
+    return _in_any(
+        env,
+        (GROUP_FRONT_DESK_NURSE, GROUP_NURSE, GROUP_DOCTOR, GROUP_MANAGER, GROUP_SYSADMIN),
+    )
+
+
+def front_desk_capability_flags(env):
+    """Capabilities the front-desk workstation needs, all authoritative.
+
+    Every flag mirrors a guard that is enforced again in the model layer, so a
+    client cannot act on a flag it was not really granted.
+    """
+    return {
+        "front_desk": may_front_desk(env),
+        "intake": may_intake(env),
+        "triage": may_triage(env),
+        "emergency_bypass": may_emergency_bypass(env),
+        "payer_authorization": may_authorize_payer(env),
+        # False for a front desk nurse. The cashier records payment through
+        # /cashier/visits/<id>/payment, enforced by OPERATIONAL_INTAKE_GROUPS.
+        "record_payment": may_record_payment(env),
+        # Consultation start is the assigned doctor, manager or admin only, and
+        # hospital_appointment._assert_may_start_consultation decides it. This
+        # flag reports the group half; assignment is per-visit, so the row-level
+        # permitted_actions resolve it properly.
+        "start_consultation_role": _in_any(
+            env, (GROUP_DOCTOR, GROUP_MANAGER, GROUP_SYSADMIN)
+        ),
+    }
 
 
 def hospital_day_bounds_utc(env, day):

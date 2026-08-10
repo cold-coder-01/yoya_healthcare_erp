@@ -183,6 +183,52 @@
             <field name="perm_unlink" eval="False"/>
         </record>
 
+        <!-- ==========================================================
+             Front Desk Nurse
+             ==========================================================
+
+             The entrance triages EVERY arrival, so these are unrestricted in
+             the same way, and for the same reason, as the receptionist rules
+             above. The department-scoped nurse rules stay exactly as they are;
+             because Odoo ORs rules across a user's groups, a front desk nurse
+             ends up with the union, which is the intended widening, and only
+             for the three intake models named here. Nothing financial and
+             nothing clinical beyond the nurse ACLs is widened.
+        -->
+
+        <record id="rule_appointment_front_desk_nurse" model="ir.rule">
+            <field name="name">Appointment: all arrivals (front desk nurse)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_appointment"/>
+            <field name="groups" eval="[(4, ref('group_hospital_front_desk_nurse'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_encounter_front_desk_nurse" model="ir.rule">
+            <field name="name">Encounter: all arrivals (front desk nurse)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_encounter"/>
+            <field name="groups" eval="[(4, ref('group_hospital_front_desk_nurse'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_card_issue_front_desk_nurse" model="ir.rule">
+            <field name="name">Patient card issuance: all (front desk nurse)</field>
+            <field name="model_id" ref="model_hospital_patient_card_issue"/>
+            <field name="groups" eval="[(4, ref('group_hospital_front_desk_nurse'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
         <record id="rule_encounter_nurse" model="ir.rule">
             <field name="name">Encounter: my departments or my evaluations (nurse)</field>
             <field name="model_id" ref="hospital_management.model_hospital_encounter"/>

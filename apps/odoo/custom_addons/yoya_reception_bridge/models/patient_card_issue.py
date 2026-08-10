@@ -17,6 +17,11 @@ G_MANAGER = "hospital_management.group_hospital_manager"
 G_ADMIN = "hospital_management.group_hospital_system_administrator"
 G_RECEPTIONIST = "hospital_management.group_hospital_receptionist"
 G_EMERGENCY_AUTHORIZER = "yoya_reception_bridge.group_hospital_emergency_authorizer"
+G_FRONT_DESK_NURSE = "yoya_reception_bridge.group_hospital_front_desk_nurse"
+
+# Roles holding perm_create here that must still go through the reception
+# workflow. See hospital_patient.WORKFLOW_ONLY_CREATE_GROUPS.
+WORKFLOW_ONLY_CREATE_GROUPS = (G_RECEPTIONIST, G_FRONT_DESK_NURSE)
 
 WAIVER_GROUPS = (G_MANAGER, G_ADMIN)
 DEFERRAL_GROUPS = (G_EMERGENCY_AUTHORIZER, G_MANAGER, G_ADMIN)
@@ -268,7 +273,7 @@ class HospitalPatientCardIssue(models.Model):
         user = self.env.user
         if any(user.has_group(group) for group in DIRECT_CREATE_GROUPS):
             return
-        if user.has_group(G_RECEPTIONIST):
+        if any(user.has_group(group) for group in WORKFLOW_ONLY_CREATE_GROUPS):
             raise AccessError(
                 "Patient card issuances cannot be created directly. Routine "
                 "first-card issuance happens automatically inside "

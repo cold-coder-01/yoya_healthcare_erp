@@ -24,8 +24,15 @@ from .reception_capability import has_reception_workflow_capability
 G_MANAGER = "hospital_management.group_hospital_manager"
 G_ADMIN = "hospital_management.group_hospital_system_administrator"
 G_RECEPTIONIST = "hospital_management.group_hospital_receptionist"
+G_FRONT_DESK_NURSE = "yoya_reception_bridge.group_hospital_front_desk_nurse"
 
 DIRECT_CREATE_GROUPS = (G_MANAGER, G_ADMIN)
+
+# Roles that HOLD perm_create on this model and must nevertheless go through
+# hospital.reception.workflow. Front Desk Nurse is here because this module
+# grants it create -- without it, the guard below would silently stop applying
+# to the one new role that can reach create().
+WORKFLOW_ONLY_CREATE_GROUPS = (G_RECEPTIONIST, G_FRONT_DESK_NURSE)
 
 
 class HospitalPatient(models.Model):
@@ -63,7 +70,7 @@ class HospitalPatient(models.Model):
         user = self.env.user
         if any(user.has_group(group) for group in DIRECT_CREATE_GROUPS):
             return
-        if user.has_group(G_RECEPTIONIST):
+        if any(user.has_group(group) for group in WORKFLOW_ONLY_CREATE_GROUPS):
             raise AccessError(
                 "Patients cannot be registered directly. Use the reception "
                 "workflow (hospital.reception.workflow.register_new_patient "
