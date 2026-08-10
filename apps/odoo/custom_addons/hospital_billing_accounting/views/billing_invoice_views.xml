@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_billing_service_invoice_config" model="ir.ui.view">
+        <field name="name">hospital.billing.service.invoice.config</field>
+        <field name="model">hospital.billing.service</field>
+        <field name="inherit_id" ref="hospital_billing.view_hospital_billing_service_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//notebook" position="inside">
+                <page string="Odoo Invoice Mapping"
+                    groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
+                    <group>
+                        <field name="invoice_product_id"/>
+                        <field name="invoice_tax_ids" widget="many2many_tags"/>
+                    </group>
+                    <div class="alert alert-info" role="alert">
+                        Product, revenue account and tax mappings are mandatory and
+                        validated against each charge snapshot before invoice creation.
+                    </div>
+                </page>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_patient_accounting_customer" model="ir.ui.view">
+        <field name="name">hospital.patient.accounting.customer</field>
+        <field name="model">hospital.patient</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_patient_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//notebook" position="inside">
+                <page string="Accounting"
+                    groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
+                    <group>
+                        <field name="accounting_partner_id"
+                            options="{'no_create_edit': True}"/>
+                        <button name="action_create_link_accounting_customer" type="object"
+                            string="Create/Link Accounting Customer" class="btn-secondary"
+                            invisible="accounting_partner_id"
+                            groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    </group>
+                </page>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_billing_account_invoice_batch" model="ir.ui.view">
+        <field name="name">hospital.billing.account.invoice.batch</field>
+        <field name="model">hospital.billing.account</field>
+        <field name="inherit_id" ref="hospital_billing.view_hospital_billing_account_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//header" position="inside">
+                <field name="accounting_status" invisible="1"/>
+                <button name="action_create_link_patient_accounting_customer" type="object"
+                    string="Create/Link Patient Accounting Customer" class="btn-secondary"
+                    invisible="not patient_id"
+                    groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                <button name="action_create_invoice_batch" type="object"
+                    string="Create Delivered Invoice" class="btn-primary"
+                    invisible="state in ('closed', 'cancelled') or amount_to_invoice &lt;= 0"
+                    groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+            </xpath>
+            <xpath expr="//field[@name='amount_outstanding']/ancestor::group[1]" position="after">
+                <group string="Odoo Accounting Bridge"
+                    groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
+                    <field name="accounting_status" readonly="1"/>
+                    <field name="accounting_invoiced_amount" readonly="1"/>
+                    <field name="accounting_paid_amount" readonly="1"/>
+                    <field name="unposted_delivered_amount" readonly="1"/>
+                    <field name="unposted_inventory_valuation" readonly="1"/>
+                </group>
+            </xpath>
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button name="action_view_accounting_invoices" type="object"
+                    class="oe_stat_button" icon="fa-file-text-o"
+                    groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
+                    <field name="accounting_invoice_count" widget="statinfo" string="Invoices"/>
+                </button>
+                <button name="action_view_accounting_payment_entries" type="object"
+                    class="oe_stat_button" icon="fa-money"
+                    groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
+                    <field name="accounting_payment_entry_count" widget="statinfo" string="Pay Entries"/>
+                </button>
+                <button name="action_view_accounting_valuation_entries" type="object"
+                    class="oe_stat_button" icon="fa-cubes"
+                    groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
+                    <field name="accounting_valuation_entry_count" widget="statinfo" string="Valuations"/>
+                </button>
+                <button name="action_view_invoice_batches" type="object"
+                    class="oe_stat_button" icon="fa-files-o"
+                    groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
+                    <field name="invoice_batch_count" widget="statinfo" string="Invoice Batches"/>
+                </button>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_account_move_hospital_invoice" model="ir.ui.view">
+        <field name="name">account.move.hospital.invoice</field>
+        <field name="model">account.move</field>
+        <field name="inherit_id" ref="account.view_move_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='partner_id']" position="after">
+                <field name="hospital_managed_invoice" invisible="1"/>
+                <field name="hospital_invoice_batch_id" readonly="1"
+                    invisible="not hospital_managed_invoice"/>
+                <field name="hospital_encounter_id" readonly="1"
+                    invisible="not hospital_managed_invoice"/>
+                <field name="hospital_billing_account_id" readonly="1"
+                    invisible="not hospital_managed_invoice"/>
+                <field name="hospital_patient_id" readonly="1"
+                    invisible="not hospital_managed_invoice"/>
+                <field name="hospital_credit_origin_invoice_id" readonly="1"
+                    invisible="not hospital_credit_origin_invoice_id"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>

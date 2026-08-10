@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Nest under the existing Billing app root menu -->
+    <record id="menu_billing_accounting_bridge" model="ir.ui.menu">
+        <field name="name">Accounting Bridge</field>
+        <field name="parent_id" ref="hospital_billing.menu_hospital_billing_root"/>
+        <field name="sequence">70</field>
+        <field name="groups_id" eval="[(6, 0, [
+            ref('hospital_management.group_hospital_system_administrator'),
+            ref('hospital_management.group_hospital_manager'),
+            ref('hospital_management.group_hospital_accountant'),
+            ref('base.group_system')
+        ])]"/>
+    </record>
+
+    <record id="menu_billing_accounting_config" model="ir.ui.menu">
+        <field name="name">Accounting Configurations</field>
+        <field name="parent_id" ref="menu_billing_accounting_bridge"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_billing_accounting_config')"/>
+        <field name="sequence">10</field>
+    </record>
+
+    <record id="menu_billing_accounting_logs" model="ir.ui.menu">
+        <field name="name">Posting Logs</field>
+        <field name="parent_id" ref="menu_billing_accounting_bridge"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_accounting_posting_log')"/>
+        <field name="sequence">20</field>
+    </record>
+    <record id="menu_hospital_invoice_batches" model="ir.ui.menu">
+        <field name="name">Invoice Batches</field>
+        <field name="parent_id" ref="menu_billing_accounting_bridge"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_invoice_batch')"/>
+        <field name="sequence">15</field>
+    </record>
+</odoo>

@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_patient_bill_form_accounting" model="ir.ui.view">
+        <field name="name">hospital.patient.bill.form.accounting</field>
+        <field name="model">hospital.patient.bill</field>
+        <field name="inherit_id" ref="hospital_billing.view_hospital_patient_bill_form"/>
+        <field name="arch" type="xml">
+
+            <!-- Header buttons -->
+            <xpath expr="//header" position="inside">
+                <button
+                    name="action_mark_ready_for_accounting"
+                    string="Mark Ready for Accounting"
+                    type="object"
+                    class="btn-secondary"
+                    groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"
+                    invisible="state not in ('confirmed', 'partially_paid', 'paid') or accounting_state != 'not_posted'"
+                />
+                <button
+                    name="action_post_bill_to_accounting"
+                    string="Post Bill to Accounting"
+                    type="object"
+                    class="btn-primary"
+                    groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"
+                    invisible="accounting_state not in ('ready', 'error') or accounting_move_id"
+                />
+                <button
+                    name="action_view_accounting_move"
+                    string="View Accounting Entry"
+                    type="object"
+                    class="btn-secondary"
+                    invisible="not accounting_move_id"
+                />
+                <button
+                    name="action_view_accounting_logs"
+                    string="View Accounting Logs"
+                    type="object"
+                    class="btn-secondary"
+                    invisible="accounting_log_count == 0"
+                />
+            </xpath>
+
+            <!-- Accounting tab -->
+            <xpath expr="//notebook" position="inside">
+                <page string="Accounting" name="accounting">
+                    <group>
+                        <group string="Accounting Status">
+                            <field name="accounting_state" readonly="1"/>
+                            <field name="accounting_posted" readonly="1"/>
+                            <field name="accounting_posted_date" readonly="1"/>
+                            <field name="accounting_move_id" readonly="1"/>
+                            <field name="accounting_log_count" readonly="1"/>
+                        </group>
+                        <group string="Last Error">
+                            <field name="accounting_error" nolabel="1" readonly="1"/>
+                        </group>
+                    </group>
+                    <field name="accounting_log_ids" readonly="1">
+                        <list>
+                            <field name="name"/>
+                            <field name="posting_date"/>
+                            <field name="event_type"/>
+                            <field name="status" widget="badge"
+                                   decoration-success="status == 'success'"
+                                   decoration-danger="status == 'failed'"/>
+                            <field name="account_move_id"/>
+                            <field name="message"/>
+                        </list>
+                    </field>
+                </page>
+            </xpath>
+
+            <!-- Payment history: accounting columns + post / view buttons -->
+            <xpath expr="//field[@name='payment_ids']/list" position="inside">
+                <field name="accounting_state" widget="badge"
+                       decoration-success="accounting_state == 'posted'"
+                       decoration-danger="accounting_state == 'error'"/>
+                <field name="accounting_move_id" optional="show"/>
+                <button
+                    name="action_post_payment_to_accounting"
+                    string="Post Payment to Accounting"
+                    type="object"
+                    icon="fa-university"
+                    groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"
+                    invisible="accounting_state == 'posted' or accounting_move_id"
+                />
+                <button
+                    name="action_view_accounting_move"
+                    string="View Accounting Entry"
+                    type="object"
+                    icon="fa-book"
+                    invisible="not accounting_move_id"
+                />
+            </xpath>
+        </field>
+    </record>
+</odoo>

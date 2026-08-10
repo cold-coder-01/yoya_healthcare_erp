@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <record id="view_hospital_charge_payment_wizard_form_accounting_notice" model="ir.ui.view">
+        <field name="name">hospital.charge.payment.wizard.form.accounting.notice</field>
+        <field name="model">hospital.charge.payment.wizard</field>
+        <field name="inherit_id" ref="hospital_billing.view_hospital_charge_payment_wizard_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//form/div[contains(@class, 'alert')]" position="replace">
+                <div class="alert alert-warning" role="alert">
+                    <i class="fa fa-exclamation-triangle"/>
+                    <strong> Operational payment / advance clearance. </strong>
+                    This records the operational receipt and allocation. Because the
+                    accounting bridge is installed, confirmation also posts the
+                    patient-advance accounting entry when configuration and patient
+                    accounting customer are complete. It does not create a fiscal receipt.
+                </div>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_hospital_charge_receipt_form_advance_accounting" model="ir.ui.view">
+        <field name="name">hospital.charge.receipt.form.advance.accounting</field>
+        <field name="model">hospital.charge.receipt</field>
+        <field name="inherit_id" ref="hospital_billing.view_hospital_charge_receipt_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//sheet" position="before">
+                <header>
+                    <button name="action_post_receipt_accounting" type="object" string="Post Advance Accounting" class="btn-primary" invisible="state != 'confirmed' or accounting_move_id"/>
+                </header>
+            </xpath>
+            <xpath expr="//sheet" position="inside">
+                <group string="Accounting / External Payment Provenance">
+                    <field name="payment_origin" readonly="1"/>
+                    <field name="payment_provider" readonly="1"/>
+                    <field name="external_device_identity" readonly="1"/>
+                    <field name="external_transaction_reference" readonly="1"/>
+                    <field name="fiscal_receipt_number" readonly="1"/>
+                    <field name="accounting_move_id" readonly="1"/>
+                    <field name="accounting_posted_at" readonly="1"/>
+                    <field name="accounting_posted_by_id" readonly="1"/>
+                    <field name="advance_application_ids" readonly="1" widget="many2many_tags"/>
+                </group>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_hospital_billing_account_form_apply_advances" model="ir.ui.view">
+        <field name="name">hospital.billing.account.form.apply.patient.advances</field>
+        <field name="model">hospital.billing.account</field>
+        <field name="inherit_id" ref="hospital_billing.view_hospital_billing_account_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//header" position="inside">
+                <button name="action_apply_patient_advances" type="object"
+                    string="Apply Advances" class="btn-secondary"
+                    invisible="state in ('closed', 'cancelled') or amount_prepayment_held &lt;= 0 or amount_outstanding &lt;= 0"
+                    groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+            </xpath>
+        </field>
+    </record>
+    <record id="view_move_form_patient_advance_application" model="ir.ui.view">
+        <field name="name">account.move.form.patient.advance.application</field>
+        <field name="model">account.move</field>
+        <field name="inherit_id" ref="account.view_move_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//header" position="inside">
+                <button name="action_apply_patient_advance" type="object" string="Apply Patient Advance" class="btn-secondary" invisible="state != 'posted' or move_type != 'out_invoice' or not hospital_managed_invoice"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>

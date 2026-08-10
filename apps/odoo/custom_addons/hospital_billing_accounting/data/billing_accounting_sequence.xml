@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="sequence_hospital_accounting_posting_log" model="ir.sequence">
+        <field name="name">Hospital Accounting Posting Log Sequence</field>
+        <field name="code">hospital.accounting.posting.log.sequence</field>
+        <field name="prefix">HACC</field>
+        <field name="padding">5</field>
+        <field name="number_next">1</field>
+    </record>
+    <record id="sequence_hospital_invoice_batch" model="ir.sequence">
+        <field name="name">Hospital Invoice Batch Sequence</field>
+        <field name="code">hospital.invoice.batch.sequence</field>
+        <field name="prefix">HIB</field>
+        <field name="padding">6</field>
+        <field name="number_next">1</field>
+    </record>
+    <record id="sequence_hospital_patient_advance_application" model="ir.sequence">
+        <field name="name">Hospital Patient Advance Application Sequence</field>
+        <field name="code">hospital.patient.advance.application.sequence</field>
+        <field name="prefix">ADVAPP</field>
+        <field name="padding">6</field>
+        <field name="number_next">1</field>
+    </record>
+</odoo>

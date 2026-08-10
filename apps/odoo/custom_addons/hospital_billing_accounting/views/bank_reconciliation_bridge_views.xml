@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_billing_accounting_config_form_bank_bridge" model="ir.ui.view">
+        <field name="name">hospital.billing.accounting.config.form.bank.bridge</field>
+        <field name="model">hospital.billing.accounting.config</field>
+        <field name="inherit_id" ref="hospital_billing_accounting.view_billing_accounting_config_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='bank_account_id']/ancestor::group[1]" position="after">
+                <group string="Bank Statement Reconciliation">
+                    <field name="bank_statement_journal_id"/>
+                    <field name="bank_receipt_clearing_account_id"/>
+                    <div class="alert alert-info" role="alert" colspan="2">
+                        Bank-classified hospital receipts debit this clearing account first. Imported bank statements then clear it to the actual bank account. Cash, mobile money and fiscal-terminal receipts are excluded.
+                    </div>
+                </group>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_hospital_charge_receipt_form_bank_bridge" model="ir.ui.view">
+        <field name="name">hospital.charge.receipt.form.bank.bridge</field>
+        <field name="model">hospital.charge.receipt</field>
+        <field name="inherit_id" ref="hospital_billing.view_hospital_charge_receipt_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//sheet/group[last()]" position="after">
+                <group string="Bank Reconciliation" invisible="not bank_reconciliation_required">
+                    <group>
+                        <field name="bank_reconciliation_required" readonly="1"/>
+                        <field name="bank_reconciliation_state" widget="badge" readonly="1"/>
+                        <field name="expected_bank_journal_id" readonly="1"/>
+                        <field name="bank_transaction_reference" readonly="bank_reconciliation_state == 'reconciled'"/>
+                        <field name="bank_transaction_date" readonly="1"/>
+                    </group>
+                    <group>
+                        <field name="bank_clearing_move_id" readonly="1"/>
+                        <field name="bank_clearing_move_line_id" readonly="1"/>
+                        <field name="matched_statement_line_id" readonly="1"/>
+                        <field name="bank_reconciled_move_id" readonly="1"/>
+                        <field name="bank_reconciliation_difference" readonly="1"/>
+                    </group>
+                    <group>
+                        <button name="action_open_bank_statement_line" type="object" string="Open Statement Line" class="btn-secondary" invisible="not matched_statement_line_id"/>
+                        <button name="action_open_bank_reconciliation_entry" type="object" string="Open Reconciliation Entry" class="btn-secondary" invisible="not bank_reconciled_move_id"/>
+                    </group>
+                </group>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_hospital_charge_receipt_list_bank_bridge" model="ir.ui.view">
+        <field name="name">hospital.charge.receipt.list.bank.bridge</field>
+        <field name="model">hospital.charge.receipt</field>
+        <field name="inherit_id" ref="hospital_billing.view_hospital_charge_receipt_list"/>
+        <field name="arch" type="xml">
+            <xpath expr="//list/field[@name='payment_method']" position="after">
+                <field name="bank_reconciliation_state" optional="show" widget="badge"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_hospital_billing_account_form_bank_bridge" model="ir.ui.view">
+        <field name="name">hospital.billing.account.form.bank.bridge</field>
+        <field name="model">hospital.billing.account</field>
+        <field name="inherit_id" ref="hospital_billing.view_hospital_billing_account_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button name="action_view_bank_reconciliation_lines" type="object" class="oe_stat_button" icon="fa-university" groups="account.group_account_user,account.group_account_manager">
+                    <field name="bank_receipts_awaiting_statement" widget="statinfo" string="Bank Awaiting"/>
+                </button>
+            </xpath>
+            <xpath expr="//field[@name='settlement_state']" position="after">
+                <field name="bank_receipts_awaiting_statement" readonly="1"/>
+                <field name="bank_receipts_reconciled" readonly="1"/>
+                <field name="bank_receipt_variances" readonly="1"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_walnut_bank_statement_line_form_hospital_bridge" model="ir.ui.view">
+        <field name="name">walnut.bank.statement.line.form.hospital.bridge</field>
+        <field name="model">walnut.bank.statement.line</field>
+        <field name="inherit_id" ref="walnut_bank_reconciliation.view_walnut_bank_statement_line_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='matched_invoice_id']/ancestor::group[1]" position="after">
+                <group string="Hospital Bank Receipt Match">
+                    <field name="hospital_receipt_id"/>
+                    <field name="hospital_patient_id" readonly="1"/>
+                    <field name="hospital_encounter_id" readonly="1"/>
+                    <field name="hospital_billing_account_id" readonly="1"/>
+                    <field name="hospital_invoice_id" readonly="1"/>
+                    <field name="hospital_receipt_clearing_line_id" readonly="1"/>
+                    <field name="hospital_expected_amount" readonly="1"/>
+                    <field name="hospital_bank_amount" readonly="1"/>
+                    <field name="hospital_difference_amount" readonly="1"/>
+                    <field name="hospital_reconciliation_outcome" widget="badge" readonly="1"/>
+                    <field name="hospital_bank_reconciliation_move_id" readonly="1"/>
+                </group>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_walnut_bank_statement_line_list_hospital_bridge" model="ir.ui.view">
+        <field name="name">walnut.bank.statement.line.list.hospital.bridge</field>
+        <field name="model">walnut.bank.statement.line</field>
+        <field name="inherit_id" ref="walnut_bank_reconciliation.view_walnut_bank_statement_line_list"/>
+        <field name="arch" type="xml">
+            <xpath expr="//list/field[@name='matched_invoice_id']" position="after">
+                <field name="hospital_receipt_id" optional="show"/>
+                <field name="hospital_billing_account_id" optional="show"/>
+                <field name="hospital_expected_amount" optional="show"/>
+                <field name="hospital_difference_amount" optional="show"/>
+                <field name="hospital_reconciliation_outcome" optional="show"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>
