@@ -51,14 +51,59 @@ class HospitalAppointmentBilling(models.Model):
     # Links (computed; legacy appointments simply have none -- still readable)
     # ------------------------------------------------------------------
     def _compute_encounter_id(self):
+        """BATCHED. Two searches for the whole recordset, not two per record.
+
+        Semantically identical to the per-record version it replaces, and that
+        equivalence is what makes it safe:
+
+          * hospital.encounter._order is "opened_at desc, id desc", so one
+            search over all appointment_ids returns rows in the same order the
+            per-record ``limit=1`` saw. Taking the FIRST hit per appointment
+            therefore selects exactly the record limit=1 would have.
+          * consultation_charge_id keys off source_key, which is
+            "hospital.appointment:<id>:0:consultation" -- one deterministic key
+            per appointment (see _consultation_source_key), so an "in" search
+            plus first-hit-per-key reproduces limit=1 the same way.
+          * records with no database id get an empty value, as before.
+
+        This is a performance change only; no business rule moves. It matters
+        because both fields are NON-STORED computes that everything reads:
+        clinical_queue_stage / front_desk_stage resolve through encounter_id, so
+        the old version cost two queries for every row of any queue or worklist.
+        Measured on a 30-row front-desk worklist it was 60 of the 71 queries.
+        """
         Encounter = self.env["hospital.encounter"].sudo()
+        ChargeLine = self.env["hospital.charge.line"].sudo()
+
+        # NewId is falsy, matching the original's `if appointment.id` guard.
+        real = self.filtered(lambda appointment: bool(appointment.id))
+        keys = {
+            appointment.id: appointment._consultation_source_key()
+            for appointment in real
+        }
+
+        encounter_by_appointment = {}
+        charge_by_key = {}
+        if real:
+            for encounter in Encounter.search([("appointment_id", "in", real.ids)]):
+                encounter_by_appointment.setdefault(encounter.appointment_id.id, encounter)
+            if keys:
+                for charge in ChargeLine.search(
+                    [("source_key", "in", list(keys.values()))]
+                ):
+                    charge_by_key.setdefault(charge.source_key, charge)
+
         for appointment in self:
-            enc = Encounter.search([("appointment_id", "=", appointment.id)], limit=1)
-            appointment.encounter_id = enc
-            charge = self.env["hospital.charge.line"].sudo().search(
-                [("source_key", "=", appointment._consultation_source_key())], limit=1
-            ) if appointment.id else self.env["hospital.charge.line"]
-            appointment.consultation_charge_id = charge
+            if not appointment.id:
+                appointment.encounter_id = Encounter.browse()
+                appointment.consultation_charge_id = ChargeLine.browse()
+                continue
+            appointment.encounter_id = encounter_by_appointment.get(
+                appointment.id, Encounter.browse()
+            )
+            appointment.consultation_charge_id = charge_by_key.get(
+                keys[appointment.id], ChargeLine.browse()
+            )
 
     @api.model
     def _search_encounter_id(self, operator, value):
