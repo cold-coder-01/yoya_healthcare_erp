@@ -10,6 +10,7 @@ from .charge_line import (
     OPERATIONAL_FUNDING_STATES,
     SETTLEMENT_STATES,
 )
+from .charge_receipt import PAYMENT_METHODS, REFERENCE_REQUIRED
 
 LIVE_CHARGE_STATES = ("draft", "active")
 
@@ -502,6 +503,97 @@ class HospitalBillingAccount(models.Model):
             "context": {"default_source_billing_account_id": self.id},
         }
 
+    def record_operational_payment(
+        self,
+        amount,
+        payment_method,
+        payment_reference=None,
+        note=None,
+        intake_token=None,
+    ):
+        """Record one operational payment through the canonical wizard path.
+
+        This method is intentionally a thin server-side launcher: the receipt,
+        allocation, confirmation, audit and payment-state logic remains in
+        hospital.charge.payment.wizard.action_confirm().
+        """
+        self.ensure_one()
+
+        Allocation = self.env["hospital.charge.receipt.allocation"]
+        Allocation._assert_intake_group("record a payment")
+
+        if amount is None or amount <= 0:
+            raise ValidationError("Payment amount must be greater than zero.")
+
+        valid_methods = {key for key, _label in PAYMENT_METHODS}
+        if payment_method not in valid_methods:
+            raise ValidationError(
+                "Payment method must be one of %s." % ", ".join(sorted(valid_methods))
+            )
+
+        if payment_method in REFERENCE_REQUIRED and not (
+            payment_reference or ""
+        ).strip():
+            raise ValidationError(
+                "A %s payment requires an external reference."
+                % dict(PAYMENT_METHODS)[payment_method]
+            )
+
+        Receipt = self.env["hospital.charge.receipt"]
+        if intake_token:
+            existing = Receipt.search([("intake_token", "=", intake_token)], limit=1)
+            if existing:
+                same_action = (
+                    existing.billing_account_id == self
+                    and abs(existing.amount - amount) <= AMOUNT_TOLERANCE
+                    and existing.payment_method == payment_method
+                    and (existing.payment_reference or "") == (payment_reference or "")
+                    and (existing.note or "") == (note or "")
+                    and existing.state == "confirmed"
+                )
+                if same_action:
+                    return existing
+                raise ValidationError(
+                    "This idempotency key has already been used for a different payment."
+                )
+
+        Wizard = (
+            self.env["hospital.charge.payment.wizard"]
+            .with_context(default_source_billing_account_id=self.id)
+        )
+        values = Wizard.default_get(list(Wizard._fields))
+        values.update(
+            {
+                "payment_method": payment_method,
+                "payment_reference": payment_reference or False,
+                "note": note or False,
+            }
+        )
+        if intake_token:
+            values["intake_token"] = intake_token
+
+        wizard = Wizard.create(values)
+        if not wizard.line_ids:
+            raise UserError("There are no payable charges on this billing account.")
+
+        remaining = float(amount)
+        payable_lines = wizard.line_ids.sorted("id")
+        for line in payable_lines:
+            if remaining <= AMOUNT_TOLERANCE:
+                line.amount = 0.0
+                continue
+            allocation = min(remaining, line.amount_available)
+            line.amount = allocation
+            remaining -= allocation
+
+        if remaining > AMOUNT_TOLERANCE:
+            payable_lines[-1].amount += remaining
+
+        action = wizard.action_confirm()
+        receipt = wizard.receipt_id
+        if not receipt and isinstance(action, dict) and action.get("res_id"):
+            receipt = Receipt.browse(action["res_id"])
+        return receipt
     def action_view_receipts(self):
         self.ensure_one()
         return {

@@ -273,10 +273,6 @@ class HospitalPharmacyDispenseBilling(models.Model):
         clearance = self.env["hospital.billing.engine"].sudo().check_financial_clearance(self.encounter_id, persist=persist, charges=charges)
         if not clearance["cleared"]:
             raise self._clearance_error(clearance)
-        receipts = self.env["hospital.charge.receipt.allocation"].sudo().search([("charge_line_id", "in", charges.ids)]).mapped("receipt_id")
-        bad = receipts.filtered(lambda r: r.state == "confirmed" and "accounting_move_id" in r._fields and (not r.accounting_move_id or r.accounting_move_id.state != "posted"))
-        if bad:
-            raise UserError("Pharmacy dispense %s cannot be validated because receipt(s) %s are confirmed but not posted to accounting." % (self.name, ", ".join(bad.mapped("name"))))
         return clearance
 
     def action_mark_dispensed(self):

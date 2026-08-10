@@ -16,7 +16,7 @@ Python guard is load-bearing on its own.
 import uuid
 
 from odoo import fields
-from odoo.exceptions import AccessError, UserError
+from odoo.exceptions import AccessError, UserError, ValidationError
 from odoo.tests import TransactionCase, tagged
 
 from odoo.addons.hospital_billing.models import charge_line, charge_receipt
@@ -316,6 +316,201 @@ class TestPaymentAuthorizationBoundary(TransactionCase):
         self.assertAlmostEqual(charge.amount_received, 300.0, places=2)
         self.assertTrue(manager.has_group(G_RECEPTIONIST))
 
+    # ------------------------------------------------------------------
+    # Account-level API launcher
+    # ------------------------------------------------------------------
+    def _account_for(self, charge):
+        return charge.billing_account_id.sudo()
+
+    def _add_account_charge(self, account, amount, description="Extra prepaid charge"):
+        return self.env["hospital.charge.line"].sudo().create(
+            {
+                "billing_account_id": account.id,
+                "description": "%s %s" % (description, uuid.uuid4().hex[:6]),
+                "billing_basis": "prepaid",
+                "charge_state": "active",
+                "unit_price": amount,
+                "qty_requested": 1.0,
+            }
+        )
+
+    def test_account_method_cashier_records_full_payment(self):
+        charge = self._new_charge()
+        account = self._account_for(charge)
+
+        receipt = account.with_user(self.cashier).record_operational_payment(
+            300.0, "cash", intake_token=uuid.uuid4().hex
+        )
+
+        self.assertEqual(receipt.state, "confirmed")
+        self.assertEqual(receipt.received_by_id, self.cashier)
+        self.assertEqual(receipt.billing_account_id, account)
+        self.assertEqual(receipt.encounter_id, account.encounter_id)
+        self.assertEqual(receipt.patient_id, account.patient_id)
+        self.assertEqual(receipt.company_id, account.company_id)
+        self.assertFalse(receipt.accounting_posted)
+        self.assertFalse(receipt.fiscalized)
+        charge.invalidate_recordset()
+        self.assertAlmostEqual(charge.amount_due_for_clearance, 0.0, places=2)
+
+    def test_account_method_cashier_records_partial_payment(self):
+        charge = self._new_charge()
+        account = self._account_for(charge)
+
+        receipt = account.with_user(self.cashier).record_operational_payment(
+            125.0, "cash", intake_token=uuid.uuid4().hex
+        )
+
+        self.assertEqual(receipt.state, "confirmed")
+        self.assertAlmostEqual(receipt.amount, 125.0, places=2)
+        charge.invalidate_recordset()
+        self.assertAlmostEqual(charge.amount_received, 125.0, places=2)
+        self.assertAlmostEqual(charge.amount_due_for_clearance, 175.0, places=2)
+        self.assertEqual(charge.payment_state, "partially_paid")
+
+    def test_account_method_receptionist_denied(self):
+        charge = self._new_charge()
+        account = self._account_for(charge)
+        before = self._receipt_count()
+
+        with self.assertRaises(AccessError):
+            account.with_user(self.receptionist).record_operational_payment(
+                300.0, "cash", intake_token=uuid.uuid4().hex
+            )
+
+        self.assertEqual(self._receipt_count(), before)
+
+    def test_account_method_rogue_with_acl_denied(self):
+        charge = self._new_charge()
+        account = self._account_for(charge)
+        rogue = self._make_user("account_method_rogue", [])
+        rogue_group = self.env["res.groups"].sudo().create({"name": "Account Method Rogue"})
+        rogue.sudo().write({"groups_id": [(4, rogue_group.id)]})
+        for model_name in (
+            "hospital.billing.account",
+            "hospital.charge.payment.wizard",
+            "hospital.charge.payment.wizard.line",
+            "hospital.charge.receipt",
+            "hospital.charge.receipt.allocation",
+        ):
+            self.env["ir.model.access"].sudo().create(
+                {
+                    "name": "account method rogue %s" % model_name,
+                    "model_id": self.env["ir.model"]._get(model_name).id,
+                    "group_id": rogue_group.id,
+                    "perm_read": True,
+                    "perm_write": True,
+                    "perm_create": True,
+                    "perm_unlink": True,
+                }
+            )
+
+        with self.assertRaises(AccessError):
+            account.with_user(rogue).record_operational_payment(
+                300.0, "cash", intake_token=uuid.uuid4().hex
+            )
+
+    def test_account_method_manager_allowed(self):
+        manager = self._make_user(
+            "account_method_manager", ["hospital_management.group_hospital_manager"]
+        )
+        charge = self._new_charge()
+        account = self._account_for(charge)
+
+        receipt = account.with_user(manager).record_operational_payment(
+            300.0, "cash", intake_token=uuid.uuid4().hex
+        )
+
+        self.assertEqual(receipt.state, "confirmed")
+        self.assertEqual(receipt.received_by_id, manager)
+
+    def test_account_method_rejects_zero_and_negative_amounts(self):
+        account = self._account_for(self._new_charge())
+        for amount in (0.0, -1.0):
+            with self.assertRaises(ValidationError):
+                account.with_user(self.cashier).record_operational_payment(
+                    amount, "cash", intake_token=uuid.uuid4().hex
+                )
+
+    def test_account_method_requires_reference_for_non_cash(self):
+        account = self._account_for(self._new_charge())
+        with self.assertRaises(ValidationError):
+            account.with_user(self.cashier).record_operational_payment(
+                100.0, "card", intake_token=uuid.uuid4().hex
+            )
+
+    def test_account_method_idempotency_returns_existing_receipt(self):
+        charge = self._new_charge()
+        account = self._account_for(charge)
+        token = uuid.uuid4().hex
+
+        first = account.with_user(self.cashier).record_operational_payment(
+            300.0, "cash", intake_token=token
+        )
+        second = account.with_user(self.cashier).record_operational_payment(
+            300.0, "cash", intake_token=token
+        )
+
+        self.assertEqual(first, second)
+        self.assertEqual(
+            self.env["hospital.charge.receipt"].sudo().search_count([("intake_token", "=", token)]),
+            1,
+        )
+        self.assertEqual(
+            self.env["hospital.charge.receipt.allocation"].sudo().search_count([("receipt_id", "=", first.id)]),
+            1,
+        )
+
+    def test_account_method_idempotency_conflict_rejected(self):
+        account = self._account_for(self._new_charge())
+        token = uuid.uuid4().hex
+        account.with_user(self.cashier).record_operational_payment(
+            100.0, "cash", intake_token=token
+        )
+
+        with self.assertRaises(ValidationError):
+            account.with_user(self.cashier).record_operational_payment(
+                125.0, "cash", intake_token=token
+            )
+
+    def test_account_method_allocates_deterministically_across_account_charges(self):
+        charge = self._new_charge()
+        account = self._account_for(charge)
+        second = self._add_account_charge(account, 200.0)
+
+        receipt = account.with_user(self.cashier).record_operational_payment(
+            350.0, "cash", intake_token=uuid.uuid4().hex
+        )
+
+        allocations = receipt.allocation_ids.sorted("id")
+        self.assertEqual(allocations.mapped("charge_line_id"), charge | second)
+        self.assertAlmostEqual(allocations[0].amount, 300.0, places=2)
+        self.assertAlmostEqual(allocations[1].amount, 50.0, places=2)
+
+    def test_account_method_cashier_overpayment_rejected(self):
+        account = self._account_for(self._new_charge())
+        before = self._receipt_count()
+        with self.assertRaises(UserError):
+            account.with_user(self.cashier).record_operational_payment(
+                301.0, "cash", intake_token=uuid.uuid4().hex
+            )
+        self.assertEqual(self._receipt_count(), before)
+
+    def test_account_method_manager_overpayment_requires_note(self):
+        manager = self._make_user(
+            "account_method_overpay_manager", ["hospital_management.group_hospital_manager"]
+        )
+        account = self._account_for(self._new_charge())
+        with self.assertRaises(UserError):
+            account.with_user(manager).record_operational_payment(
+                301.0, "cash", intake_token=uuid.uuid4().hex
+            )
+
+        receipt = account.with_user(manager).record_operational_payment(
+            301.0, "cash", note="Patient paid rounded amount.", intake_token=uuid.uuid4().hex
+        )
+        self.assertEqual(receipt.state, "confirmed")
+        self.assertAlmostEqual(receipt.amount, 301.0, places=2)
     # ------------------------------------------------------------------
     # Drift guard
     # ------------------------------------------------------------------

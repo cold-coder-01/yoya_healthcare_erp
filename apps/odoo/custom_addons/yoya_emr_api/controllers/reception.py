@@ -723,19 +723,25 @@ class YoyaEmrReceptionController(http.Controller):
         A 501 with a stable code lets the Next.js client render an honest
         "pay at the cashier desk" state instead of guessing from a 404.
 
-        Implementing this would mean reproducing
-        hospital.charge.payment.wizard.action_confirm: idempotency token,
-        server-side charge re-resolution, over-application justification,
-        receipt + allocation creation, audit linkage and
-        _sync_payment_state. Reimplementing that would fork the money path.
-        Calling it is impossible for a cashier because RECEIPT_GROUPS is
-        hardcoded in hospital_billing, which is not version-controlled and
-        must not be edited from here.
+        The backend boundary is now correct: the Cashier group exists in
+        hospital_billing, is in OPERATIONAL_INTAKE_GROUPS, and
+        hospital.charge.payment.wizard.action_confirm asserts it as the
+        calling user before any sudo(). What is still missing is this
+        endpoint's own test coverage -- delegation without elevation,
+        cross-encounter charge rejection, and idempotency over HTTP.
+
+        When it is implemented it must DELEGATE to the wizard (create +
+        action_confirm) in the caller's own environment. Reproducing
+        action_confirm here -- idempotency token, server-side charge
+        re-resolution, over-application justification, receipt + allocation
+        creation, audit linkage, _sync_payment_state -- would fork the money
+        path, and a second implementation of the money path is a second thing
+        that can be wrong.
         """
         raise ApiError(
             "feature_unavailable",
-            "Cashier payment API is not enabled until the billing module "
-            "authorization boundary is version-controlled and updated.",
+            "Cashier payment API is not enabled yet. Payment must be recorded "
+            "at the cashier desk in Odoo.",
             501,
         )
 

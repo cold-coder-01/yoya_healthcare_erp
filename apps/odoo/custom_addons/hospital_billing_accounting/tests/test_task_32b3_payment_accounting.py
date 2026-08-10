@@ -12,9 +12,12 @@ class TestTask32B3PaymentAccounting(TransactionCase):
         super().setUpClass()
         cls.company = cls.env.company
         cls.currency = cls.company.currency_id
+        cls.cashier = cls._make_user("task32b3_cashier", "hospital_billing.group_hospital_cashier")
         cls.accountant = cls._make_user("task32b3_accountant", "hospital_management.group_hospital_accountant")
         cls.manager = cls._make_user("task32b3_manager", "hospital_management.group_hospital_manager")
+        cls.admin = cls._make_user("task32b3_admin", "hospital_management.group_hospital_system_administrator")
         cls.receptionist = cls._make_user("task32b3_receptionist", "hospital_management.group_hospital_receptionist")
+        cls.nurse = cls._make_user("task32b3_nurse", "hospital_management.group_hospital_nurse")
         cls.config = cls.env["hospital.billing.accounting.config"].sudo().search(
             [("company_id", "=", cls.company.id), ("source_type", "=", "consultation"), ("active", "=", True)], limit=1
         )
@@ -33,21 +36,21 @@ class TestTask32B3PaymentAccounting(TransactionCase):
         cls.receipt_journal = cls._journal("T32B3R", "Task 32B3 Receipt Journal", cls.cash_account)
         cls.application_journal = cls._journal("T32B3A", "Task 32B3 Application Journal", cls.advance_account)
         cls.bank_statement_journal = cls.env["account.journal"].sudo().search([("code", "=", "T33B3B"), ("company_id", "=", cls.company.id), ("type", "=", "bank")], limit=1) or cls.env["account.journal"].sudo().create({"name": "Task 32B3 Bank Statement Journal", "code": "T33B3B", "type": "bank", "company_id": cls.company.id, "default_account_id": cls.bank_account.id})
-        cls.config.sudo().write(
-            {
-                "cash_account_id": cls.cash_account.id,
-                "bank_account_id": cls.bank_account.id,
-                "mobile_money_account_id": cls.mobile_account.id,
-                "patient_advance_liability_account_id": cls.advance_account.id,
-                "patient_credit_liability_account_id": cls.credit_account.id,
-                "advance_receipt_journal_id": cls.receipt_journal.id,
-                "advance_application_journal_id": cls.application_journal.id,
-                "advance_refund_journal_id": cls.application_journal.id,
-                "bank_statement_journal_id": cls.bank_statement_journal.id,
-                "bank_receipt_clearing_account_id": cls.bank_clearing_account.id,
-            }
-        )
-
+        config_vals = {
+            "cash_account_id": cls.cash_account.id,
+            "bank_account_id": cls.bank_account.id,
+            "mobile_money_account_id": cls.mobile_account.id,
+            "patient_advance_liability_account_id": cls.advance_account.id,
+            "patient_credit_liability_account_id": cls.credit_account.id,
+            "advance_receipt_journal_id": cls.receipt_journal.id,
+            "advance_application_journal_id": cls.application_journal.id,
+            "advance_refund_journal_id": cls.application_journal.id,
+        }
+        if "bank_statement_journal_id" in cls.config._fields:
+            config_vals["bank_statement_journal_id"] = cls.bank_statement_journal.id
+        if "bank_receipt_clearing_account_id" in cls.config._fields:
+            config_vals["bank_receipt_clearing_account_id"] = cls.bank_clearing_account.id
+        cls.config.sudo().write(config_vals)
     @classmethod
     def _make_user(cls, login, hospital_group):
         return cls.env["res.users"].sudo().create(
@@ -181,12 +184,23 @@ class TestTask32B3PaymentAccounting(TransactionCase):
         )
         return account, charge
 
-    def _receipt(self, account, charge, amount, method="cash", reference=None):
+    def _confirmed_operational_receipt(self, account, charge, amount, method="cash", reference=None, received_by=None):
         receipt = self.env["hospital.charge.receipt"].sudo().create(
-            {"payment_method": method, "payment_reference": reference, "received_at": fields.Datetime.now(), "received_by_id": self.accountant.id, "state": "draft", "intake_token": uuid.uuid4().hex}
+            {
+                "payment_method": method,
+                "payment_reference": reference,
+                "received_at": fields.Datetime.now(),
+                "received_by_id": (received_by or self.cashier).id,
+                "state": "draft",
+                "intake_token": uuid.uuid4().hex,
+            }
         )
         self.env["hospital.charge.receipt.allocation"].sudo().create({"receipt_id": receipt.id, "charge_line_id": charge.id, "amount": amount})
         receipt.sudo().write({"state": "confirmed"})
+        return receipt
+
+    def _receipt(self, account, charge, amount, method="cash", reference=None):
+        receipt = self._confirmed_operational_receipt(account, charge, amount, method=method, reference=reference, received_by=self.accountant)
         move = receipt.with_user(self.accountant).action_post_receipt_accounting()
         return receipt, move
 
@@ -276,6 +290,24 @@ class TestTask32B3PaymentAccounting(TransactionCase):
         with self.assertRaises(UserError):
             receipt.sudo().write({"state": "cancelled"})
 
+    def test_explicit_receipt_accounting_posting_authorization_boundary(self):
+        account, charge = self._make_case(price=300.0)
+        for user in (self.cashier, self.receptionist, self.nurse):
+            receipt = self._confirmed_operational_receipt(account, charge, 10.0, received_by=self.cashier)
+            with self.assertRaises(AccessError):
+                receipt.with_user(user).action_post_receipt_accounting()
+            self.assertFalse(receipt.accounting_posted)
+            self.assertFalse(receipt.accounting_move_id)
+
+        for user in (self.accountant, self.manager, self.admin):
+            receipt = self._confirmed_operational_receipt(account, charge, 10.0, received_by=self.cashier)
+            move = receipt.with_user(user).action_post_receipt_accounting()
+            receipt.invalidate_recordset(["accounting_posted", "accounting_move_id", "accounting_posted_by_id"])
+            self.assertEqual(move.state, "posted")
+            self.assertTrue(receipt.accounting_posted)
+            self.assertEqual(receipt.accounting_move_id, move)
+            self.assertEqual(receipt.accounting_posted_by_id, user)
+
     def test_fresh_patient_accounting_partner_lifecycle_is_explicit(self):
         name = "32B3 Fresh Partner Lifecycle %s" % uuid.uuid4().hex[:6]
         partner_count_before = self.env["res.partner"].sudo().search_count([("name", "=", name)])
@@ -313,7 +345,7 @@ class TestTask32B3PaymentAccounting(TransactionCase):
         patient.invalidate_recordset(["accounting_partner_id"])
         self.assertEqual(patient.accounting_partner_id, partner)
 
-    def test_partnerless_patient_payment_failure_leaves_no_partial_artifacts(self):
+    def test_partnerless_patient_operational_payment_survives_later_accounting_failure(self):
         account, charge = self._make_case_without_accounting_partner(price=300.0)
         self.assertFalse(account.patient_id.accounting_partner_id)
         self.assertAlmostEqual(charge.amount_due_for_clearance, 300.0, places=2)
@@ -321,35 +353,7 @@ class TestTask32B3PaymentAccounting(TransactionCase):
         before_allocations = self.env["hospital.charge.receipt.allocation"].search_count([])
         before_moves = self.env["account.move"].search_count([])
         before_apps = self.env["hospital.patient.advance.application"].search_count([])
-        wizard = self.env["hospital.charge.payment.wizard"].with_user(self.accountant).create(
-            {
-                "source_charge_id": charge.id,
-                "patient_id": account.patient_id.id,
-                "encounter_id": account.encounter_id.id,
-                "billing_account_id": account.id,
-                "currency_id": account.currency_id.id,
-                "payment_method": "cash",
-                "received_at": fields.Datetime.now(),
-                "line_ids": [(0, 0, {"charge_line_id": charge.id, "amount_due": 300.0, "amount_available": 300.0, "amount": 100.0})],
-            }
-        )
-        with self.assertRaises(UserError):
-            with self.env.cr.savepoint():
-                wizard.action_confirm()
-        charge.invalidate_recordset(["amount_received", "amount_prepayment_held", "amount_due_for_clearance"])
-        self.assertEqual(self.env["hospital.charge.receipt"].search_count([]), before_receipts)
-        self.assertEqual(self.env["hospital.charge.receipt.allocation"].search_count([]), before_allocations)
-        self.assertEqual(self.env["account.move"].search_count([]), before_moves)
-        self.assertEqual(self.env["hospital.patient.advance.application"].search_count([]), before_apps)
-        self.assertAlmostEqual(charge.amount_received, 0.0, places=2)
-        self.assertAlmostEqual(charge.amount_prepayment_held, 0.0, places=2)
-        self.assertAlmostEqual(charge.amount_due_for_clearance, 300.0, places=2)
-
-    def test_100_etb_payment_posts_advance_and_reduces_clearance_due_to_200(self):
-        account, charge = self._make_prepaid_case_with_accounting_partner(price=300.0)
-        self.assertTrue(account.patient_id.accounting_partner_id)
-        self.assertAlmostEqual(charge.amount_due_for_clearance, 300.0, places=2)
-        wizard = self.env["hospital.charge.payment.wizard"].with_user(self.accountant).create(
+        wizard = self.env["hospital.charge.payment.wizard"].with_user(self.cashier).create(
             {
                 "source_charge_id": charge.id,
                 "patient_id": account.patient_id.id,
@@ -364,14 +368,67 @@ class TestTask32B3PaymentAccounting(TransactionCase):
         wizard.action_confirm()
         receipt = wizard.receipt_id
         charge.invalidate_recordset(["amount_received", "amount_prepayment_held", "amount_due_for_clearance"])
-        self.assertTrue(receipt)
+        account.invalidate_recordset(["accounting_receipt_state", "operational_funding_state"])
+        self.assertEqual(self.env["hospital.charge.receipt"].search_count([]), before_receipts + 1)
+        self.assertEqual(self.env["hospital.charge.receipt.allocation"].search_count([]), before_allocations + 1)
+        self.assertEqual(self.env["account.move"].search_count([]), before_moves)
+        self.assertEqual(self.env["hospital.patient.advance.application"].search_count([]), before_apps)
         self.assertEqual(receipt.state, "confirmed")
-        self.assertEqual(receipt.accounting_move_id.state, "posted")
+        self.assertFalse(receipt.accounting_posted)
+        self.assertFalse(receipt.accounting_move_id)
+        self.assertEqual(account.accounting_receipt_state, "unposted")
         self.assertAlmostEqual(charge.amount_received, 100.0, places=2)
         self.assertAlmostEqual(charge.amount_prepayment_held, 100.0, places=2)
         self.assertAlmostEqual(charge.amount_due_for_clearance, 200.0, places=2)
-        self.assertEqual(receipt.accounting_move_id.line_ids.filtered(lambda line: line.account_id == self.cash_account).debit, 100.0)
-        self.assertEqual(receipt.accounting_move_id.line_ids.filtered(lambda line: line.account_id == self.advance_account).credit, 100.0)
+        with self.assertRaises(UserError):
+            receipt.with_user(self.accountant).action_post_receipt_accounting()
+        self.assertEqual(self.env["account.move"].search_count([]), before_moves)
+        self.assertEqual(receipt.state, "confirmed")
+        self.assertFalse(receipt.accounting_move_id)
+
+    def test_100_etb_payment_records_operationally_then_explicitly_posts_advance(self):
+        account, charge = self._make_prepaid_case_with_accounting_partner(price=300.0)
+        self.assertTrue(account.patient_id.accounting_partner_id)
+        self.assertAlmostEqual(charge.amount_due_for_clearance, 300.0, places=2)
+        before_moves = self.env["account.move"].search_count([])
+        wizard = self.env["hospital.charge.payment.wizard"].with_user(self.cashier).create(
+            {
+                "source_charge_id": charge.id,
+                "patient_id": account.patient_id.id,
+                "encounter_id": account.encounter_id.id,
+                "billing_account_id": account.id,
+                "currency_id": account.currency_id.id,
+                "payment_method": "cash",
+                "received_at": fields.Datetime.now(),
+                "line_ids": [(0, 0, {"charge_line_id": charge.id, "amount_due": 300.0, "amount_available": 300.0, "amount": 100.0})],
+            }
+        )
+        wizard.action_confirm()
+        receipt = wizard.receipt_id
+        charge.invalidate_recordset(["amount_received", "amount_prepayment_held", "amount_due_for_clearance"])
+        account.invalidate_recordset(["accounting_receipt_state", "operational_funding_state"])
+        self.assertTrue(receipt)
+        self.assertEqual(receipt.state, "confirmed")
+        self.assertFalse(receipt.accounting_posted)
+        self.assertFalse(receipt.accounting_move_id)
+        self.assertEqual(self.env["account.move"].search_count([]), before_moves)
+        self.assertEqual(account.accounting_receipt_state, "unposted")
+        self.assertAlmostEqual(charge.amount_received, 100.0, places=2)
+        self.assertAlmostEqual(charge.amount_prepayment_held, 100.0, places=2)
+        self.assertAlmostEqual(charge.amount_due_for_clearance, 200.0, places=2)
+
+        move = receipt.with_user(self.accountant).action_post_receipt_accounting()
+        receipt.invalidate_recordset(["accounting_posted", "accounting_move_id", "accounting_reference", "accounting_posted_at", "accounting_posted_by_id"])
+        account.invalidate_recordset(["accounting_receipt_state"])
+        self.assertEqual(move.state, "posted")
+        self.assertEqual(receipt.accounting_move_id, move)
+        self.assertTrue(receipt.accounting_posted)
+        self.assertEqual(receipt.accounting_reference, move.name)
+        self.assertTrue(receipt.accounting_posted_at)
+        self.assertEqual(receipt.accounting_posted_by_id, self.accountant)
+        self.assertEqual(account.accounting_receipt_state, "posted")
+        self.assertEqual(move.line_ids.filtered(lambda line: line.account_id == self.cash_account).debit, 100.0)
+        self.assertEqual(move.line_ids.filtered(lambda line: line.account_id == self.advance_account).credit, 100.0)
 
     def test_partial_multiple_excess_application_and_retry(self):
         account, charge = self._make_case(price=1000.0)

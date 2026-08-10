@@ -211,19 +211,7 @@ class HospitalRadiologyRequestBilling(models.Model):
         )
         if not clearance["cleared"]:
             raise self._clearance_error(clearance)
-        receipts = self.env["hospital.charge.receipt.allocation"].sudo().search(
-            [("charge_line_id", "in", self.charge_line_ids.ids)]
-        ).mapped("receipt_id")
-        bad_receipts = receipts.filtered(
-            lambda r: r.state == "confirmed"
-            and "accounting_move_id" in r._fields
-            and (not r.accounting_move_id or r.accounting_move_id.state != "posted")
-        )
-        if bad_receipts:
-            raise UserError(
-                "Radiology service for %s cannot start because receipt(s) %s are confirmed but not posted to accounting. Collect payment through the controlled workflow or post the receipt accounting entry first."
-                % (self.patient_id.display_name, ", ".join(bad_receipts.mapped("name")))
-            )
+
         return clearance
 
     def action_confirm_request(self):

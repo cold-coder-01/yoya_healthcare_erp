@@ -235,7 +235,6 @@ class HospitalChargePaymentWizardAccounting(models.TransientModel):
                     "fiscal_receipt_number": self.fiscal_receipt_number,
                 }
             )
-            self.receipt_id.with_user(self.env.user).action_post_receipt_accounting()
         return action
 
 

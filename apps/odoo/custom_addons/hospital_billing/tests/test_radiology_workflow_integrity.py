@@ -233,20 +233,20 @@ class TestRadiologyWorkflowIntegrity(TransactionCase):
         with self.assertRaisesRegex(UserError, "Patient-payable amount"):
             request.action_mark_in_progress()
 
-    def test_full_posted_payment_permits_start_and_unposted_or_cancelled_do_not(self):
+    def test_full_operational_payment_permits_start_even_when_accounting_unposted(self):
         request = self._request()
-        self._pay(request, 2500.0, post=False)
-        with self.assertRaisesRegex(UserError, "not posted to accounting"):
-            request.action_mark_in_progress()
+        receipt = self._pay(request, 2500.0, post=False)
+        self.assertEqual(receipt.state, "confirmed")
+        if "accounting_move_id" in receipt._fields:
+            self.assertFalse(receipt.accounting_move_id)
+        request.action_mark_in_progress()
+        self.assertEqual(request.state, "in_progress")
+        self.assertEqual(request.charge_line_ids[:1].delivery_state, "in_progress")
+
         request2 = self._request()
         self._pay(request2, 2500.0, post=False, state="cancelled")
         with self.assertRaises(UserError):
             request2.action_mark_in_progress()
-        request3 = self._request()
-        self._pay(request3, 2500.0)
-        request3.action_mark_in_progress()
-        self.assertEqual(request3.state, "in_progress")
-        self.assertEqual(request3.charge_line_ids[:1].delivery_state, "in_progress")
 
     def test_authorized_coverage_and_emergency_bypass(self):
         request = self._request(exams=[self.auth_exam], payer_type="insurance")

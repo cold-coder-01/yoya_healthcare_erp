@@ -153,3 +153,43 @@ class TestPharmacyPrescriptionHandoff(TransactionCase):
         self.assertEqual(dispense.encounter_id, encounter)
         self.assertEqual(dispense.state, "draft")
         self.assertFalse(dispense.charge_line_ids)
+
+    def test_operational_payment_clears_pharmacy_dispense_even_when_accounting_unposted(self):
+        uom = self.env["uom.uom"].sudo().search([], limit=1)
+        service = self.env["hospital.billing.service"].sudo().create({
+            "name": "Handoff Pharmacy Clearance Service",
+            "code": "HPC-%s" % uuid.uuid4().hex[:6],
+            "service_type": "pharmacy",
+            "default_price": 200.0,
+            "company_id": self.company.id,
+            "currency_id": self.company.currency_id.id,
+            "uom_id": uom.id,
+            "prepayment_required": True,
+            "tax_treatment": "exempt",
+            "tax_rate": 0.0,
+        })
+        self.medicine.sudo().write({"billing_service_id": service.id})
+        prescription, _encounter = self._prescription(qty=2.0)
+        prescription.action_confirm()
+        dispense = prescription.pharmacy_dispense_ids[:1]
+        dispense.line_ids.sudo().write({"dispensed_quantity": 2.0})
+        dispense._ensure_pharmacy_billing()
+        charge = dispense.charge_line_ids[:1]
+        self.assertAlmostEqual(charge.amount_due_for_clearance, 400.0, places=2)
+        with self.assertRaisesRegex(UserError, "remaining"):
+            dispense._assert_financially_cleared_for_dispense(persist=False)
+
+        receipt = self.env["hospital.charge.receipt"].sudo().create({
+            "payment_method": "cash",
+            "received_at": fields.Datetime.now(),
+            "state": "draft",
+            "intake_token": uuid.uuid4().hex,
+        })
+        self.env["hospital.charge.receipt.allocation"].sudo().create({"receipt_id": receipt.id, "charge_line_id": charge.id, "amount": 400.0})
+        receipt.sudo().write({"state": "confirmed"})
+        if "accounting_move_id" in receipt._fields:
+            self.assertFalse(receipt.accounting_move_id)
+        charge.invalidate_recordset(["amount_received", "amount_due_for_clearance"])
+        self.assertAlmostEqual(charge.amount_due_for_clearance, 0.0, places=2)
+        clearance = dispense._assert_financially_cleared_for_dispense(persist=True)
+        self.assertTrue(clearance["cleared"])
