@@ -1,3 +1,5 @@
+from . import test_payer_agreement_foundation
+from . import test_patient_payer_foundation
 from . import test_payment_authorization_boundary
 from . import test_task_32b1_financial_states
 from . import test_consultation_prepayment_gate

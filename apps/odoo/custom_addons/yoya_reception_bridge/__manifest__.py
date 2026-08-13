@@ -29,7 +29,7 @@ This module never edits hospital_management or hospital_billing. Every
 charge is raised through hospital.billing.engine.create_or_update_charge so
 idempotency, the commercial snapshot and audit stay in one place.
 """,
-    "version": "18.0.1.1.0",
+    "version": "18.0.1.2.0",
     "category": "Healthcare",
     "author": "YOYA Healthcare",
     "license": "LGPL-3",

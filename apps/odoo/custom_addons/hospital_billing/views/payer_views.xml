@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_payer_list" model="ir.ui.view">
+        <field name="name">hospital.payer.list</field>
+        <field name="model">hospital.payer</field>
+        <field name="arch" type="xml">
+            <list string="Payers">
+                <field name="code"/>
+                <field name="name"/>
+                <field name="payer_type"/>
+                <field name="partner_id"/>
+                <field name="tin_number" optional="show"/>
+                <field name="agreement_count" string="Agreements"/>
+                <field name="company_id" groups="base.group_multi_company" optional="show"/>
+                <field name="active" optional="hide"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_payer_form" model="ir.ui.view">
+        <field name="name">hospital.payer.form</field>
+        <field name="model">hospital.payer</field>
+        <field name="arch" type="xml">
+            <form string="Payer">
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_view_agreements" type="object"
+                            class="oe_stat_button" icon="fa-file-text-o">
+                            <field name="agreement_count" widget="statinfo" string="Agreements"/>
+                        </button>
+                    </div>
+                    <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger"
+                        invisible="active"/>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1><field name="name" placeholder="Payer Name"/></h1>
+                    </div>
+                    <group>
+                        <group string="Identity">
+                            <field name="code" placeholder="e.g. NIC"/>
+                            <field name="payer_type"/>
+                            <field name="partner_id"/>
+                            <field name="company_id" groups="base.group_multi_company"/>
+                            <field name="currency_id" groups="base.group_multi_currency"/>
+                            <field name="active"/>
+                        </group>
+                        <group string="Registration">
+                            <field name="tin_number"/>
+                            <field name="license_number"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Contact" name="contact">
+                            <group>
+                                <group>
+                                    <field name="contact_person"/>
+                                    <field name="phone"/>
+                                    <field name="email"/>
+                                </group>
+                                <group>
+                                    <field name="address"/>
+                                </group>
+                            </group>
+                        </page>
+                        <page string="Agreements" name="agreements">
+                            <field name="agreement_ids" readonly="1">
+                                <list>
+                                    <field name="name"/>
+                                    <field name="agreement_number"/>
+                                    <field name="version"/>
+                                    <field name="effective_from"/>
+                                    <field name="effective_to"/>
+                                    <field name="limit_scope"/>
+                                    <field name="state"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Notes" name="notes">
+                            <field name="notes" placeholder="Internal notes..."/>
+                            <group string="Provenance" groups="base.group_no_one">
+                                <field name="legacy_provider_id"/>
+                            </group>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_payer_search" model="ir.ui.view">
+        <field name="name">hospital.payer.search</field>
+        <field name="model">hospital.payer</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="code"/>
+                <field name="partner_id"/>
+                <field name="tin_number"/>
+                <filter string="Active" name="active" domain="[('active', '=', True)]"/>
+                <filter string="Archived" name="archived" domain="[('active', '=', False)]"/>
+                <separator/>
+                <filter string="Insurance" name="type_insurance"
+                    domain="[('payer_type', '=', 'insurance')]"/>
+                <filter string="Corporate" name="type_corporate"
+                    domain="[('payer_type', '=', 'corporate')]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Payer Type" name="group_by_payer_type"
+                        context="{'group_by': 'payer_type'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_payer" model="ir.actions.act_window">
+        <field name="name">Payers</field>
+        <field name="res_model">hospital.payer</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_payer_search"/>
+        <field name="context">{'search_default_active': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Register an insurance company, corporate employer or other sponsor</p>
+            <p>A payer is the party that may become responsible for part of a patient's bill.
+               Its commercial terms — validity, ceilings, authorization requirements — live on
+               its agreements, not here, so that amending a contract never rewrites history.</p>
+        </field>
+    </record>
+</odoo>

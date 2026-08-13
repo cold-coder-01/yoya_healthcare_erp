@@ -19,3 +19,6 @@ access_front_desk_nurse_patient,front desk nurse patient intake,hospital_managem
 access_front_desk_nurse_appointment,front desk nurse appointment intake,hospital_management.model_hospital_appointment,group_hospital_front_desk_nurse,1,1,1,0
 access_front_desk_nurse_encounter,front desk nurse encounter intake,hospital_management.model_hospital_encounter,group_hospital_front_desk_nurse,1,1,0,0
 access_front_desk_nurse_card_issue,front desk nurse card issue,model_hospital_patient_card_issue,group_hospital_front_desk_nurse,1,1,1,0
+access_front_desk_nurse_patient_payer,front desk nurse patient eligibility draft,hospital_billing.model_hospital_patient_payer,group_hospital_front_desk_nurse,1,1,1,0
+access_front_desk_nurse_payer,front desk nurse payer read,hospital_billing.model_hospital_payer,group_hospital_front_desk_nurse,1,0,0,0
+access_front_desk_nurse_payer_agreement,front desk nurse payer agreement read,hospital_billing.model_hospital_payer_agreement,group_hospital_front_desk_nurse,1,0,0,0

@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="0">
+
+        <!--
+            MULTI-COMPANY ISOLATION.
+
+            These are GLOBAL rules, which Odoo ANDs with every other rule rather
+            than ORing. A rule becomes global by having NO groups set; ir.rule's
+            "global" flag is a stored compute derived from exactly that, so it
+            is never written here. That AND behaviour is the required shape: a
+            group-scoped rule would be ORed with the rules of the user's other
+            groups, so a manager holding two roles would see every company's
+            payers. Company isolation must never be widenable by holding one
+            more role.
+
+            company_id is required on both models, so there is no shared or
+            global record to allow through. The usual Odoo idiom also ORs in a
+            ('company_id', '=', False) branch for shared records; that branch is
+            deliberately absent here because no such record can exist.
+        -->
+
+        <record id="rule_hospital_payer_company" model="ir.rule">
+            <field name="name">Hospital payer: current companies only</field>
+            <field name="model_id" ref="model_hospital_payer"/>
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_hospital_payer_agreement_company" model="ir.rule">
+            <field name="name">Payer agreement: current companies only</field>
+            <field name="model_id" ref="model_hospital_payer_agreement"/>
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_hospital_patient_payer_company" model="ir.rule">
+            <field name="name">Patient eligibility: current companies only</field>
+            <field name="model_id" ref="model_hospital_patient_payer"/>
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+    </data>
+</odoo>

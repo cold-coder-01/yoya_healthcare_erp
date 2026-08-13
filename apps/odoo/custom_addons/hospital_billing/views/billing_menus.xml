@@ -15,6 +15,7 @@
             ref('hospital_management.group_hospital_pharmacist'),
             ref('hospital_management.group_hospital_lab_technician'),
             ref('hospital_management.group_hospital_data_protection_officer'),
+            ref('group_hospital_insurance_officer'),
             ref('base.group_system')
         ])]"/>
     </record>
@@ -81,6 +82,7 @@
             ref('hospital_management.group_hospital_system_administrator'),
             ref('hospital_management.group_hospital_manager'),
             ref('hospital_management.group_hospital_accountant'),
+            ref('group_hospital_insurance_officer'),
             ref('base.group_system')
         ])]"/>
     </record>
@@ -90,6 +92,36 @@
         <field name="parent_id" ref="menu_hospital_billing_configuration"/>
         <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_billing_service')"/>
         <field name="sequence">10</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <!--
+        Payer master data sits under Configuration, NOT in the daily navigation.
+        Front Desk has no menu entry for it in this phase: the desk does not yet
+        select a payer anywhere, and exposing the models before the workflow
+        exists would invite data entry that nothing consumes.
+    -->
+    <record id="menu_hospital_billing_configuration_payers" model="ir.ui.menu">
+        <field name="name">Payers</field>
+        <field name="parent_id" ref="menu_hospital_billing_configuration"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_payer')"/>
+        <field name="sequence">20</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_billing_configuration_payer_agreements" model="ir.ui.menu">
+        <field name="name">Payer Agreements</field>
+        <field name="parent_id" ref="menu_hospital_billing_configuration"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_payer_agreement')"/>
+        <field name="sequence">22</field>
+        <field name="web_icon" eval="False"/>
+    </record>
+
+    <record id="menu_hospital_billing_configuration_patient_payers" model="ir.ui.menu">
+        <field name="name">Patient Eligibilities</field>
+        <field name="parent_id" ref="menu_hospital_billing_configuration"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_patient_payer')"/>
+        <field name="sequence">24</field>
         <field name="web_icon" eval="False"/>
     </record>
 </odoo>

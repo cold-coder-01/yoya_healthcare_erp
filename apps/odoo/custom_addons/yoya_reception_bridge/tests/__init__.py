@@ -1,1 +1,2 @@
 from . import test_front_desk_triage_workflow
+from . import test_patient_payer_front_desk_security

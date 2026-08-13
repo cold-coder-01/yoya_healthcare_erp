@@ -281,6 +281,35 @@
             <field name="perm_unlink" eval="False"/>
         </record>
 
+        <!--
+            Phase 2A eligibility foundation.  Read visibility is unrestricted
+            within hospital_billing's GLOBAL company rule; mutation is restricted
+            to drafts.  Lifecycle authorization is independently enforced in
+            hospital.patient.payer.write(), so RPC calls cannot use the broad
+            ACL bit to activate or change a verified record.
+        -->
+        <record id="rule_patient_payer_front_desk_nurse_read" model="ir.rule">
+            <field name="name">Patient eligibility: read current-company records (front desk nurse)</field>
+            <field name="model_id" ref="hospital_billing.model_hospital_patient_payer"/>
+            <field name="groups" eval="[(4, ref('group_hospital_front_desk_nurse'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_patient_payer_front_desk_nurse_draft_mutation" model="ir.rule">
+            <field name="name">Patient eligibility: draft intake only (front desk nurse)</field>
+            <field name="model_id" ref="hospital_billing.model_hospital_patient_payer"/>
+            <field name="groups" eval="[(4, ref('group_hospital_front_desk_nurse'))]"/>
+            <field name="domain_force">[('state', '=', 'draft')]</field>
+            <field name="perm_read" eval="False"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
         <record id="rule_encounter_nurse" model="ir.rule">
             <field name="name">Encounter: my departments or my evaluations (nurse)</field>
             <field name="model_id" ref="hospital_management.model_hospital_encounter"/>

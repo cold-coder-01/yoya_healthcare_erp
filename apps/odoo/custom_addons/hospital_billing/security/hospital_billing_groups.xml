@@ -31,5 +31,58 @@
                 accounting remain with the Accountant and above.</field>
         </record>
 
+        <!--
+            INSURANCE / CREDIT OFFICER.
+
+            Declared here for the same structural reason as the cashier group:
+            the Python guards that enforce it live in hospital_billing
+            (models/payer_agreement.py), and a group declared downstream cannot
+            be named by an upstream guard without a dependency cycle.
+
+            IMPLIES NOTHING, deliberately. Specifically NOT:
+              hospital_billing.group_hospital_cashier          (no cash intake)
+              hospital_management.group_hospital_accountant    (no posting)
+              hospital_management.group_hospital_manager       (no activation)
+              hospital_management.group_hospital_receptionist
+              yoya_reception_bridge.group_hospital_front_desk_nurse
+
+            WHAT IT GRANTS (security/ir.model.access.csv):
+              hospital.payer            read / write / create
+              hospital.payer.agreement  read / write / create / unlink
+
+            WHAT IT CANNOT DO, and where that is enforced:
+              activate / suspend / resume / expire / supersede / terminate an
+                                        agreement
+                                        payer_agreement.ACTIVATION_GROUPS, checked
+                                        in _assert_state_transition() on EVERY
+                                        write path, not only in the buttons
+              edit an active agreement's terms
+                                        payer_agreement.FROZEN_TERM_FIELDS in
+                                        write(); no context key lifts it
+              delete a non-draft agreement
+                                        payer_agreement.unlink()
+              record an operational payment
+                                        hospital_billing OPERATIONAL_INTAKE_GROUPS
+                                        (charge_line.py): group absent
+              post accounting           assert_invoice_authorized
+                                        (hospital_billing_accounting): group absent
+              read patient cash amounts groups=OPERATIONAL_MONEY_READ on the money
+                                        fields: group absent
+
+            Preparing commercial terms and committing the hospital to them are
+            separable duties. That separation is the entire reason this group
+            exists rather than widening the Accountant.
+        -->
+
+        <record id="group_hospital_insurance_officer" model="res.groups">
+            <field name="name">Hospital Insurance / Credit Officer</field>
+            <field name="category_id" ref="hospital_management.module_category_hospital_management"/>
+            <field name="comment">Maintains payer master data and drafts payer agreements.
+                Deliberately implies no other role. Holds NO activation authority: bringing
+                an agreement into force, suspending it or terminating it is reserved to the
+                Hospital Manager and System Administrator. Holds NO cash-intake authority and
+                NO accounting authority.</field>
+        </record>
+
     </data>
 </odoo>

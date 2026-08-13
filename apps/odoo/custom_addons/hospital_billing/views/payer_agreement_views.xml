@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_payer_agreement_list" model="ir.ui.view">
+        <field name="name">hospital.payer.agreement.list</field>
+        <field name="model">hospital.payer.agreement</field>
+        <field name="arch" type="xml">
+            <list string="Payer Agreements"
+                decoration-muted="state in ('superseded', 'expired', 'terminated')"
+                decoration-success="state == 'active'"
+                decoration-warning="state == 'suspended'">
+                <field name="name"/>
+                <field name="agreement_number"/>
+                <field name="version"/>
+                <field name="payer_id"/>
+                <field name="effective_from"/>
+                <field name="effective_to"/>
+                <field name="limit_scope"/>
+                <field name="limit_amount" optional="show"/>
+                <field name="currency_id" column_invisible="True"/>
+                <field name="state" widget="badge"/>
+                <field name="company_id" groups="base.group_multi_company" optional="show"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_payer_agreement_form" model="ir.ui.view">
+        <field name="name">hospital.payer.agreement.form</field>
+        <field name="model">hospital.payer.agreement</field>
+        <field name="arch" type="xml">
+            <form string="Payer Agreement">
+                <header>
+                    <button name="action_activate" type="object" string="Activate"
+                        class="oe_highlight" invisible="state != 'draft'"
+                        groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"
+                        confirm="Activating brings this agreement into force. Its commercial terms become frozen and can only be changed by issuing an amendment. Continue?"/>
+                    <button name="action_suspend" type="object" string="Suspend"
+                        invisible="state != 'active'"
+                        groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <button name="action_resume" type="object" string="Resume"
+                        class="oe_highlight" invisible="state != 'suspended'"
+                        groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <button name="action_create_amendment" type="object" string="Create Amendment"
+                        invisible="state != 'active' or superseded_by_id"
+                        groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <button name="action_expire" type="object" string="Expire"
+                        invisible="state not in ('active', 'suspended')"
+                        groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <button name="action_terminate" type="object" string="Terminate"
+                        invisible="state == 'draft'"
+                        groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"
+                        confirm="Terminating ends this agreement permanently. A documented termination reason is required. Continue?"/>
+                    <field name="state" widget="statusbar"
+                        statusbar_visible="draft,active,suspended,expired"/>
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_view_version_history" type="object"
+                            class="oe_stat_button" icon="fa-history" string="Versions"/>
+                    </div>
+                    <widget name="web_ribbon" title="Superseded" bg_color="text-bg-secondary"
+                        invisible="state != 'superseded'"/>
+                    <widget name="web_ribbon" title="Terminated" bg_color="text-bg-danger"
+                        invisible="state != 'terminated'"/>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1>
+                            <field name="name" readonly="1"/>
+                        </h1>
+                    </div>
+
+                    <div class="alert alert-info" role="status" invisible="state != 'draft'">
+                        Commercial terms can be edited freely while this agreement is a draft.
+                        Once activated they are frozen: changing them afterwards requires
+                        creating an amendment, which issues a new version and leaves every
+                        historical visit under the terms that applied at the time.
+                    </div>
+
+                    <group>
+                        <group string="Identity">
+                            <field name="payer_id"/>
+                            <field name="agreement_number" placeholder="Payer's contract reference"/>
+                            <field name="version"/>
+                            <field name="supersedes_id" invisible="not supersedes_id"/>
+                            <field name="superseded_by_id" invisible="not superseded_by_id"/>
+                            <field name="company_id" groups="base.group_multi_company"/>
+                            <field name="currency_id" groups="base.group_multi_currency"/>
+                        </group>
+                        <group string="Validity">
+                            <field name="effective_from"/>
+                            <field name="effective_to" placeholder="Leave empty for open-ended"/>
+                            <field name="is_valid_today"/>
+                            <field name="active" groups="base.group_no_one"/>
+                        </group>
+                    </group>
+                    <group>
+                        <group string="Limit Terms">
+                            <field name="limit_scope"
+                                placeholder="Must be chosen explicitly"/>
+                            <field name="limit_amount"
+                                invisible="not limit_scope or limit_scope == 'unlimited'"
+                                required="limit_scope and limit_scope != 'unlimited'"/>
+                        </group>
+                        <group string="Authorization Terms">
+                            <field name="authorization_required"/>
+                            <field name="guarantee_required"/>
+                        </group>
+                    </group>
+                    <group>
+                        <group string="Commercial Terms">
+                            <field name="tariff_mode"/>
+                            <field name="payment_terms_days"/>
+                        </group>
+                    </group>
+
+                    <div class="alert alert-warning" role="alert"
+                        invisible="not limit_scope or limit_scope == 'unlimited'">
+                        Bounded limits are recorded but not yet enforced: the utilization
+                        ledger does not exist. An agreement with a bounded scope cannot be
+                        activated until it does. Only Unlimited agreements can be brought
+                        into force at this time.
+                    </div>
+                    <div class="alert alert-warning" role="alert"
+                        invisible="tariff_mode != 'agreement_price'">
+                        Negotiated agreement pricing has no per-service tariff table yet, so
+                        this agreement cannot be activated while it is selected.
+                    </div>
+
+                    <notebook>
+                        <page string="History" name="history">
+                            <group>
+                                <group string="Activation">
+                                    <field name="activated_by_id"/>
+                                    <field name="activated_at"/>
+                                </group>
+                                <group string="Termination">
+                                    <field name="terminated_by_id"/>
+                                    <field name="terminated_at"/>
+                                </group>
+                            </group>
+                            <group string="Suspension Reason" invisible="not suspension_reason">
+                                <field name="suspension_reason" nolabel="1"/>
+                            </group>
+                            <group string="Termination Reason" invisible="not termination_reason">
+                                <field name="termination_reason" nolabel="1"/>
+                            </group>
+                        </page>
+                        <page string="Notes" name="notes">
+                            <field name="notes" placeholder="Internal notes..."/>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_payer_agreement_search" model="ir.ui.view">
+        <field name="name">hospital.payer.agreement.search</field>
+        <field name="model">hospital.payer.agreement</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="agreement_number"/>
+                <field name="payer_id"/>
+                <filter string="Draft" name="state_draft" domain="[('state', '=', 'draft')]"/>
+                <filter string="Active" name="state_active" domain="[('state', '=', 'active')]"/>
+                <filter string="Suspended" name="state_suspended"
+                    domain="[('state', '=', 'suspended')]"/>
+                <separator/>
+                <filter string="Historical" name="state_historical"
+                    domain="[('state', 'in', ('expired', 'superseded', 'terminated'))]"/>
+                <separator/>
+                <filter string="Archived" name="archived" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Payer" name="group_by_payer"
+                        context="{'group_by': 'payer_id'}"/>
+                    <filter string="Status" name="group_by_state"
+                        context="{'group_by': 'state'}"/>
+                    <filter string="Limit Scope" name="group_by_limit_scope"
+                        context="{'group_by': 'limit_scope'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_payer_agreement" model="ir.actions.act_window">
+        <field name="name">Payer Agreements</field>
+        <field name="res_model">hospital.payer.agreement</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_payer_agreement_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Record a contract between the hospital and a payer</p>
+            <p>An agreement carries the validity window, the ceiling and the authorization
+               terms. Amending an active agreement creates a new version rather than editing
+               it, so a visit is always judged by the terms that applied on the day.</p>
+        </field>
+    </record>
+</odoo>

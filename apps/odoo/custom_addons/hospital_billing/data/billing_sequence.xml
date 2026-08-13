@@ -43,4 +43,24 @@
         <field name="padding">6</field>
         <field name="number_next">1</field>
     </record>
+
+    <!-- Year-prefixed, so a contract reference reads as belonging to a period.
+         use_date_range is deliberately NOT set: %(year)s resolves from the
+         creation date, and per-year sub-sequences would restart numbering in a
+         model whose whole point is a stable, auditable reference. -->
+    <record id="sequence_hospital_payer_agreement" model="ir.sequence">
+        <field name="name">Payer Agreement Sequence</field>
+        <field name="code">hospital.payer.agreement</field>
+        <field name="prefix">AGR/%(year)s/</field>
+        <field name="padding">5</field>
+        <field name="number_next">1</field>
+    </record>
+
+    <record id="sequence_hospital_patient_payer" model="ir.sequence">
+        <field name="name">Patient Eligibility Sequence</field>
+        <field name="code">hospital.patient.payer</field>
+        <field name="prefix">ELIG/</field>
+        <field name="padding">5</field>
+        <field name="number_next">1</field>
+    </record>
 </odoo>

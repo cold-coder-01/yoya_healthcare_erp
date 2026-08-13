@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_patient_payer_list" model="ir.ui.view">
+        <field name="name">hospital.patient.payer.list</field>
+        <field name="model">hospital.patient.payer</field>
+        <field name="arch" type="xml">
+            <list string="Patient Eligibilities"
+                decoration-success="is_valid_today"
+                decoration-warning="state == 'suspended'"
+                decoration-muted="state in ('expired', 'cancelled')">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="payer_id"/>
+                <field name="agreement_id"/>
+                <field name="member_reference" optional="show"/>
+                <field name="effective_from"/>
+                <field name="effective_to"/>
+                <field name="member_limit_amount" optional="hide"/>
+                <field name="currency_id" column_invisible="True"/>
+                <field name="is_valid_today" optional="show"/>
+                <field name="state" widget="badge"/>
+                <field name="company_id" groups="base.group_multi_company" optional="show"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_patient_payer_form" model="ir.ui.view">
+        <field name="name">hospital.patient.payer.form</field>
+        <field name="model">hospital.patient.payer</field>
+        <field name="arch" type="xml">
+            <form string="Patient Eligibility">
+                <header>
+                    <button name="action_activate" type="object" string="Activate"
+                        class="oe_highlight" invisible="state != 'draft'"
+                        groups="hospital_billing.group_hospital_insurance_officer,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <button name="action_suspend" type="object" string="Suspend"
+                        invisible="state != 'active'"
+                        groups="hospital_billing.group_hospital_insurance_officer,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <button name="action_resume" type="object" string="Resume"
+                        class="oe_highlight" invisible="state != 'suspended'"
+                        groups="hospital_billing.group_hospital_insurance_officer,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <button name="action_expire" type="object" string="Expire"
+                        invisible="state not in ('active', 'suspended')"
+                        groups="hospital_billing.group_hospital_insurance_officer,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <button name="action_cancel" type="object" string="Cancel"
+                        invisible="state not in ('draft', 'active', 'suspended')"
+                        groups="hospital_billing.group_hospital_insurance_officer,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"
+                        confirm="Cancel this eligibility? Its history will remain readable."/>
+                    <field name="state" widget="statusbar"
+                        statusbar_visible="draft,active,suspended,expired,cancelled"/>
+                </header>
+                <sheet>
+                    <widget name="web_ribbon" title="Valid Today" bg_color="text-bg-success"
+                        invisible="not is_valid_today"/>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1><field name="name" readonly="1"/></h1>
+                    </div>
+                    <group>
+                        <group string="Identity">
+                            <field name="patient_id" readonly="state != 'draft'"/>
+                            <field name="payer_id" readonly="1"/>
+                            <field name="agreement_id" readonly="state != 'draft'"/>
+                            <field name="state" readonly="1"/>
+                            <field name="company_id" groups="base.group_multi_company" readonly="1"/>
+                            <field name="currency_id" groups="base.group_multi_currency" readonly="1"/>
+                        </group>
+                        <group string="Validity">
+                            <field name="effective_from" readonly="state != 'draft'"/>
+                            <field name="effective_to" readonly="state != 'draft'"
+                                placeholder="Empty follows the agreement end"/>
+                            <field name="is_valid_today" readonly="1"/>
+                            <field name="active" groups="base.group_no_one"/>
+                        </group>
+                    </group>
+                    <group string="Member Identity">
+                        <group>
+                            <field name="member_reference" readonly="state != 'draft'"/>
+                            <field name="membership_number" readonly="state != 'draft'"/>
+                            <field name="policy_number" readonly="state != 'draft'"/>
+                            <field name="employee_id_number" readonly="state != 'draft'"/>
+                        </group>
+                        <group>
+                            <field name="principal_member_name" readonly="state != 'draft'"/>
+                            <field name="relationship_to_principal" readonly="state != 'draft'"/>
+                        </group>
+                    </group>
+                    <group string="Member Limit" invisible="agreement_id.limit_scope != 'member'">
+                        <field name="member_limit_amount" readonly="state != 'draft'"
+                            required="agreement_id.limit_scope == 'member'"/>
+                    </group>
+                    <group string="Verification">
+                        <field name="verified_by_id"/>
+                        <field name="verified_at"/>
+                    </group>
+                    <notebook>
+                        <page string="Notes" name="notes">
+                            <field name="notes" placeholder="Internal eligibility notes..."/>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_patient_payer_search" model="ir.ui.view">
+        <field name="name">hospital.patient.payer.search</field>
+        <field name="model">hospital.patient.payer</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="payer_id"/>
+                <field name="agreement_id"/>
+                <field name="member_reference"/>
+                <field name="membership_number"/>
+                <field name="policy_number"/>
+                <filter string="Draft" name="state_draft" domain="[('state', '=', 'draft')]"/>
+                <filter string="Active" name="state_active" domain="[('state', '=', 'active')]"/>
+                <filter string="Suspended" name="state_suspended" domain="[('state', '=', 'suspended')]"/>
+                <filter string="Historical" name="state_historical"
+                    domain="[('state', 'in', ('expired', 'cancelled'))]"/>
+                <separator/>
+                <filter string="Archived" name="archived" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Patient" name="group_by_patient" context="{'group_by': 'patient_id'}"/>
+                    <filter string="Payer" name="group_by_payer" context="{'group_by': 'payer_id'}"/>
+                    <filter string="Agreement" name="group_by_agreement" context="{'group_by': 'agreement_id'}"/>
+                    <filter string="Status" name="group_by_state" context="{'group_by': 'state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_patient_payer" model="ir.actions.act_window">
+        <field name="name">Patient Eligibilities</field>
+        <field name="res_model">hospital.patient.payer</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_patient_payer_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Record patient eligibility under a payer agreement</p>
+            <p>This configuration record does not select a payer for a visit or change live billing behavior.</p>
+        </field>
+    </record>
+</odoo>
