@@ -14,7 +14,7 @@ _ensure_consultation_billing.
 import logging
 
 from odoo import api, fields, models
-from odoo.exceptions import AccessError, UserError
+from odoo.exceptions import AccessError, UserError, ValidationError
 
 from .reception_capability import reception_workflow_capability
 
@@ -286,6 +286,97 @@ class HospitalReceptionWorkflow(models.AbstractModel):
             )
         card_issue.action_create_charge()
         return card_issue
+
+    # ------------------------------------------------------------------
+    # Doctor assignment
+    # ------------------------------------------------------------------
+    @api.model
+    def assign_doctor(self, appointment, doctor):
+        """Assign or change the doctor for an already-registered visit.
+
+        WHY THIS EXISTS. The doctor is recorded in three places:
+
+            hospital.appointment.doctor_id            routing + the consultation
+                                                      authorization check
+            hospital.encounter.primary_doctor_id      the clinical episode
+            hospital.patient.evaluation.physician_id  the triage document
+
+        hospital.encounter only copies the doctor across in
+        _onchange_appointment_id, which is an @api.onchange and therefore never
+        fires on an ORM write. get_or_create_encounter stamps primary_doctor_id
+        ONCE, at creation, from whatever appointment.doctor_id held at that
+        moment. B2.1 registers visits with no doctor, so every one of them has
+        an empty primary_doctor_id that a later write to appointment.doctor_id
+        would silently leave behind.
+
+        THE SYNCHRONIZATION RULE, and there is exactly one:
+
+            appointment.doctor_id is the source of truth.
+            It is propagated to encounter.primary_doctor_id always, and to
+            evaluation.physician_id ONLY while that evaluation is still draft.
+
+        A completed evaluation is deliberately left alone. physician_id is in
+        LOCKED_CLINICAL_FIELDS, so writing it would raise; more importantly a
+        finished triage is a clinical document that records who was responsible
+        AT COMPLETION, and re-pointing the visit at a different doctor
+        afterwards is an operational routing decision that must not rewrite it.
+
+        Financially inert by construction. It writes two relational fields and
+        nothing else: no charge is raised or re-priced (the consultation service
+        is resolved per COMPANY in _ensure_consultation_billing, never per
+        doctor), no clearance is recomputed or persisted, and no consultation is
+        started.
+        """
+        self._assert_group(REGISTRATION_GROUPS, "assign a doctor to a visit")
+        appointment.ensure_one()
+        doctor.ensure_one()
+
+        if appointment.state in ("cancelled", "done"):
+            raise UserError(
+                "Appointment %s is %s; its doctor can no longer be changed."
+                % (appointment.appointment_code or appointment.id, appointment.state)
+            )
+
+        # Same rule the reception API already enforces at registration
+        # (yoya_emr_api/controllers/reception.py::_validate_doctor_department).
+        # A doctor with no department is unconstrained, exactly as there.
+        department = appointment.department_id
+        if department and doctor.department_id and doctor.department_id != department:
+            raise ValidationError(
+                "%s belongs to %s, not %s."
+                % (
+                    doctor.display_name,
+                    doctor.department_id.display_name,
+                    department.display_name,
+                )
+            )
+
+        # The department is NEVER changed here, even though
+        # hospital.appointment.create infers one from the doctor when it is
+        # missing. Re-routing a checked-in patient to another department is a
+        # different decision with its own consequences (triage destination,
+        # nurse scoping, doctor eligibility) and does not belong in this method.
+        if appointment.doctor_id != doctor:
+            appointment.write({"doctor_id": doctor.id})
+
+        encounter = appointment.encounter_id
+        if encounter and encounter.primary_doctor_id != doctor:
+            encounter.write({"primary_doctor_id": doctor.id})
+
+        evaluation = appointment._latest_evaluation()
+        if (
+            evaluation
+            and evaluation.state == "draft"
+            and evaluation.physician_id != doctor
+        ):
+            evaluation.write({"physician_id": doctor.id})
+
+        return {
+            "appointment": appointment,
+            "encounter": encounter,
+            "evaluation": evaluation,
+            "doctor": doctor,
+        }
 
     # ------------------------------------------------------------------
     # Triage handoff

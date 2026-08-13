@@ -327,7 +327,13 @@ export function startClinicalConsultation(
  * navigation items a user may see, so the sidebar is correct on first paint.
  */
 export function fetchReceptionSession(sessionId: string) {
-  return callOdooApi<{ roles: unknown }>(
+  // user/company have always been in this payload; they are typed here so the
+  // Front Desk shell can read the signed-in nurse and the hospital name.
+  return callOdooApi<{
+    roles: unknown;
+    user?: { id?: number; name?: string; login?: string };
+    company?: { id?: number; name?: string; currency?: string };
+  }>(
     sessionId,
     "/yoya-emr/api/v1/reception/session",
     "GET",

@@ -252,9 +252,57 @@ class HospitalPatientEvaluation(models.Model):
                 evaluation._create_audit_log("Patient evaluation started.")
         return True
 
+    def _assert_triage_minimum_data(self):
+        """The smallest clinical record a completed triage may consist of.
+
+        Deliberately enforced HERE, in the authoritative completion method,
+        rather than in a controller: /front-desk, the legacy /triage screen, the
+        Odoo form-view button, an RPC client and a future workspace all reach
+        completion through action_done(), and a rule that only one of them
+        obeyed would not be a rule.
+
+        SCOPE, and why it is this narrow. A triage with no presenting complaint
+        records nothing a doctor or cashier can act on, so an empty evaluation
+        must not be able to move a patient to Awaiting Cashier. Vitals are
+        deliberately NOT required: a measurement can be genuinely unavailable at
+        the entrance (no working thermometer, an uncooperative or distressed
+        patient), and blocking completion on one would push staff into entering
+        a fabricated number, which is worse than recording nothing.
+
+        Save Draft is untouched: partial work is exactly what a draft is for.
+        """
+        for evaluation in self:
+            if not (evaluation.chief_complaint or "").strip():
+                raise ValidationError(
+                    "A chief complaint is required before triage can be "
+                    "completed for %s. Record what the patient is presenting "
+                    "with, then complete the triage."
+                    % evaluation.patient_id.display_name
+                )
+            # DEFENCE IN DEPTH, not the enforcement.
+            #
+            # triage_priority is required=True with default='routine' on a NOT
+            # NULL column, so a PERSISTED evaluation cannot reach here without
+            # one: emptying it raises an IntegrityError at flush long before
+            # completion is attempted. This branch therefore only ever fires for
+            # an in-memory record (a NewId built by an onchange, or a future
+            # caller that relaxes the field). It is kept because it is free and
+            # states the product rule where the rule is read, but the tests
+            # deliberately do NOT manufacture a NULL to reach it -- see
+            # test_front_desk_triage_api, section 4b.
+            if not evaluation.triage_priority:
+                raise ValidationError(
+                    "A triage priority is required before triage can be "
+                    "completed for %s." % evaluation.patient_id.display_name
+                )
+
     def action_done(self):
         """Preserve the base completion (state + audit log), then stamp the time."""
         to_complete = self.filtered(lambda record: record.state == "draft")
+        # Before super(), so a rejected completion leaves NOTHING behind: no
+        # state change, no completed_at, no audit entry claiming a triage that
+        # did not happen.
+        to_complete._assert_triage_minimum_data()
         result = super().action_done()
         now = fields.Datetime.now()
         for evaluation in to_complete:

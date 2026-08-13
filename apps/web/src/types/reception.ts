@@ -38,8 +38,10 @@ export type ReceptionSession = {
     currency: string;
   };
   /**
-   * Single source of truth for the role shape. Notably contains NO `nurse`
-   * flag -- role_flags() in reception_scope.py exposes exactly these six.
+   * Single source of truth for the role shape. Still contains NO `nurse` flag
+   * -- role_flags() in reception_scope.py exposes exactly these seven, of which
+   * `front_desk_nurse` is the only clinical one, added so a Front Desk Nurse
+   * can be told apart from the plain Nurse their group implies.
    */
   roles: ReceptionRoles;
   capabilities: {

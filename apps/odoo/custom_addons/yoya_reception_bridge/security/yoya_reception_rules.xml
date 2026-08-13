@@ -218,6 +218,58 @@
             <field name="perm_unlink" eval="False"/>
         </record>
 
+        <!--
+            hospital.patient.evaluation for the Front Desk Nurse.
+
+            WHY THIS EXISTS. Front Desk Nurse implies Hospital Nurse, so without
+            this rule the desk fell under rule_patient_evaluation_nurse
+            (yoya_clinical_bridge), whose domain is:
+
+                assigned_nurse_id = me
+                OR (assigned_nurse_id = False
+                    AND appointment_id != False
+                    AND appointment_id.department_id in my permitted departments)
+
+            assigned_nurse_id carries default=lambda self: self.env.user, so the
+            moment nurse A starts a triage the record is stamped with A. The
+            second branch requires assigned_nurse_id to be EMPTY, so it can
+            never match for nurse B afterwards, and no department configuration
+            rescues it. At a desk worked in shifts that is wrong twice over:
+
+              1. nurse B cannot read or continue nurse A's triage;
+              2. worse, it is SILENT. appointment.front_desk_stage is a
+                 non-stored compute (compute_sudo defaults to False for those)
+                 that derives the stage from evaluation_ids, and Odoo FILTERS an
+                 unreadable x2many instead of raising. Nurse B's worklist
+                 therefore renders a patient A has already triaged as 'intake',
+                 with the counters to match.
+
+            Scoped to appointment-linked evaluations, deliberately: an
+            evaluation with no appointment is a purely clinical artefact (ward
+            nursing, the future Nurses workspace) and is none of the entrance's
+            business. Same boundary the receptionist rule draws, with the
+            write/create the desk actually needs.
+
+            No ACL row is added: Front Desk Nurse inherits 1,1,1,0 on this model
+            from Hospital Nurse, so unlink stays impossible at the ACL layer as
+            well as here.
+
+            Because Odoo ORs group rules, this widens ONLY holders of
+            group_hospital_front_desk_nurse. rule_patient_evaluation_nurse is
+            left exactly as it is, so a plain Hospital Nurse is unaffected.
+        -->
+
+        <record id="rule_patient_evaluation_front_desk_nurse" model="ir.rule">
+            <field name="name">Patient Evaluation: all appointment-linked arrivals (front desk nurse)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_patient_evaluation"/>
+            <field name="groups" eval="[(4, ref('group_hospital_front_desk_nurse'))]"/>
+            <field name="domain_force">[('appointment_id', '!=', False)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
         <record id="rule_card_issue_front_desk_nurse" model="ir.rule">
             <field name="name">Patient card issuance: all (front desk nurse)</field>
             <field name="model_id" ref="model_hospital_patient_card_issue"/>

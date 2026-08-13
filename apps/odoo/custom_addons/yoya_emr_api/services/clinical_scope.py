@@ -21,18 +21,38 @@ GROUP_NURSE = "hospital_management.group_hospital_nurse"
 GROUP_MANAGER = "hospital_management.group_hospital_manager"
 GROUP_SYSADMIN = "hospital_management.group_hospital_system_administrator"
 
+# Checked EXPLICITLY, never inferred from Hospital Nurse.
+#
+# group_hospital_front_desk_nurse IMPLIES Hospital Nurse, so before this the
+# front desk fell into the department-scoped nurse branch below -- which asks a
+# question the entrance cannot answer. At the moment a visit is registered there
+# is no evaluation yet, and a front desk nurse legitimately has no
+# yoya_permitted_department_ids (the desk triages every arrival, whatever
+# department the patient is booked into). _nurse_domain therefore returned
+# DENY_ALL and the clinical save/complete endpoints answered 403 out_of_scope on
+# the first triage of every new visit.
+GROUP_FRONT_DESK_NURSE = "yoya_reception_bridge.group_hospital_front_desk_nurse"
+
 # Matches the ORM: a user holding several clinical roles gets the UNION of
 # their scopes, exactly as Odoo ORs the record rules of multiple groups.
 DENY_ALL = [("id", "=", 0)]
 
 
 def hospital_groups(env):
-    """Group membership booleans for the current user."""
+    """Group membership booleans for the current user.
+
+    'front_desk_nurse' is DIRECT membership of group_hospital_front_desk_nurse,
+    exactly as reception_scope.role_flags reports it. A plain Hospital Nurse
+    reads False here and keeps the department-scoped branch; a front desk nurse
+    reads True for BOTH this flag and 'nurse', and the front desk branch wins
+    because it is consulted first.
+    """
     user = env.user
     return {
         "receptionist": user.has_group(GROUP_RECEPTIONIST),
         "doctor": user.has_group(GROUP_DOCTOR),
         "nurse": user.has_group(GROUP_NURSE),
+        "front_desk_nurse": user.has_group(GROUP_FRONT_DESK_NURSE),
         "manager": user.has_group(GROUP_MANAGER),
         "system_administrator": user.has_group(GROUP_SYSADMIN),
     }
@@ -102,6 +122,20 @@ def build_appointment_scope_domain(env, base_domain):
     groups = hospital_groups(env)
 
     if groups["manager"] or groups["system_administrator"]:
+        return []
+
+    # BEFORE the generic nurse branch, and unrestricted for the same reason
+    # yoya_reception_bridge gives this group an unrestricted ir.rule on
+    # hospital.appointment: the entrance triages EVERY arrival, whatever
+    # department the visit is booked into.
+    #
+    # This grants no appointment the group could not already reach through
+    # rule_appointment_front_desk_nurse -- it removes a contradiction between
+    # this API-layer domain and the model-layer rule, rather than widening
+    # anything. The department-scoped branch below is untouched, so a plain
+    # Hospital Nurse (and the future general nursing workspace) keeps exactly
+    # the scope it has today.
+    if groups["front_desk_nurse"]:
         return []
 
     needs_candidates = groups["nurse"] or groups["receptionist"]

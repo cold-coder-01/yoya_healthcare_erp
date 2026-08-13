@@ -1,15 +1,28 @@
 """Front Desk API: the nurse-staffed hospital entrance.
 
-Read-only in this phase. Registration, triage and payment already have
-authoritative endpoints; this adds the consolidated worklist and the
-selected-visit panel the dense workstation needs, and nothing else.
+Reads: the consolidated worklist and the selected-visit panel the dense
+workstation needs.
 
-The controller is deliberately thin: it validates query parameters, composes ONE
-bounded domain, hands the recordset to the serializer, and returns. It makes no
-workflow decision, writes nothing, and never calls sudo().
+Writes: exactly two, both of which exist because no authoritative endpoint
+covered them and the front desk cannot work without them:
+
+    POST .../visits/<id>/start-triage   claims the nursing evaluation
+    POST .../visits/<id>/doctor         assigns or changes the doctor
+
+Neither writes a workflow state or a queue stage. Both delegate to an
+authoritative model method (action_start_evaluation, assign_doctor) and then
+re-serialize the visit, so the stage the client receives is the DERIVED one and
+cannot disagree with the worklist. Registration, evaluation save, payment and
+consultation start keep their existing endpoints and are not duplicated here.
+
+The controller stays thin: it validates parameters, resolves records through the
+caller's own record rules, calls one model method, and serializes. It makes no
+workflow decision and never calls sudo().
 """
 import functools
 import logging
+
+from psycopg2 import IntegrityError
 
 from odoo import fields, http
 from odoo.exceptions import AccessError, UserError, ValidationError
@@ -19,11 +32,14 @@ from odoo.osv import expression
 from ..services.api_response import (
     ApiError,
     api_error_response,
+    coerce_optional_id,
     error_response,
     parse_date,
     parse_int_param,
+    read_json_body,
     success_response,
 )
+from ..services.clinical_scope import latest_evaluation_for
 from ..services.front_desk_serializers import (
     ACTIVE_STAGE_KEYS,
     STAGE_KEYS,
@@ -36,6 +52,8 @@ from ..services.reception_scope import (
     front_desk_capability_flags,
     hospital_day_bounds_utc,
     may_front_desk,
+    may_intake,
+    may_triage,
 )
 
 _logger = logging.getLogger(__name__)
@@ -96,6 +114,62 @@ def _require_front_desk(env):
         )
 
 
+def _require_triage(env):
+    """Mirrors hospital.patient.evaluation's ACL. Never the only control."""
+    if not may_triage(env):
+        raise ApiError(
+            "access_denied",
+            "Recording triage requires the Hospital Front Desk Nurse, Hospital "
+            "Nurse, Doctor, Hospital Manager or Hospital System Administrator "
+            "role.",
+            403,
+        )
+
+
+def _require_intake(env):
+    """Fail-fast for hospital.reception.workflow.REGISTRATION_GROUPS.
+
+    _assert_group inside the workflow method enforces it again; this only turns
+    it into a clean 403 instead of a bare AccessError.
+    """
+    if not may_intake(env):
+        raise ApiError(
+            "access_denied",
+            "Changing a visit requires the Hospital Front Desk Nurse, "
+            "Receptionist, Hospital Manager or Hospital System Administrator "
+            "role.",
+            403,
+        )
+
+
+def _load_visit(env, appointment_id):
+    """Resolve a visit through the caller's own record rules.
+
+    search() rather than browse(): a record the user's rules exclude must be a
+    404, not an AccessError that leaks its existence.
+    """
+    appointment = env["hospital.appointment"].search(
+        [("id", "=", appointment_id)], limit=1
+    )
+    if not appointment:
+        raise ApiError("visit_not_found", "Visit not found.", 404)
+    return appointment
+
+
+def _visit_response(appointment):
+    """THE canonical response for every front-desk visit endpoint.
+
+    Re-serializing after a mutation is what keeps the client honest: the stage
+    it renders is the derived one, computed from the records as they now stand,
+    never a value the client guessed from the action it just took.
+    """
+    env = appointment.env
+    prefetch_worklist(appointment)
+    return success_response(
+        serialize_front_desk_visit(appointment, front_desk_capability_flags(env))
+    )
+
+
 def _requested_stages(raw):
     """Parse ?stage=a,b. Unknown keys are an error, not a silent empty result."""
     if raw in (None, "", False):
@@ -119,6 +193,78 @@ def _limit_param(raw):
     if limit <= 0:
         raise ApiError("invalid_parameter", "'limit' must be positive.", 400)
     return min(limit, MAX_LIMIT)
+
+
+def _assert_startable(evaluation):
+    if evaluation.state != "draft":
+        raise ApiError(
+            "triage_not_startable",
+            "Evaluation %s is %s. Only a draft evaluation can be started; a "
+            "completed triage must be reopened by a Hospital Manager first."
+            % (evaluation.name, evaluation.state),
+            409,
+        )
+    return evaluation
+
+
+def _evaluation_to_start(env, appointment):
+    """The draft evaluation for this visit, created if there is not one yet.
+
+    CONCURRENCY. hospital.patient.evaluation carries unique(appointment_id), so
+    two nurses double-clicking Start Triage on the same visit race on the
+    INSERT. The loser must not see a 500: starting triage is idempotent by
+    intent, and the winner's evaluation is exactly the record the loser wanted.
+
+    The create is therefore wrapped in a savepoint so the failed INSERT rolls
+    back without poisoning the request's transaction, and the loser re-reads and
+    continues. Narrow on purpose: no advisory lock, no retry loop, no
+    SELECT FOR UPDATE. The unique index is already the arbiter; this only
+    translates its verdict into the right answer.
+
+    A recovery that finds nothing is a genuine integrity failure and is
+    re-raised untouched.
+    """
+    Evaluation = env["hospital.patient.evaluation"]
+
+    evaluation = latest_evaluation_for(env, appointment)
+    if evaluation:
+        return _assert_startable(evaluation)
+
+    values = {
+        "patient_id": appointment.patient_id.id,
+        "appointment_id": appointment.id,
+        # assigned_nurse_id is deliberately ABSENT, not sent as False.
+        #
+        # The field carries default=lambda self: self.env.user, and Odoo applies
+        # a default only when the key is missing from vals. Passing an explicit
+        # False would suppress it and create an unowned evaluation --
+        # action_start_evaluation would then claim it anyway, but the record
+        # would be momentarily invisible to the very nurse creating it.
+    }
+    # Set once, at creation. hospital.patient.evaluation.write() refuses to
+    # repoint encounter_id afterwards, so this is the only chance to link the
+    # triage to the episode create_visit() opened.
+    if appointment.encounter_id:
+        values["encounter_id"] = appointment.encounter_id.id
+
+    try:
+        with env.cr.savepoint():
+            return Evaluation.create(values)
+    except IntegrityError:
+        # The savepoint rolled back; the cursor is usable again. Drop the ORM
+        # cache so the re-read is a real SELECT and not the phantom record the
+        # failed create left behind.
+        env.invalidate_all()
+        evaluation = latest_evaluation_for(env, appointment)
+        if not evaluation:
+            raise
+        _logger.info(
+            "Front desk start-triage lost the unique(appointment_id) race for "
+            "appointment %s; continuing with evaluation %s.",
+            appointment.id,
+            evaluation.id,
+        )
+        return _assert_startable(evaluation)
 
 
 def _worklist_domain(env, day, department_id, doctor_id, search):
@@ -237,17 +383,79 @@ class YoyaEmrFrontDeskController(http.Controller):
     def visit_detail(self, appointment_id, **params):
         env = request.env
         _require_front_desk(env)
+        return _visit_response(_load_visit(env, appointment_id))
 
-        # search() rather than browse(): a record the user's rules exclude must
-        # be a 404, not an AccessError that leaks its existence.
-        appointment = env["hospital.appointment"].search(
-            [("id", "=", appointment_id)], limit=1
-        )
-        if not appointment:
-            raise ApiError("visit_not_found", "Visit not found.", 404)
+    # ------------------------------------------------------------------
+    # Start Triage
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/front-desk/visits/<int:appointment_id>/start-triage",
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @front_desk_endpoint
+    def start_triage(self, appointment_id, **params):
+        """Claim the nursing evaluation. intake -> triage, with no payment gate.
 
-        prefetch_worklist(appointment)
-        capabilities = front_desk_capability_flags(env)
-        return success_response(
-            serialize_front_desk_visit(appointment, capabilities)
-        )
+        started_at is stamped by action_start_evaluation() and never written
+        here; the queue stage is derived from it by
+        hospital.appointment._resolve_front_desk_stage and is never written at
+        all. Safe to call repeatedly: the action keeps the original timestamp
+        and the original owner.
+        """
+        env = request.env
+        _require_front_desk(env)
+        _require_triage(env)
+
+        appointment = _load_visit(env, appointment_id)
+        if appointment.state != "confirmed":
+            raise ApiError(
+                "invalid_workflow_state",
+                "Visit %s is %s. Triage can only be started once the patient is "
+                "checked in."
+                % (appointment.appointment_code or appointment.id, appointment.state),
+                409,
+            )
+
+        _evaluation_to_start(env, appointment).action_start_evaluation()
+        return _visit_response(appointment)
+
+    # ------------------------------------------------------------------
+    # Doctor assignment
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/front-desk/visits/<int:appointment_id>/doctor",
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @front_desk_endpoint
+    def assign_doctor(self, appointment_id, **params):
+        """Assign or change the doctor. Body: {"doctor_id": <int>}.
+
+        The appointment/encounter/evaluation synchronization rule lives in
+        hospital.reception.workflow.assign_doctor(); this route only resolves
+        the two records and hands them over.
+        """
+        env = request.env
+        _require_front_desk(env)
+        _require_intake(env)
+
+        appointment = _load_visit(env, appointment_id)
+
+        body = read_json_body()
+        unknown = set(body) - {"doctor_id"}
+        if unknown:
+            raise ApiError(
+                "unknown_field",
+                "Unrecognised fields: %s." % ", ".join(sorted(unknown)),
+                400,
+            )
+
+        doctor_id = coerce_optional_id("doctor_id", body.get("doctor_id"))
+        if not doctor_id:
+            raise ApiError("invalid_field", "'doctor_id' is required.", 400)
+
+        doctor = env["hospital.doctor"].search([("id", "=", doctor_id)], limit=1)
+        if not doctor:
+            raise ApiError("doctor_not_found", "Doctor not found.", 404)
+
+        env["hospital.reception.workflow"].assign_doctor(appointment, doctor)
+        return _visit_response(appointment)

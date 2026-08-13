@@ -10,10 +10,7 @@
  * Names are shown; the underlying hospital.doctor id is what gets submitted.
  * No doctor id or name is ever hardcoded.
  */
-import { useEffect, useState } from "react";
-
-import { messageFromPayload } from "@/lib/api-error";
-import type { ApiEnvelope, Doctor } from "@/types/reception";
+import { useDoctors } from "@/lib/use-doctors";
 
 export default function DoctorSelect({
   label,
@@ -36,59 +33,7 @@ export default function DoctorSelect({
   currentDoctor?: { id: number; name: string } | null;
   helpText?: string;
 }) {
-  const [doctors, setDoctors] = useState<Doctor[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const controller = new AbortController();
-
-    async function run() {
-      setLoading(true);
-      const query = departmentId
-        ? `?department_id=${encodeURIComponent(String(departmentId))}`
-        : "";
-      try {
-        const response = await fetch(`/api/reference/doctors${query}`, {
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        const payload = (await response.json()) as ApiEnvelope<{
-          doctors: Doctor[];
-        }>;
-        if (controller.signal.aborted) return;
-
-        if (!response.ok || !payload.success) {
-          setError(messageFromPayload(payload, "Unable to load doctors."));
-          setDoctors([]);
-          return;
-        }
-        setError(null);
-        setDoctors(payload.data.doctors ?? []);
-      } catch {
-        if (controller.signal.aborted) return;
-        setError("Unable to reach the reference service.");
-        setDoctors([]);
-      } finally {
-        if (!controller.signal.aborted) setLoading(false);
-      }
-    }
-
-    void run();
-    return () => controller.abort();
-  }, [departmentId]);
-
-  // Merge the current doctor in if the department filter excluded them.
-  const options = [...doctors];
-  if (currentDoctor && !options.some((d) => d.id === currentDoctor.id)) {
-    options.unshift({
-      id: currentDoctor.id,
-      name: currentDoctor.name,
-      department: null,
-      user_linked: false,
-      active: true,
-    });
-  }
+  const { options, loading, error } = useDoctors(departmentId, currentDoctor);
 
   return (
     <label className="text-sm font-medium text-slate-700">

@@ -60,10 +60,14 @@ export default function LoginPage() {
       // It only costs us the ability to pick the better landing route, and we
       // fall back to the clinical workspace.
       //
-      // NOTE: the reception session payload carries NO `nurse` flag. Routing is
-      // therefore by elimination -- no reception-side role means clinical --
-      // rather than by reading a field that does not exist. See
-      // lib/reception-roles.ts.
+      // NOTE: the reception session payload carries NO `nurse` flag. Plain-nurse
+      // routing is therefore by elimination -- no reception-side role means
+      // clinical -- rather than by reading a field that does not exist.
+      //
+      // A Front Desk Nurse is the exception: they hold no reception-side role
+      // either, so elimination alone used to drop them on the old Evaluation
+      // Queue. landingRouteForRoles now checks the authoritative
+      // `front_desk_nurse` flag BEFORE that fallback. See lib/reception-roles.ts.
       let destination = CLINICAL_ROUTE;
       try {
         const sessionResponse = await fetch("/api/reception/session", {

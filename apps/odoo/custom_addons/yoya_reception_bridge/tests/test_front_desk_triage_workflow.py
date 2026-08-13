@@ -11,7 +11,7 @@ have failed against it, which is the point.
 import uuid
 
 from odoo import fields
-from odoo.exceptions import AccessError, UserError
+from odoo.exceptions import AccessError, UserError, ValidationError
 from odoo.tests import TransactionCase, tagged
 
 G_FRONT_DESK_NURSE = "yoya_reception_bridge.group_hospital_front_desk_nurse"
@@ -53,6 +53,10 @@ class TestFrontDeskTriageWorkflow(TransactionCase):
         )
 
         cls.front_desk = cls._make_user("fd_nurse", [G_FRONT_DESK_NURSE])
+        # The SECOND front desk nurse: the shift-handover case. Deliberately
+        # given no permitted departments, because that is the real
+        # configuration -- the entrance is not department-scoped.
+        cls.front_desk_b = cls._make_user("fd_nurse_b", [G_FRONT_DESK_NURSE])
         cls.ward_nurse = cls._make_user("fd_ward_nurse", [G_NURSE])
         cls.cashier = cls._make_user("fd_cashier", [G_CASHIER])
         cls.receptionist = cls._make_user("fd_receptionist", [G_RECEPTIONIST])
@@ -281,6 +285,271 @@ class TestFrontDeskTriageWorkflow(TransactionCase):
         check()
         self._pay_full(encounter)
         check()
+
+    # ==================================================================
+    # A2. Shift handover -- rule_patient_evaluation_front_desk_nurse
+    #
+    # Before that rule existed the desk fell under the department-scoped
+    # Hospital Nurse rule, whose "unassigned in my department" branch cannot
+    # match once assigned_nurse_id is stamped. Every test here failed.
+    # ==================================================================
+    def test_second_front_desk_nurse_can_read_first_nurses_evaluation(self):
+        appointment, _encounter = self._register_visit()
+        evaluation = self._save_triage(appointment, user=self.front_desk)
+        self.assertEqual(evaluation.sudo().assigned_nurse_id, self.front_desk)
+
+        self.env.invalidate_all()
+        as_b = evaluation.with_user(self.front_desk_b)
+        self.assertEqual(as_b.chief_complaint, "Headache for two days")
+        self.assertEqual(
+            self.env["hospital.patient.evaluation"]
+            .with_user(self.front_desk_b)
+            .search_count([("id", "=", evaluation.id)]),
+            1,
+        )
+
+    def test_second_front_desk_nurse_sees_the_same_front_desk_stage(self):
+        """The silent failure mode: a filtered x2many, not an AccessError.
+
+        front_desk_stage derives the stage from evaluation_ids, and Odoo
+        FILTERS unreadable x2many members rather than raising. Without the rule
+        nurse B read 'intake' for a patient nurse A had already triaged, with
+        matching counters, and nothing anywhere reported an error.
+        """
+        appointment, _encounter = self._register_visit()
+        evaluation = self._save_triage(appointment, user=self.front_desk)
+
+        self.env.invalidate_all()
+        self.assertEqual(
+            appointment.with_user(self.front_desk_b).front_desk_stage, "triage"
+        )
+        self.assertEqual(
+            appointment.with_user(self.front_desk_b).clinical_queue_stage, "in_triage"
+        )
+
+        self._complete_triage(evaluation, user=self.front_desk)
+        self.env.invalidate_all()
+        self.assertEqual(
+            appointment.with_user(self.front_desk_b).front_desk_stage,
+            "awaiting_cashier",
+        )
+
+    def test_second_front_desk_nurse_can_continue_a_draft_triage(self):
+        appointment, _encounter = self._register_visit()
+        evaluation = self._save_triage(appointment, user=self.front_desk)
+
+        self.env.invalidate_all()
+        evaluation.with_user(self.front_desk_b).write(
+            {"temperature": 38.1, "triage_notes": "Continued by the incoming shift."}
+        )
+
+        evaluation.invalidate_recordset()
+        self.assertEqual(evaluation.sudo().temperature, 38.1)
+        # Continuing does NOT steal ownership: action_start_evaluation only
+        # claims an unassigned evaluation.
+        self.assertEqual(evaluation.sudo().assigned_nurse_id, self.front_desk)
+
+        self._complete_triage(evaluation, user=self.front_desk_b)
+        self.assertEqual(evaluation.sudo().state, "done")
+        self.assertEqual(self._stage(appointment), "awaiting_cashier")
+
+    def test_front_desk_nurse_cannot_unlink_an_evaluation(self):
+        appointment, _encounter = self._register_visit()
+        evaluation = self._save_triage(appointment)
+
+        with self.assertRaises(AccessError):
+            evaluation.with_user(self.front_desk).unlink()
+        self.assertTrue(evaluation.sudo().exists())
+
+    def test_front_desk_rule_does_not_reach_appointmentless_evaluations(self):
+        """The rule is scoped to appointment-linked arrivals, on purpose.
+
+        A ward evaluation with no appointment is a purely clinical artefact and
+        belongs to the future Nurses workspace, not to the entrance.
+        """
+        patient = self.env["hospital.patient"].sudo().create(
+            {"name": "FD Ward Only %s" % uuid.uuid4().hex[:6]}
+        )
+        ward_evaluation = self.env["hospital.patient.evaluation"].sudo().create(
+            {
+                "patient_id": patient.id,
+                "chief_complaint": "Ward round, no appointment",
+                "assigned_nurse_id": self.ward_nurse.id,
+            }
+        )
+
+        self.assertEqual(
+            self.env["hospital.patient.evaluation"]
+            .with_user(self.front_desk)
+            .search_count([("id", "=", ward_evaluation.id)]),
+            0,
+        )
+
+    def test_plain_nurse_scope_is_unchanged(self):
+        """The plain Hospital Nurse rule must not have moved.
+
+        ward_nurse HAS this department in yoya_permitted_department_ids, so if
+        the new front-desk rule had been attached to Hospital Nurse instead,
+        this evaluation would become visible. It must not: the nurse rule's
+        second branch requires assigned_nurse_id to be empty, and nurse A owns
+        this record.
+        """
+        appointment, _encounter = self._register_visit()
+        evaluation = self._save_triage(appointment, user=self.front_desk)
+
+        self.env.invalidate_all()
+        Evaluation = self.env["hospital.patient.evaluation"].with_user(self.ward_nurse)
+        self.assertEqual(Evaluation.search_count([("id", "=", evaluation.id)]), 0)
+        with self.assertRaises(AccessError):
+            evaluation.with_user(self.ward_nurse).write({"temperature": 39.0})
+
+    def test_plain_nurse_still_reaches_its_own_and_unassigned_department_work(self):
+        """The other half of "unchanged": the nurse rule still GRANTS."""
+        appointment, _encounter = self._register_visit()
+        unassigned = self.env["hospital.patient.evaluation"].sudo().create(
+            {
+                "patient_id": appointment.patient_id.id,
+                "appointment_id": appointment.id,
+                "assigned_nurse_id": False,
+            }
+        )
+
+        self.env.invalidate_all()
+        Evaluation = self.env["hospital.patient.evaluation"].with_user(self.ward_nurse)
+        self.assertEqual(Evaluation.search_count([("id", "=", unassigned.id)]), 1)
+
+    # ==================================================================
+    # A3. Doctor assignment
+    # ==================================================================
+    def _assign(self, appointment, doctor, user=None):
+        return self.env["hospital.reception.workflow"].with_user(
+            user or self.front_desk
+        ).assign_doctor(
+            appointment.with_user(user or self.front_desk), doctor
+        )
+
+    def test_assign_doctor_synchronizes_appointment_and_encounter(self):
+        """B2.1 opens the encounter before a doctor exists.
+
+        hospital.encounter only copies the doctor in an @api.onchange, which
+        never fires on an ORM write, so writing appointment.doctor_id alone
+        leaves primary_doctor_id empty forever.
+        """
+        workflow = self.env["hospital.reception.workflow"].with_user(self.front_desk)
+        result = workflow.create_visit(
+            patient_values={"name": "FD NoDoc %s" % uuid.uuid4().hex[:6]},
+            department=self.department,
+        )
+        appointment = result["appointment"].sudo()
+        encounter = result["encounter"].sudo()
+        self.assertFalse(appointment.doctor_id)
+        self.assertFalse(encounter.primary_doctor_id)
+
+        self._assign(appointment, self.doctor)
+
+        appointment.invalidate_recordset()
+        encounter.invalidate_recordset()
+        self.assertEqual(appointment.doctor_id, self.doctor)
+        self.assertEqual(encounter.primary_doctor_id, self.doctor)
+
+    def test_assign_doctor_rejects_a_doctor_from_another_department(self):
+        appointment, encounter = self._register_visit()
+        other_department = self.env["hospital.department"].sudo().create(
+            {
+                "name": "FD Other Dept %s" % uuid.uuid4().hex[:6],
+                "code": "FDO%s" % uuid.uuid4().hex[:5].upper(),
+            }
+        )
+        other_doctor = self.env["hospital.doctor"].sudo().create(
+            {"name": "FD Other Doctor", "department_id": other_department.id}
+        )
+
+        with self.assertRaises(ValidationError):
+            self._assign(appointment, other_doctor)
+
+        appointment.invalidate_recordset()
+        encounter.invalidate_recordset()
+        self.assertEqual(appointment.doctor_id, self.doctor)
+        self.assertNotEqual(encounter.primary_doctor_id, other_doctor)
+
+    def test_assign_doctor_syncs_a_draft_evaluation_but_never_a_completed_one(self):
+        """THE synchronization rule, both halves of it."""
+        appointment, _encounter = self._register_visit()
+        evaluation = self._save_triage(appointment)
+
+        second_doctor = self.env["hospital.doctor"].sudo().create(
+            {
+                "name": "FD Second Doctor",
+                "department_id": self.department.id,
+            }
+        )
+        self._assign(appointment, second_doctor)
+        evaluation.invalidate_recordset()
+        self.assertEqual(evaluation.sudo().physician_id, second_doctor)
+
+        # Completed: the triage document records who was responsible AT
+        # COMPLETION and is frozen by LOCKED_CLINICAL_FIELDS. Reassigning the
+        # visit afterwards must still succeed, and must leave it alone.
+        self._complete_triage(evaluation)
+        self._assign(appointment, self.doctor)
+
+        appointment.invalidate_recordset()
+        evaluation.invalidate_recordset()
+        self.assertEqual(appointment.doctor_id, self.doctor)
+        self.assertEqual(evaluation.sudo().physician_id, second_doctor)
+
+    def test_assign_doctor_does_not_change_the_department(self):
+        appointment, _encounter = self._register_visit()
+        doctor_without_department = self.env["hospital.doctor"].sudo().create(
+            {"name": "FD Floating Doctor %s" % uuid.uuid4().hex[:6]}
+        )
+
+        self._assign(appointment, doctor_without_department)
+
+        appointment.invalidate_recordset()
+        self.assertEqual(appointment.department_id, self.department)
+
+    def test_assign_doctor_is_financially_inert(self):
+        appointment, encounter = self._register_visit()
+        account = encounter.billing_account_id.sudo()
+        account.invalidate_recordset()
+        encounter.invalidate_recordset()
+
+        before_outstanding = encounter.reception_outstanding_amount
+        before_clearance = account.financial_clearance_state
+        before_charges = self.env["hospital.charge.line"].sudo().search_count(
+            [("encounter_id", "=", encounter.id)]
+        )
+        before_receipts = self.env["hospital.charge.receipt"].sudo().search_count([])
+
+        second_doctor = self.env["hospital.doctor"].sudo().create(
+            {"name": "FD Inert Doctor", "department_id": self.department.id}
+        )
+        self._assign(appointment, second_doctor)
+
+        account.invalidate_recordset()
+        encounter.invalidate_recordset()
+        self.assertEqual(encounter.reception_outstanding_amount, before_outstanding)
+        self.assertEqual(account.financial_clearance_state, before_clearance)
+        self.assertEqual(
+            self.env["hospital.charge.line"].sudo().search_count(
+                [("encounter_id", "=", encounter.id)]
+            ),
+            before_charges,
+        )
+        self.assertEqual(
+            self.env["hospital.charge.receipt"].sudo().search_count([]),
+            before_receipts,
+        )
+        self.assertEqual(self._stage(appointment), "intake")
+
+    def test_assign_doctor_requires_an_intake_role(self):
+        appointment, _encounter = self._register_visit()
+
+        with self.assertRaises(AccessError):
+            self._assign(appointment, self.doctor, user=self.ward_nurse)
+        with self.assertRaises(AccessError):
+            self._assign(appointment, self.doctor, user=self.cashier)
 
     # ==================================================================
     # B. Doctor boundary

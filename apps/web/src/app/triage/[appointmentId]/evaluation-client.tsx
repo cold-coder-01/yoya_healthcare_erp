@@ -10,109 +10,19 @@ import {
   formatBloodGroup,
   formatHospitalDateTime,
 } from "@/lib/clinical-format";
+import {
+  buildPayload,
+  EMPTY_FORM,
+  formFromEvaluation,
+  NUMERIC_FIELDS,
+  type FormState,
+} from "@/lib/evaluation-form";
 import type {
   ApiEnvelope,
   ApiErrorShape,
   ClinicalEvaluation,
   EvaluationDetail,
-  EvaluationSavePayload,
 } from "@/types/clinical";
-
-type FormState = {
-  weight: string;
-  height: string;
-  temperature: string;
-  heart_rate: string;
-  respiratory_rate: string;
-  systolic_bp: string;
-  diastolic_bp: string;
-  spo2: string;
-  rbs: string;
-  head_circumference: string;
-  pain_level: string;
-  pain_note: string;
-  triage_priority: string;
-  chief_complaint: string;
-  triage_notes: string;
-  physician_id: string;
-  // assigned_nurse_id is deliberately NOT part of the form: the server derives
-  // it from env.user. See buildPayload().
-};
-
-const EMPTY_FORM: FormState = {
-  weight: "",
-  height: "",
-  temperature: "",
-  heart_rate: "",
-  respiratory_rate: "",
-  systolic_bp: "",
-  diastolic_bp: "",
-  spo2: "",
-  rbs: "",
-  head_circumference: "",
-  pain_level: "",
-  pain_note: "",
-  triage_priority: "",
-  chief_complaint: "",
-  triage_notes: "",
-  physician_id: "",
-};
-
-const NUMERIC_FIELDS = [
-  "weight",
-  "height",
-  "temperature",
-  "heart_rate",
-  "respiratory_rate",
-  "systolic_bp",
-  "diastolic_bp",
-  "spo2",
-  "rbs",
-  "head_circumference",
-] as const;
-
-function valueToString(value: string | number | null | undefined) {
-  return value === null || value === undefined ? "" : String(value);
-}
-
-/**
- * `fallbackPhysicianId` is the appointment's own doctor. It seeds the picker
- * for an evaluation that has not recorded a physician yet -- typically a brand
- * new one -- so the clinician who is actually booked for the visit is
- * pre-selected instead of the field opening empty.
- */
-function formFromEvaluation(
-  evaluation: ClinicalEvaluation,
-  fallbackPhysicianId?: number | null,
-): FormState {
-  if (!evaluation) {
-    return {
-      ...EMPTY_FORM,
-      physician_id: valueToString(fallbackPhysicianId ?? undefined),
-    };
-  }
-
-  return {
-    weight: valueToString(evaluation.weight),
-    height: valueToString(evaluation.height),
-    temperature: valueToString(evaluation.temperature),
-    heart_rate: valueToString(evaluation.heart_rate),
-    respiratory_rate: valueToString(evaluation.respiratory_rate),
-    systolic_bp: valueToString(evaluation.systolic_bp),
-    diastolic_bp: valueToString(evaluation.diastolic_bp),
-    spo2: valueToString(evaluation.spo2),
-    rbs: valueToString(evaluation.rbs),
-    head_circumference: valueToString(evaluation.head_circumference),
-    pain_level: valueToString(evaluation.pain_level),
-    pain_note: valueToString(evaluation.pain_note),
-    triage_priority: valueToString(evaluation.triage_priority),
-    chief_complaint: valueToString(evaluation.chief_complaint),
-    triage_notes: valueToString(evaluation.triage_notes),
-    physician_id: valueToString(
-      evaluation.physician_id?.id ?? fallbackPhysicianId ?? undefined,
-    ),
-  };
-}
 
 function safeMessage(payload: unknown, fallback: string) {
   if (
@@ -151,39 +61,6 @@ function isBillingClearanceError(status: number, apiError: ApiErrorShape | null)
     apiError.code === "billing_clearance_required" ||
     typeof apiError.billing_clearance_message === "string"
   );
-}
-
-function buildPayload(form: FormState): EvaluationSavePayload {
-  const payload: EvaluationSavePayload = {
-    pain_level: form.pain_level || null,
-    pain_note: form.pain_note || null,
-
-    chief_complaint: form.chief_complaint || null,
-    triage_notes: form.triage_notes || null,
-    physician_id: form.physician_id ? Number(form.physician_id) : null,
-    // assigned_nurse_id is intentionally OMITTED, not sent as null.
-    //
-    // hospital.patient.evaluation.assigned_nurse_id carries
-    // `default=lambda self: self.env.user`, and Odoo applies a default only
-    // when the key is ABSENT from vals. Sending an explicit null therefore
-    // suppressed that default and created evaluations with no nurse assigned
-    // -- which, for an appointment-less evaluation, is the only thing the
-    // nurse record rule matches on. The server derives the identity from the
-    // authenticated session; the browser must not supply it.
-  };
-
-  if (form.triage_priority) {
-    payload.triage_priority = form.triage_priority;
-  }
-
-  for (const field of NUMERIC_FIELDS) {
-    const raw = form[field].trim();
-    if (raw) {
-      payload[field] = Number(raw);
-    }
-  }
-
-  return payload;
 }
 
 async function requestEvaluationDetail(numericAppointmentId: number) {

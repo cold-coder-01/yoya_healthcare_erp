@@ -267,6 +267,11 @@ def _evaluation_detail(evaluation):
             "respiratory_rate": float_value(evaluation.respiratory_rate),
             "systolic_bp": float_value(evaluation.systolic_bp),
             "diastolic_bp": float_value(evaluation.diastolic_bp),
+            # Supported by the model, range-checked (0-100 %), writable through
+            # the clinical save allowlist and frozen by LOCKED_CLINICAL_FIELDS
+            # once triage is done. It was simply absent here, which made SpO2
+            # write-only from the front desk's point of view.
+            "spo2": float_value(evaluation.spo2),
             "rbs": float_value(evaluation.rbs),
             "head_circumference": float_value(evaluation.head_circumference),
             "bmi": float_value(evaluation.bmi),

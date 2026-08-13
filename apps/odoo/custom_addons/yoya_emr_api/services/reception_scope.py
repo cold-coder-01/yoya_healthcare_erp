@@ -84,7 +84,25 @@ HOSPITAL_TIME_ZONE = "Africa/Addis_Ababa"
 
 
 def role_flags(env):
-    """Raw group membership for the current user."""
+    """Raw group membership for the current user.
+
+    NOTE ON front_desk_nurse: this is DIRECT membership of
+    group_hospital_front_desk_nurse, and it is deliberately NOT the same
+    question as may_front_desk() below.
+
+      may_front_desk()   -> may this user OPEN the worklist (broad: also plain
+                            Nurse, Receptionist, Manager, Admin)
+      front_desk_nurse   -> is this user actually a Front Desk Nurse (narrow)
+
+    The front-end uses the narrow flag to decide which workspace a user lands
+    in, so a plain Receptionist or plain Nurse is never mistaken for front-desk
+    staff. Because the group only IMPLIES Nurse and nothing implies IT, the
+    check stays exact: a plain Nurse reads False, a Front Desk Nurse reads True
+    for both this flag and the inherited "nurse" rights.
+
+    Routing is convenience only -- every front-desk endpoint still enforces its
+    own group check in controllers/front_desk.py.
+    """
     user = env.user
     return {
         "receptionist": user.has_group(GROUP_RECEPTIONIST),
@@ -93,6 +111,7 @@ def role_flags(env):
         "manager": user.has_group(GROUP_MANAGER),
         "system_administrator": user.has_group(GROUP_SYSADMIN),
         "emergency_authorizer": user.has_group(GROUP_EMERGENCY_AUTHORIZER),
+        "front_desk_nurse": user.has_group(GROUP_FRONT_DESK_NURSE),
     }
 
 
