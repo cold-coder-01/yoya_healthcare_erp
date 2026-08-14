@@ -11,6 +11,47 @@ export type FrontDeskClearance = {
   message: string | null;
 };
 
+/**
+ * A payer eligibility as the front desk is allowed to see it: identity only.
+ *
+ * Mirrors ELIGIBILITY_IDENTITY_KEYS in
+ * yoya_emr_api/services/front_desk_serializers.py. There is deliberately no
+ * member_limit_amount, limit_amount, payment_terms_days, tariff_mode, currency
+ * or notes field here, and none is ever sent -- the entrance records WHO is
+ * responsible, never how much. Adding one to this type would not make the
+ * server send it; the allowlist there is the control.
+ */
+export type FrontDeskEligibility = {
+  id: number;
+  reference: string | null;
+  payer_name: string | null;
+  agreement_name: string | null;
+  agreement_number: string | null;
+  member_reference: string | null;
+  membership_number: string | null;
+  policy_number: string | null;
+  employee_id_number: string | null;
+  principal_member_name: string | null;
+  relationship_to_principal: string | null;
+  state: string;
+  effective_from: string | null;
+  effective_to: string | null;
+  is_valid_today: boolean;
+};
+
+export type FrontDeskEligibilityList = {
+  patient_id: number;
+  eligibilities: FrontDeskEligibility[];
+  meta: { count: number };
+};
+
+/** Whether the payer identity may still be changed, and why not if it may not. */
+export type FrontDeskPayerChange = {
+  allowed: boolean;
+  frozen: boolean;
+  reason: string | null;
+};
+
 export type FrontDeskPermittedActions = {
   record_triage: boolean;
   complete_triage: boolean;
@@ -129,7 +170,14 @@ export type FrontDeskVisit = {
     name: string;
     state: string;
     encounter_type: string | null;
+    /**
+     * Expected to read "self_pay" even when patient_payer is set. Phase 2B
+     * records a payer IDENTITY and deliberately does not change payer_type,
+     * because check_financial_clearance treats any non-self-pay value as
+     * credit-authorized. Do not derive "is sponsored" from this field.
+     */
     payer_type: string | null;
+    patient_payer: FrontDeskEligibility | null;
     emergency_bypass: boolean;
     emergency_bypass_reason: string | null;
   } | null;
@@ -148,4 +196,5 @@ export type FrontDeskVisit = {
   } | null;
   clearance: FrontDeskClearance;
   permitted_actions: FrontDeskPermittedActions;
+  payer_change: FrontDeskPayerChange;
 };

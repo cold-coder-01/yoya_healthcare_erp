@@ -3,6 +3,7 @@ import { displayValue, frontDeskLabel } from "@/lib/front-desk-format";
 import { formatEtb, formatVisitType } from "@/lib/reception-format";
 import type { FrontDeskVisit } from "@/types/front-desk";
 
+import FrontDeskPayerControl from "./front-desk-payer-control";
 import { FrontDeskStageBadge } from "./front-desk-queue";
 import FrontDeskTriagePanel from "./front-desk-triage-panel";
 
@@ -210,6 +211,15 @@ export default function FrontDeskPatientPanel({
                 <Field label="Reason (registration)" value={visit.visit.reason ?? "-"} />
               </dl>
             </section>
+
+            {/*
+              Payer identity sits BETWEEN the visit reference data and the money.
+              That is the reading order the desk actually uses -- who is
+              responsible, then what is outstanding -- and it keeps the two
+              visually separate, because in this phase they are unrelated: an
+              eligibility never reduces the amount below.
+            */}
+            <FrontDeskPayerControl visit={visit} onMutated={onMutated} />
 
             <FinancialSummary visit={visit} />
           </FrontDeskTriagePanel>

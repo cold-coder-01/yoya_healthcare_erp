@@ -85,7 +85,12 @@
                             <field name="relationship_to_principal" readonly="state != 'draft'"/>
                         </group>
                     </group>
-                    <group string="Member Limit" invisible="agreement_id.limit_scope != 'member'">
+                    <!-- member_limit_amount carries groups=PAYER_COMMERCIAL_READ;
+                         the container is removed with it so no reader is left
+                         with an empty labelled group. -->
+                    <group string="Member Limit"
+                        groups="hospital_billing.group_hospital_insurance_officer,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"
+                        invisible="agreement_id.limit_scope != 'member'">
                         <field name="member_limit_amount" readonly="state != 'draft'"
                             required="agreement_id.limit_scope == 'member'"/>
                     </group>
@@ -94,7 +99,8 @@
                         <field name="verified_at"/>
                     </group>
                     <notebook>
-                        <page string="Notes" name="notes">
+                        <page string="Notes" name="notes"
+                            groups="hospital_billing.group_hospital_insurance_officer,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
                             <field name="notes" placeholder="Internal eligibility notes..."/>
                         </page>
                     </notebook>

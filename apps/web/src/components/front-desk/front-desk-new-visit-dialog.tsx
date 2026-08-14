@@ -26,6 +26,11 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 import PatientSearch from "@/components/reception/patient-search";
 import { codeFromPayload, messageFromPayload } from "@/lib/api-error";
+import { eligibilityLabel } from "@/lib/front-desk-format";
+import type {
+  FrontDeskEligibility,
+  FrontDeskEligibilityList,
+} from "@/types/front-desk";
 import type {
   ApiEnvelope,
   CreateVisitPayload,
@@ -161,6 +166,42 @@ export default function FrontDeskNewVisitDialog({
   const [departmentsError, setDepartmentsError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
+  /**
+   * Payer identity. Empty string means Self Pay / no sponsor, which is the
+   * default and a perfectly valid outcome -- not an unfilled field.
+   *
+   * Both pieces of state are STAMPED WITH THE PATIENT THEY BELONG TO, and the
+   * values actually rendered are derived from that stamp below. Nothing is reset
+   * in an effect. That is deliberate: an effect that calls setState to undo a
+   * previous render's state produces the cascading re-render
+   * react-hooks/set-state-in-effect exists to prevent, and -- more importantly
+   * here -- it leaves a frame in which the PREVIOUS patient's eligibilities are
+   * still on screen next to the new patient's name.
+   */
+  const [eligibilityData, setEligibilityData] = useState<{
+    patientId: number;
+    items: FrontDeskEligibility[];
+    error: string | null;
+  } | null>(null);
+  const [eligibilityChoice, setEligibilityChoice] = useState<{
+    patientId: number;
+    value: string;
+  } | null>(null);
+
+  // The patient whose payer identities are in scope. A new patient has none by
+  // construction, so the selector is an existing-patient affordance only.
+  const payerPatientId =
+    mode === "existing" ? (selectedPatient?.id ?? null) : null;
+
+  const eligibilitiesLoaded =
+    payerPatientId !== null && eligibilityData?.patientId === payerPatientId;
+  const eligibilities = eligibilitiesLoaded ? eligibilityData.items : [];
+  const eligibilityError = eligibilitiesLoaded ? eligibilityData.error : null;
+  const eligibilityLoading = payerPatientId !== null && !eligibilitiesLoaded;
+  const eligibilityId =
+    eligibilityChoice?.patientId === payerPatientId
+      ? eligibilityChoice.value
+      : "";
 
   // Guards the window between the click and setSubmitting(true) taking effect.
   // `disabled` alone leaves a real gap: a double click, or Enter held down in a
@@ -203,6 +244,65 @@ export default function FrontDeskNewVisitDialog({
     void loadDepartments();
     return () => controller.abort();
   }, []);
+
+  /**
+   * Eligibilities are loaded for the SELECTED PATIENT ONLY, from a route that is
+   * itself scoped to one patient id. There is no "all eligibilities" fetch and
+   * no client-side filtering: the desk never sees another patient's payer
+   * identities, and Odoo decides which of this patient's are selectable today.
+   *
+   * A brand-new patient has none by construction -- eligibility is registered by
+   * an Insurance/Credit Officer against an existing patient -- so the selector
+   * appears only in "existing patient" mode.
+   */
+  useEffect(() => {
+    const patientId = payerPatientId;
+    if (patientId === null) return;
+
+    const controller = new AbortController();
+
+    // The id is a PARAMETER, not a capture, so the result can never be stamped
+    // with a patient other than the one this run fetched.
+    async function loadEligibilities(id: number) {
+      try {
+        const response = await fetch(
+          `/api/front-desk/patients/${id}/eligibilities`,
+          { cache: "no-store", signal: controller.signal },
+        );
+        const payload =
+          (await response.json()) as ApiEnvelope<FrontDeskEligibilityList>;
+        if (controller.signal.aborted) return;
+
+        // Every setState below runs after an await, i.e. as the callback of an
+        // external system settling -- never synchronously in the effect body.
+        // The patient id is stored with the result, so a response that arrives
+        // after the nurse moved on is ignored by the derivation above rather
+        // than by a second effect.
+        setEligibilityData({
+          patientId: id,
+          items:
+            response.ok && payload.success
+              ? (payload.data.eligibilities ?? [])
+              : [],
+          error:
+            response.ok && payload.success
+              ? null
+              : messageFromPayload(payload, "Unable to load payer identities."),
+        });
+      } catch {
+        if (!controller.signal.aborted) {
+          setEligibilityData({
+            patientId: id,
+            items: [],
+            error: "Unable to reach the payer service.",
+          });
+        }
+      }
+    }
+
+    void loadEligibilities(patientId);
+    return () => controller.abort();
+  }, [payerPatientId]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -254,6 +354,11 @@ export default function FrontDeskNewVisitDialog({
 
     if (mode === "existing" && selectedPatient) {
       payload.patient_id = selectedPatient.id;
+      // Omitted entirely when Self Pay is chosen. The API treats a missing
+      // patient_payer_id as "no sponsorship identity", which is the default.
+      if (eligibilityId) {
+        payload.patient_payer_id = Number(eligibilityId);
+      }
     } else {
       const values: NewPatientValues = { name: patient.name.trim() };
       if (patient.gender) values.gender = patient.gender;
@@ -459,6 +564,44 @@ export default function FrontDeskNewVisitDialog({
                 {departmentsError}
               </p>
             ) : null}
+
+            {mode === "existing" && selectedPatient ? (
+              <label className={`${LABEL} sm:col-span-2`}>
+                Payer
+                <select
+                  value={eligibilityId}
+                  onChange={(event) =>
+                    setEligibilityChoice({
+                      patientId: selectedPatient.id,
+                      value: event.target.value,
+                    })
+                  }
+                  disabled={eligibilityLoading}
+                  className={FIELD}
+                >
+                  <option value="">Self Pay / No sponsor</option>
+                  {eligibilities.map((eligibility) => (
+                    <option key={eligibility.id} value={eligibility.id}>
+                      {eligibilityLabel(eligibility)}
+                    </option>
+                  ))}
+                </select>
+                {eligibilityError ? (
+                  <span className="mt-1 block text-[11px] font-normal text-red-700">
+                    {eligibilityError}
+                  </span>
+                ) : (
+                  <span className="mt-1 block text-[11px] font-normal text-slate-500">
+                    {eligibilityLoading
+                      ? "Checking registered payer identities..."
+                      : eligibilities.length === 0
+                        ? "No registered payer identity for this patient. The visit opens as Self Pay."
+                        : "Records who is responsible. It does not change what is payable today."}
+                  </span>
+                )}
+              </label>
+            ) : null}
+
             <p className="text-[11px] text-slate-500 sm:col-span-2">
               The doctor is assigned during triage. The visit opens at{" "}
               <span className="font-semibold">Intake</span> with today&apos;s

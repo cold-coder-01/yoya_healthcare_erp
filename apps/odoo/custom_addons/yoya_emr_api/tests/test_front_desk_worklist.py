@@ -456,9 +456,12 @@ class TestFrontDeskWorklist(HttpCase):
 
         self.assertEqual(response.status_code, 200)
         data = payload["data"]
+        # payer_change joined this set in Phase 2B. It is detail-only: the
+        # freeze check runs a search per encounter, so it is deliberately absent
+        # from the worklist rows (EXPECTED_ROW_KEYS above is unchanged).
         self.assertEqual(set(data), {
             "row", "patient", "visit", "encounter", "evaluation", "clearance",
-            "permitted_actions",
+            "permitted_actions", "payer_change",
         })
         self.assertEqual(data["row"]["queue_stage"], "triage")
         self.assertEqual(data["patient"]["mrn"], appointment.patient_id.identification_code)

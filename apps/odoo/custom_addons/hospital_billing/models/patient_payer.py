@@ -9,7 +9,7 @@ from odoo import api, fields, models
 from odoo.exceptions import AccessError, UserError, ValidationError
 
 from .charge_line import G_ADMIN, G_MANAGER
-from .payer_agreement import G_INSURANCE_OFFICER
+from .payer_agreement import G_INSURANCE_OFFICER, PAYER_COMMERCIAL_READ
 
 
 ELIGIBILITY_STATES = [
@@ -61,6 +61,21 @@ VERIFIED_FIELDS = frozenset(
         "member_limit_amount",
     }
 )
+
+
+def _member_limit_is_empty(value):
+    """Report whether a caller supplied no member ceiling at all.
+
+    The Odoo web client materialises an untouched Monetary input as 0.0 rather
+    than omitting the key, so a create payload from the eligibility form always
+    carries member_limit_amount even while the Member Limit group is invisible.
+    False, None, 0 and 0.0 are therefore all the empty value on the wire; only
+    member scope keeps the NULL-vs-zero distinction that makes an explicit 0.0
+    a meaningful ceiling.
+    """
+    if value is False or value is None:
+        return True
+    return isinstance(value, (int, float)) and float(value) == 0.0
 
 
 class HospitalPatientPayer(models.Model):
@@ -137,9 +152,14 @@ class HospitalPatientPayer(models.Model):
         index=True,
         tracking=True,
     )
+    # The per-member ceiling. Group-protected for the same reason as
+    # hospital.payer.agreement.limit_amount: the Front Desk Nurse holds a read
+    # ACL on this model in order to SELECT an eligibility identity, and a record
+    # rule cannot hide a column. See PAYER_COMMERCIAL_READ in payer_agreement.py.
     member_limit_amount = fields.Monetary(
         currency_field="currency_id",
         tracking=True,
+        groups=PAYER_COMMERCIAL_READ,
     )
     is_valid_today = fields.Boolean(
         compute="_compute_is_valid_today",
@@ -152,7 +172,7 @@ class HospitalPatientPayer(models.Model):
         copy=False,
     )
     verified_at = fields.Datetime(readonly=True, copy=False)
-    notes = fields.Text()
+    notes = fields.Text(groups=PAYER_COMMERCIAL_READ)
     active = fields.Boolean(default=True)
 
     _sql_constraints = [
@@ -256,8 +276,15 @@ class HospitalPatientPayer(models.Model):
     @api.constrains("agreement_id", "member_limit_amount")
     def _check_member_limit_scope(self):
         for eligibility in self:
-            scope = eligibility.agreement_id.limit_scope
-            amount = eligibility.member_limit_amount
+            # Read the amount through sudo(). member_limit_amount is now
+            # group-protected, and this constraint fires for the Front Desk
+            # Nurse, who still holds the draft-eligibility ACL but not
+            # PAYER_COMMERCIAL_READ. Without sudo the ORM would raise AccessError
+            # here instead of the ValidationError the caller must actually see.
+            # This grants nothing: the value is only compared, never returned.
+            record = eligibility.sudo()
+            scope = record.agreement_id.limit_scope
+            amount = record.member_limit_amount
             if scope != "member" and amount:
                 raise ValidationError(
                     "Eligibility %s must not carry a member limit because agreement %s "
@@ -273,9 +300,15 @@ class HospitalPatientPayer(models.Model):
     def _assert_member_limit_input(self, agreement, vals, existing=None):
         """Preserve the NULL-vs-zero distinction that Monetary cache values lose.
 
-        Zero is a valid explicit member ceiling, while NULL means no value was
-        supplied.  Once read into the ORM both can look falsey, so create/write
-        validate the caller's value before conversion.
+        Under member scope zero is a valid explicit ceiling, while NULL means no
+        value was supplied.  Once read into the ORM both can look falsey, so
+        create/write validate the caller's value before conversion.
+
+        Under every other scope there is no ceiling to express and the web client
+        cannot omit the Monetary field its form is hiding, so a supplied zero is
+        the empty value rather than a zero ceiling.  Returns True when the caller
+        supplied such an empty value, which create/write then clear rather than
+        persist verbatim.
         """
         supplied = "member_limit_amount" in vals
         value = vals.get("member_limit_amount") if supplied else None
@@ -292,17 +325,21 @@ class HospitalPatientPayer(models.Model):
                 raise ValidationError(
                     "Selecting a per-member agreement requires an explicit member limit amount."
                 )
-        elif supplied and value is not False and value is not None:
-            raise ValidationError(
-                "Member limit amount must be empty unless the agreement limit scope is Member."
-            )
-        elif existing is not None and "agreement_id" in vals and not supplied:
+            return False
+        if supplied:
+            if not _member_limit_is_empty(value):
+                raise ValidationError(
+                    "Member limit amount must be empty unless the agreement limit scope is Member."
+                )
+            return True
+        if existing is not None and "agreement_id" in vals:
             # Changing away from a member agreement must explicitly clear even a
             # zero ceiling; zero and SQL NULL are indistinguishable in cache.
             raise ValidationError(
                 "Changing to a non-member agreement requires explicitly clearing "
                 "the member limit amount."
             )
+        return False
 
     def _lock_overlap_scope(self):
         self.ensure_one()
@@ -375,8 +412,14 @@ class HospitalPatientPayer(models.Model):
             if vals.get("verified_by_id") or vals.get("verified_at"):
                 raise UserError("Verification stamps are set only by eligibility activation.")
             agreement = self.env["hospital.payer.agreement"].browse(vals.get("agreement_id"))
-            if agreement:
-                self._assert_member_limit_input(agreement, vals)
+            if agreement and self._assert_member_limit_input(agreement, vals):
+                # Drop the key instead of setting False.  Monetary's column
+                # conversion coerces False to 0.0, so only an absent key leaves
+                # the column NULL.  A non-member eligibility saved from the form
+                # then stores exactly what one created with the field omitted
+                # stores, and the IS NULL branch of the CHECK constraint keeps
+                # meaning what it says.
+                vals.pop("member_limit_amount")
             vals["name"] = (
                 self.env["ir.sequence"].next_by_code("hospital.patient.payer") or "New"
             )
@@ -394,6 +437,10 @@ class HospitalPatientPayer(models.Model):
             raise UserError("Verification stamps are managed by the eligibility workflow.")
 
         new_state = vals.get("state")
+        # Scope is a per-record property, so one RPC may need the supplied zero
+        # cleared on a non-member row and kept on a member row.  Track which
+        # rows normalise instead of rewriting the shared vals dict.
+        cleared_ids = set()
         for eligibility in self:
             agreement = (
                 self.env["hospital.payer.agreement"].browse(vals["agreement_id"])
@@ -401,7 +448,8 @@ class HospitalPatientPayer(models.Model):
                 else eligibility.agreement_id
             )
             if "agreement_id" in vals or "member_limit_amount" in vals:
-                self._assert_member_limit_input(agreement, vals, existing=eligibility)
+                if self._assert_member_limit_input(agreement, vals, existing=eligibility):
+                    cleared_ids.add(eligibility.id)
             if new_state:
                 eligibility._assert_transition(new_state)
             if eligibility.state != "draft":
@@ -422,12 +470,19 @@ class HospitalPatientPayer(models.Model):
                 eligibility._lock_overlap_scope()
                 eligibility._assert_no_active_overlap()
 
-        if new_state == "active":
+        if new_state == "active" or cleared_ids:
             # A multi-record RPC may activate drafts and resume suspended rows in
             # one call.  Stamp only first verification, never a resume.
             for eligibility in self:
                 record_vals = dict(vals)
-                if eligibility.state == "draft":
+                if eligibility.id in cleared_ids:
+                    # An UPDATE has no "leave it NULL" value to send, so False is
+                    # the clear Monetary can express.  It stores 0.00, which is
+                    # falsey and satisfies _check_member_limit_scope exactly as
+                    # NULL does; dropping the key instead would silently keep a
+                    # stale ceiling the caller asked to remove.
+                    record_vals["member_limit_amount"] = False
+                if new_state == "active" and eligibility.state == "draft":
                     record_vals.update(
                         {
                             "verified_by_id": self.env.user.id,

@@ -25,6 +25,8 @@ live on hospital.payer.agreement, which is versioned and frozen once active.
 from odoo import api, fields, models
 from odoo.exceptions import UserError, ValidationError
 
+from .payer_agreement import PAYER_COMMERCIAL_READ
+
 # Copied value-for-value from hospital.insurance.provider.payer_type so that a
 # later, manually-reviewed migration is a straight key map with no translation
 # table and no lossy guesswork.
@@ -117,7 +119,7 @@ class HospitalPayer(models.Model):
     agreement_count = fields.Integer(compute="_compute_agreement_count")
 
     active = fields.Boolean(default=True)
-    notes = fields.Text()
+    notes = fields.Text(groups=PAYER_COMMERCIAL_READ)
 
     _sql_constraints = [
         (

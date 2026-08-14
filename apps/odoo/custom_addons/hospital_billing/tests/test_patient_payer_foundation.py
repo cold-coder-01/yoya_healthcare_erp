@@ -189,6 +189,8 @@ class TestPatientPayerFoundation(TransactionCase):
             self._eligibility(effective_to=self.today - timedelta(days=1))
 
     def test_11_member_limit_required_for_member_scope(self):
+        # Case E: a per-member agreement with the field omitted stays rejected.
+        # Case F: an explicit zero is a real ceiling and remains accepted.
         agreement = self._make_agreement(
             self._make_payer("Member Scope"),
             limit_scope="member",
@@ -201,9 +203,116 @@ class TestPatientPayerFoundation(TransactionCase):
         )
         self.assertEqual(eligibility.member_limit_amount, 0.0)
 
-    def test_12_member_limit_forbidden_for_non_member_scope(self):
+    def test_11b_positive_member_limit_accepted_for_member_scope(self):
+        # Case G.
+        agreement = self._make_agreement(
+            self._make_payer("Member Scope Positive"),
+            limit_scope="member",
+            limit_amount=1000.0,
+        )
+        eligibility = self._eligibility(
+            agreement=agreement, member_limit_amount=750.0
+        )
+        self.assertEqual(eligibility.member_limit_amount, 750.0)
+
+    def test_11c_member_limit_explicit_false_rejected_for_member_scope(self):
+        agreement = self._make_agreement(
+            self._make_payer("Member Scope Cleared"),
+            limit_scope="member",
+            limit_amount=1000.0,
+        )
         with self.assertRaises(ValidationError):
-            self._eligibility(member_limit_amount=0.0)
+            self._eligibility(agreement=agreement, member_limit_amount=False)
+
+    def test_12_non_zero_member_limit_forbidden_for_non_member_scope(self):
+        # Case D.  A caller reaching the ORM directly still cannot attach a
+        # ceiling to an agreement whose limit scope does not carry one.
+        with self.assertRaises(ValidationError):
+            self._eligibility(member_limit_amount=1000.0)
+        with self.assertRaises(ValidationError):
+            self._eligibility(member_limit_amount=-1.0)
+
+    def test_12b_omitted_member_limit_accepted_for_non_member_scope(self):
+        # Case A, and the reference storage shape the other two must match.
+        eligibility = self._eligibility()
+        self.assertFalse(eligibility.member_limit_amount)
+        self.assertIsNone(self._stored_member_limit(eligibility))
+
+    def test_12c_false_member_limit_accepted_for_non_member_scope(self):
+        # Case B.
+        eligibility = self._eligibility(member_limit_amount=False)
+        self.assertFalse(eligibility.member_limit_amount)
+        self.assertIsNone(self._stored_member_limit(eligibility))
+
+    def test_12d_zero_member_limit_accepted_for_non_member_scope(self):
+        # Case C: the value an untouched Monetary input actually carries.
+        eligibility = self._eligibility(member_limit_amount=0.0)
+        self.assertFalse(eligibility.member_limit_amount)
+        self.assertIsNone(self._stored_member_limit(eligibility))
+
+    def test_12e_hidden_monetary_zero_is_empty_on_web_form_create(self):
+        """Regression: an Odoo web form materialises an untouched Monetary as 0.0.
+
+        The Member Limit group is invisible while agreement_id.limit_scope is not
+        'member', but invisible is not omitted: the web client still posts
+        member_limit_amount = 0.0 in the create payload, because a Monetary input
+        has no null state to send.  Zero on a non-member agreement is therefore
+        semantically empty, and rejecting it made Unlimited eligibility
+        impossible to create through the normal UI.
+        """
+        for scope in ("unlimited", "agreement", "visit"):
+            with self.subTest(scope=scope):
+                agreement = self._make_agreement(
+                    self._make_payer("Web Form %s" % scope),
+                    limit_scope=scope,
+                    **({} if scope == "unlimited" else {"limit_amount": 5000.0})
+                )
+                # Exactly the field set the form posts, in the order it posts it.
+                eligibility = self.env["hospital.patient.payer"].with_user(
+                    self.officer
+                ).create(
+                    {
+                        "patient_id": self.patient.id,
+                        "agreement_id": agreement.id,
+                        "effective_from": max(self.today, agreement.effective_from),
+                        "effective_to": False,
+                        "member_reference": False,
+                        "membership_number": False,
+                        "policy_number": False,
+                        "employee_id_number": False,
+                        "principal_member_name": False,
+                        "relationship_to_principal": "self",
+                        "member_limit_amount": 0.0,
+                        "notes": False,
+                        "active": True,
+                    }
+                )
+                self.assertEqual(eligibility.state, "draft")
+                self.assertFalse(eligibility.member_limit_amount)
+                # The zero is dropped from the INSERT, so the form-created row is
+                # byte-identical to one created with the field omitted and no
+                # later reader can mistake it for a deliberate zero ceiling.
+                self.assertIsNone(self._stored_member_limit(eligibility))
+
+    def test_12f_zero_member_limit_accepted_on_write_for_non_member_scope(self):
+        eligibility = self._eligibility()
+        eligibility.with_user(self.officer).write({"member_limit_amount": 0.0})
+        # An UPDATE cannot send NULL through a Monetary field: Odoo's column
+        # conversion coerces False to 0.0.  Falsey is the whole requirement, and
+        # _check_member_limit_scope reads 0.00 exactly as it reads NULL.
+        self.assertFalse(eligibility.member_limit_amount)
+        self.assertFalse(self._stored_member_limit(eligibility))
+        with self.assertRaises(ValidationError):
+            eligibility.with_user(self.officer).write({"member_limit_amount": 1000.0})
+
+    def _stored_member_limit(self, eligibility):
+        """Read the column past the ORM cache, where NULL and 0.0 look alike."""
+        eligibility.flush_recordset()
+        self.env.cr.execute(
+            "SELECT member_limit_amount FROM hospital_patient_payer WHERE id = %s",
+            [eligibility.id],
+        )
+        return self.env.cr.fetchone()[0]
 
     @mute_logger("odoo.sql_db")
     def test_13_negative_member_limit_rejected(self):
