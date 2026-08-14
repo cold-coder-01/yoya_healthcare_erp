@@ -32,6 +32,7 @@ Every value below comes from a record that was already fetched in bulk by
 prefetch_worklist(). Nothing in here searches, and nothing calls sudo().
 """
 from .api_response import (
+    date_value,
     datetime_value,
     float_value,
     m2o_value,
@@ -69,6 +70,68 @@ COUNTER_STAGE_SOURCES = {
 }
 
 URGENT_PRIORITIES = ("urgent", "emergency")
+
+# THE allowlist for every front-desk payer projection. Identity only.
+#
+# It is an explicit tuple rather than a deny-list because a deny-list silently
+# starts leaking the day someone adds a field to hospital.patient.payer. A test
+# asserts that no serialized payer object carries any key outside this set, so
+# widening it is a deliberate act with a diff.
+#
+# Absent, permanently: member_limit_amount, limit_amount, limit_scope,
+# payment_terms_days, tariff_mode, currency, notes and every utilization or
+# responsibility figure. The front desk records WHO is responsible; it has no
+# business knowing a ceiling, a rate or a term. Most of those fields are now
+# group-protected at model level too (PAYER_COMMERCIAL_READ), so this allowlist
+# is the second of two independent controls, not the only one.
+ELIGIBILITY_IDENTITY_KEYS = (
+    "id",
+    "reference",
+    "payer_name",
+    "agreement_name",
+    "agreement_number",
+    "member_reference",
+    "membership_number",
+    "policy_number",
+    "employee_id_number",
+    "principal_member_name",
+    "relationship_to_principal",
+    "state",
+    "effective_from",
+    "effective_to",
+    "is_valid_today",
+)
+
+
+def serialize_eligibility_identity(eligibility):
+    """One eligibility, identity fields only. Never a monetary value.
+
+    Reads only ungrouped columns, so this is safe for a Front Desk Nurse: it
+    would raise AccessError rather than leak if a protected field were ever
+    added here by mistake.
+    """
+    if not eligibility:
+        return None
+    agreement = eligibility.agreement_id
+    return {
+        "id": eligibility.id,
+        "reference": eligibility.name,
+        "payer_name": eligibility.payer_id.display_name or None,
+        "agreement_name": agreement.display_name or None,
+        "agreement_number": agreement.agreement_number or None,
+        "member_reference": eligibility.member_reference or None,
+        "membership_number": eligibility.membership_number or None,
+        "policy_number": eligibility.policy_number or None,
+        "employee_id_number": eligibility.employee_id_number or None,
+        "principal_member_name": eligibility.principal_member_name or None,
+        "relationship_to_principal": selection_value(
+            eligibility.relationship_to_principal
+        ),
+        "state": eligibility.state,
+        "effective_from": date_value(eligibility.effective_from),
+        "effective_to": date_value(eligibility.effective_to),
+        "is_valid_today": bool(eligibility.is_valid_today),
+    }
 
 
 def prefetch_worklist(appointments):
@@ -282,6 +345,34 @@ def _evaluation_detail(evaluation):
     }
 
 
+def _payer_change_state(encounter, capabilities):
+    """May THIS user change THIS visit's payer identity right now, and if not why.
+
+    Reports the model's own decision rather than re-deriving one: the reason
+    string comes from hospital.encounter._payer_identity_freeze_reason(), which
+    is the same method set_visit_payer enforces. A client cannot act on a True
+    it was not really granted -- the workflow re-checks on every call.
+    """
+    if not encounter:
+        return {"allowed": False, "frozen": False, "reason": None}
+    if not capabilities.get("intake"):
+        return {
+            "allowed": False,
+            "frozen": False,
+            "reason": "Your role cannot change the payer on a visit.",
+        }
+    if encounter._has_payer_identity_authority():
+        # Insurance/Credit Officer, Manager and Admin correct a payer after the
+        # freeze by design, so they are never reported as blocked.
+        return {"allowed": True, "frozen": False, "reason": None}
+    reason = encounter._payer_identity_freeze_reason()
+    return {
+        "allowed": not reason,
+        "frozen": bool(reason),
+        "reason": reason,
+    }
+
+
 def serialize_front_desk_visit(appointment, capabilities):
     """The selected-visit panel. Row data plus the working triage record.
 
@@ -326,12 +417,23 @@ def serialize_front_desk_visit(appointment, capabilities):
             "name": encounter.name,
             "state": encounter.state,
             "encounter_type": selection_value(encounter.encounter_type),
+            # payer_type is reported unchanged and is expected to read
+            # 'self_pay' even on a visit that HAS an eligibility selected. That
+            # is the phase boundary, not a bug: recording who is responsible
+            # does not make the visit financially sponsored.
             "payer_type": selection_value(encounter.payer_type),
+            "patient_payer": serialize_eligibility_identity(
+                encounter.patient_payer_id
+            ),
             "emergency_bypass": bool(encounter.emergency_bypass),
             "emergency_bypass_reason": encounter.emergency_bypass_reason or None,
         }
         if encounter
         else None,
+        # Detail-only, deliberately: the freeze check runs a search per
+        # encounter, which would be an N+1 across a whole worklist. The panel
+        # needs it; the queue rows do not.
+        "payer_change": _payer_change_state(encounter, capabilities),
         "evaluation": _evaluation_detail(evaluation),
         "clearance": row["clearance"],
         "permitted_actions": row["permitted_actions"],

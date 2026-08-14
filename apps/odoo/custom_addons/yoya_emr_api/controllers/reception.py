@@ -467,6 +467,17 @@ class YoyaEmrReceptionController(http.Controller):
         if reason is not None and not isinstance(reason, str):
             raise ApiError("validation_error", "'reason' must be a string.", 400)
 
+        # Optional payer IDENTITY. Omitting it is the normal case and means the
+        # visit carries no sponsorship identity. Supplying it does not make the
+        # visit financially sponsored: create_visit leaves payer_type alone.
+        patient_payer = None
+        if body.get("patient_payer_id"):
+            patient_payer = _get_or_404(
+                env, "hospital.patient.payer",
+                parse_int_param("patient_payer_id", body["patient_payer_id"]),
+                "Patient eligibility",
+            )
+
         # THE only mutation. One call, one transaction.
         result = env["hospital.reception.workflow"].create_visit(
             patient=patient,
@@ -478,6 +489,7 @@ class YoyaEmrReceptionController(http.Controller):
             reason=reason,
             triage_destination=triage_destination,
             issue_card=issue_card,
+            patient_payer=patient_payer,
         )
 
         appointment = result["appointment"]

@@ -44,6 +44,7 @@ from ..services.front_desk_serializers import (
     ACTIVE_STAGE_KEYS,
     STAGE_KEYS,
     prefetch_worklist,
+    serialize_eligibility_identity,
     serialize_front_desk_visit,
     serialize_worklist_row,
     worklist_counts,
@@ -458,4 +459,105 @@ class YoyaEmrFrontDeskController(http.Controller):
             raise ApiError("doctor_not_found", "Doctor not found.", 404)
 
         env["hospital.reception.workflow"].assign_doctor(appointment, doctor)
+        return _visit_response(appointment)
+
+    # ------------------------------------------------------------------
+    # Payer identity
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/front-desk/patients/<int:patient_id>/eligibilities",
+        type="http", auth="user", methods=["GET"], csrf=False,
+    )
+    @front_desk_endpoint
+    def patient_eligibilities(self, patient_id, **params):
+        """Registered payer identities this patient may be presented under today.
+
+        Scoped to ONE patient by the URL, never by a client-supplied domain, and
+        resolved through the caller's own record rules. Selectability is decided
+        by hospital.reception.workflow.selectable_eligibilities(), which defers
+        to hospital.patient.payer.is_valid_today -- the Phase 2A predicate that
+        already composes eligibility state, eligibility window, agreement state
+        and agreement window.
+
+        The response carries identity only; see ELIGIBILITY_IDENTITY_KEYS.
+        """
+        env = request.env
+        _require_front_desk(env)
+
+        patient = env["hospital.patient"].search([("id", "=", patient_id)], limit=1)
+        if not patient:
+            raise ApiError("patient_not_found", "Patient not found.", 404)
+
+        eligibilities = env["hospital.reception.workflow"].selectable_eligibilities(
+            patient
+        )
+        return success_response(
+            {
+                "patient_id": patient.id,
+                "eligibilities": [
+                    serialize_eligibility_identity(record) for record in eligibilities
+                ],
+                "meta": {"count": len(eligibilities)},
+            }
+        )
+
+    @http.route(
+        "/yoya-emr/api/v1/front-desk/visits/<int:appointment_id>/payer",
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @front_desk_endpoint
+    def set_visit_payer(self, appointment_id, **params):
+        """Select, change or clear the visit payer identity.
+
+        Body: {"patient_payer_id": <int>} to select, or {"patient_payer_id": null}
+        to return the visit to no sponsorship identity. An explicit null is a
+        valid instruction, not a missing field, so the key's PRESENCE is what is
+        checked -- omitting it entirely is the error.
+
+        Every decision -- role, patient match, company match, validity, freeze --
+        belongs to hospital.reception.workflow.set_visit_payer(). This route
+        resolves two records and hands them over.
+        """
+        env = request.env
+        _require_front_desk(env)
+        _require_intake(env)
+
+        appointment = _load_visit(env, appointment_id)
+
+        body = read_json_body()
+        unknown = set(body) - {"patient_payer_id"}
+        if unknown:
+            raise ApiError(
+                "unknown_field",
+                "Unrecognised fields: %s." % ", ".join(sorted(unknown)),
+                400,
+            )
+        if "patient_payer_id" not in body:
+            raise ApiError(
+                "invalid_field",
+                "'patient_payer_id' is required. Send null to clear the payer.",
+                400,
+            )
+
+        eligibility = env["hospital.patient.payer"]
+        raw = body.get("patient_payer_id")
+        if raw is not None:
+            eligibility_id = coerce_optional_id("patient_payer_id", raw)
+            if not eligibility_id:
+                raise ApiError(
+                    "invalid_field",
+                    "'patient_payer_id' must be a positive integer or null.",
+                    400,
+                )
+            eligibility = env["hospital.patient.payer"].search(
+                [("id", "=", eligibility_id)], limit=1
+            )
+            if not eligibility:
+                raise ApiError(
+                    "eligibility_not_found", "Patient eligibility not found.", 404
+                )
+
+        env["hospital.reception.workflow"].set_visit_payer(
+            appointment, patient_payer=eligibility or None
+        )
         return _visit_response(appointment)

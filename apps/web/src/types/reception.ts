@@ -341,6 +341,12 @@ export type CreateVisitPayload = {
   appointment_date?: string;
   reason?: string;
   triage_destination_id?: number;
+  /**
+   * Optional payer eligibility captured in the SAME transaction as the visit.
+   * Identity only: it does not make the visit financially sponsored and does
+   * not change the encounter's payer_type.
+   */
+  patient_payer_id?: number;
 };
 
 /**

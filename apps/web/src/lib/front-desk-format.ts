@@ -46,3 +46,37 @@ export function displayValue(
   if (value === null || value === undefined || value === "") return "-";
   return `${value}${suffix}`;
 }
+
+/**
+ * One dense line for a payer eligibility: who is responsible, and under which
+ * membership. Identity only -- there is no monetary field on the type to show.
+ *
+ * The member reference falls back through the four identifier columns because
+ * different payer types populate different ones: an insurer fills the policy
+ * number, a corporate scheme the employee id.
+ */
+export function eligibilityLabel(
+  eligibility: {
+    payer_name: string | null;
+    agreement_number: string | null;
+    agreement_name: string | null;
+    member_reference: string | null;
+    membership_number: string | null;
+    policy_number: string | null;
+    employee_id_number: string | null;
+  } | null,
+  fallback = "Self Pay / No sponsor",
+) {
+  if (!eligibility) return fallback;
+  const member =
+    eligibility.member_reference ??
+    eligibility.membership_number ??
+    eligibility.policy_number ??
+    eligibility.employee_id_number;
+  const payer =
+    eligibility.payer_name ??
+    eligibility.agreement_name ??
+    eligibility.agreement_number ??
+    "Sponsor";
+  return member ? `${payer} - ${member}` : payer;
+}

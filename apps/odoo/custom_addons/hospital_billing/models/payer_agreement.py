@@ -45,6 +45,29 @@ G_INSURANCE_OFFICER = "hospital_billing.group_hospital_insurance_officer"
 # May draft and edit an agreement, but NOT bring one into force.
 DRAFTING_GROUPS = (G_INSURANCE_OFFICER, G_ACCOUNTANT, G_MANAGER, G_ADMIN)
 
+# READ visibility for the COMMERCIAL terms of an agreement: its ceiling, its
+# payment terms, its tariff mode and its internal notes.
+#
+# Same construction and the same intent as OPERATIONAL_MONEY_READ and
+# ACCOUNTING_READ in charge_line.py -- a comma-joined string of EXISTING group
+# xmlids, handed to a field's ``groups=``. No group is declared here; this is the
+# field-level half of a security model that already exists on the charge line and
+# was simply never applied to the payer models.
+#
+# WHY NOT REUSE ACCOUNTING_READ VERBATIM. The Insurance/Credit Officer is the
+# role that drafts these terms in the first place (DRAFTING_GROUPS above) and is
+# absent from ACCOUNTING_READ. Reusing that constant would lock the officer out
+# of the exact fields their job exists to set.
+#
+# WHO IS DELIBERATELY ABSENT, and why it matters: the Front Desk Nurse, the
+# Receptionist and the Cashier. All three hold a read ACL on this model, and
+# ir.rule filters ROWS, never COLUMNS -- so before this constant existed, any of
+# them could read limit_amount over plain RPC. The entrance selects a payer
+# IDENTITY; it never needs to know a ceiling.
+PAYER_COMMERCIAL_READ = ",".join(
+    (G_INSURANCE_OFFICER, G_ACCOUNTANT, G_MANAGER, G_ADMIN)
+)
+
 # THE authorization boundary for every state change. Activating, suspending,
 # expiring, superseding and terminating an agreement all commit the hospital to
 # (or release it from) a commercial position, so they are manager-and-above.
@@ -221,9 +244,14 @@ class HospitalPayerAgreement(models.Model):
         help="What the monetary ceiling is attached to. Deliberately has no "
         "default: it must be chosen explicitly for every agreement.",
     )
+    # limit_scope is deliberately NOT group-protected: it is a classification
+    # ("Unlimited", "Per Member", ...) that carries no amount, it is read by
+    # _assert_member_limit_input on the front-desk draft-eligibility path, and it
+    # drives view modifiers. The AMOUNT is what must not leak.
     limit_amount = fields.Monetary(
         currency_field="currency_id",
         tracking=True,
+        groups=PAYER_COMMERCIAL_READ,
         help="The ceiling. Required and positive for any scope other than "
         "Unlimited.",
     )
@@ -246,6 +274,7 @@ class HospitalPayerAgreement(models.Model):
         string="Payment Terms (Days)",
         default=30,
         tracking=True,
+        groups=PAYER_COMMERCIAL_READ,
     )
     tariff_mode = fields.Selection(
         [
@@ -255,6 +284,7 @@ class HospitalPayerAgreement(models.Model):
         required=True,
         default="list_price",
         tracking=True,
+        groups=PAYER_COMMERCIAL_READ,
         help="Negotiated pricing has no per-service tariff table yet, so an "
         "agreement set to Agreement Price cannot be activated. Selecting it "
         "records the commercial intent without pretending the behaviour exists.",
@@ -263,12 +293,16 @@ class HospitalPayerAgreement(models.Model):
     # --- History ------------------------------------------------------
     activated_by_id = fields.Many2one("res.users", readonly=True, copy=False)
     activated_at = fields.Datetime(readonly=True, copy=False)
-    suspension_reason = fields.Text(readonly=True, copy=False)
+    suspension_reason = fields.Text(
+        readonly=True, copy=False, groups=PAYER_COMMERCIAL_READ
+    )
     terminated_by_id = fields.Many2one("res.users", readonly=True, copy=False)
     terminated_at = fields.Datetime(readonly=True, copy=False)
-    termination_reason = fields.Text(readonly=True, copy=False)
+    termination_reason = fields.Text(
+        readonly=True, copy=False, groups=PAYER_COMMERCIAL_READ
+    )
 
-    notes = fields.Text()
+    notes = fields.Text(groups=PAYER_COMMERCIAL_READ)
     active = fields.Boolean(
         default=True,
         help="ADMINISTRATIVE ARCHIVE ONLY. Suspended, expired, superseded and "

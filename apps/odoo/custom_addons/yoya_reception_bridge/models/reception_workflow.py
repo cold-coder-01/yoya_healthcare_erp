@@ -16,6 +16,11 @@ import logging
 from odoo import api, fields, models
 from odoo.exceptions import AccessError, UserError, ValidationError
 
+from odoo.addons.hospital_billing.models.encounter_payer import (
+    PAYER_IDENTITY_AUTHORITY,
+    payer_identity_capability,
+)
+
 from .reception_capability import reception_workflow_capability
 
 _logger = logging.getLogger(__name__)
@@ -32,6 +37,23 @@ G_FRONT_DESK_NURSE = "yoya_reception_bridge.group_hospital_front_desk_nurse"
 
 REGISTRATION_GROUPS = (G_FRONT_DESK_NURSE, G_RECEPTIONIST, G_MANAGER, G_ADMIN)
 MIGRATION_GROUPS = (G_MANAGER, G_ADMIN)
+
+# Who may call set_visit_payer at all: the intake roles that select a payer at
+# registration, PLUS the eligibility-authority roles that correct one after the
+# front-desk freeze.
+#
+# DERIVED from both tuples rather than restated, so the union cannot drift from
+# either half. Manager and admin appear in both; dict.fromkeys dedupes while
+# keeping a stable order for the error message.
+#
+# The bug this fixes: the method asserted REGISTRATION_GROUPS alone, so an
+# Insurance/Credit Officer -- the role the freeze explicitly names as the one
+# that MAY correct a frozen payer -- was rejected before the freeze logic was
+# ever reached. It went unnoticed because the after-freeze test used a manager,
+# who is in both tuples.
+VISIT_PAYER_GROUPS = tuple(
+    dict.fromkeys(REGISTRATION_GROUPS + PAYER_IDENTITY_AUTHORITY)
+)
 
 # Only these may be supplied when registering a patient. identification_code is
 # absent on purpose: the MRN is sequence-assigned, never client-chosen.
@@ -174,6 +196,7 @@ class HospitalReceptionWorkflow(models.AbstractModel):
         reason=None,
         triage_destination=None,
         issue_card=None,
+        patient_payer=None,
     ):
         """Register a visit end to end, in one transaction.
 
@@ -181,10 +204,17 @@ class HospitalReceptionWorkflow(models.AbstractModel):
             patient (reused or created)
             appointment
             action_confirm()  -> encounter + billing account + consultation charge
+            payer identity capture, when one was supplied
             first-card issuance and its charge, only when actually required
 
         Any exception rolls the whole thing back: no orphan appointment without
-        an encounter, no card charge without a card issuance.
+        an encounter, no card charge without a card issuance, and no visit left
+        standing with an eligibility that turned out not to be selectable.
+
+        ``patient_payer`` is optional and identity-only. Supplying one does NOT
+        make the visit sponsored in any financial sense: payer_type is untouched
+        and stays 'self_pay', so the cash gate is exactly what it would have been
+        without it. See hospital_billing.models.encounter_payer for why.
         """
         self._assert_group(REGISTRATION_GROUPS, "register a visit")
 
@@ -238,6 +268,17 @@ class HospitalReceptionWorkflow(models.AbstractModel):
         if visit_type == "emergency" and encounter.encounter_type != "emergency":
             encounter.write({"encounter_type": "emergency"})
 
+        # Payer identity, captured in THIS transaction.
+        #
+        # Placed after the encounter resolves and before the card issuance and
+        # the clearance re-run below, so an eligibility that fails validation
+        # raises while every artefact create_visit made is still inside the same
+        # transaction. Nothing here commits or rolls back by hand: the raise
+        # propagates and Odoo unwinds the request, which is what makes an
+        # invalid payer leave no half-registered visit behind.
+        if patient_payer:
+            self._apply_visit_payer(encounter, patient_payer)
+
         card_issue = self._maybe_issue_first_card(patient, encounter, issue_card)
 
         # The card charge was raised AFTER action_confirm ran its clearance
@@ -263,7 +304,158 @@ class HospitalReceptionWorkflow(models.AbstractModel):
             "card_issue": card_issue,
             "consultation_charge": appointment.consultation_charge_id,
             "clearance": encounter._reception_clearance_summary(),
+            "patient_payer": encounter.patient_payer_id,
         }
+
+    # ------------------------------------------------------------------
+    # Payer identity
+    # ------------------------------------------------------------------
+    @api.model
+    def _apply_visit_payer(self, encounter, patient_payer):
+        """THE single write path for hospital.encounter.patient_payer_id.
+
+        The capability block is what lets this write succeed at all:
+        hospital.encounter.write() refuses patient_payer_id outside it, for every
+        user including the Front Desk Nurse who holds raw write on the model. So
+        the role check and the freeze check above this line are not advisory --
+        there is no second route to the field.
+
+        Deliberately writes ONE key. payer_type and payer_id are not touched, and
+        no clearance is recomputed or persisted: recording who is responsible is
+        not a financial event in this phase.
+        """
+        eligibility = patient_payer or self.env["hospital.patient.payer"]
+        encounter.ensure_one()
+
+        # Validate before entering the capability block, so a bad eligibility
+        # fails on its own terms rather than inside a privileged section. The
+        # encounter's @api.constrains re-checks it after the write regardless.
+        self.env["hospital.encounter"]._assert_eligibility_selectable(
+            eligibility, encounter.patient_id, encounter.company_id
+        )
+
+        with payer_identity_capability():
+            encounter.write({"patient_payer_id": eligibility.id or False})
+        return encounter
+
+    @api.model
+    def set_visit_payer(self, appointment, patient_payer=None):
+        """Select, change or clear the payer identity of a registered visit.
+
+        ``patient_payer=None`` clears it: the visit carries no sponsorship
+        identity and is a plain self-pay presentation. That is a legitimate
+        outcome, not an error, so it takes the same path and the same guards.
+
+        WHAT THIS DOES NOT DO, and none of it is an oversight:
+          - it does not write payer_type or payer_id, so
+            check_financial_clearance behaves identically before and after;
+          - it does not recompute or persist clearance;
+          - it does not touch the queue stage, which is derived and never
+            written;
+          - it does not consume a limit or compute a responsibility split.
+        """
+        self._assert_group(VISIT_PAYER_GROUPS, "set the payer on a visit")
+
+        # Both answers are taken from the REAL calling user, once, before any
+        # elevation below can make every has_group() return True.
+        user = self.env.user
+        is_registration = any(
+            user.has_group(group) for group in REGISTRATION_GROUPS
+        )
+        has_payer_authority = any(
+            user.has_group(group) for group in PAYER_IDENTITY_AUTHORITY
+        )
+
+        # RECORD ACCESS FOR A PAYER-AUTHORITY CORRECTION.
+        #
+        # group_hospital_insurance_officer "deliberately implies no other role"
+        # (hospital_billing/security/hospital_billing_groups.xml) and holds ACLs
+        # on hospital.payer, hospital.payer.agreement and hospital.patient.payer
+        # only. A standalone officer can therefore neither read
+        # hospital.appointment nor write hospital.encounter, so authorizing them
+        # above without this would simply move the AccessError from the guard to
+        # the ORM two lines later.
+        #
+        # The alternative was granting the officer standing ACL + record rules on
+        # appointments and encounters. That was rejected: it would hand a
+        # master-data role permanent read/write over every clinical episode, to
+        # support a correction path used rarely. This elevation is narrower --
+        # it exists only inside this method and confers no ambient access, so the
+        # officer still cannot browse or edit an encounter through the Odoo UI or
+        # a raw RPC call.
+        #
+        # ORDER IS THE GUARANTEE, and it is the same ordering
+        # hospital.charge.payment.wizard.action_confirm documents: assert real
+        # group membership as the CALLING user, THEN elevate. A registration
+        # caller is never elevated at all and keeps passing through their own
+        # record rules exactly as before.
+        visit = appointment if (self.env.su or is_registration) else appointment.sudo()
+        visit.ensure_one()
+
+        encounter = visit.encounter_id
+        if not encounter:
+            raise UserError(
+                "Appointment %s has no encounter yet; its payer cannot be set."
+                % (visit.appointment_code or visit.id)
+            )
+        encounter.ensure_one()
+
+        eligibility = patient_payer or self.env["hospital.patient.payer"]
+        if eligibility and encounter.patient_payer_id == eligibility:
+            # Idempotent: re-selecting what is already selected is not a change,
+            # so it must not trip the freeze on a visit that has already paid.
+            return self._visit_payer_result(visit, encounter)
+
+        # THE FREEZE. Front desk staff may correct a payer identity right up to
+        # the moment money is taken or the consultation starts; after that a
+        # correction is an eligibility-authority act.
+        #
+        # Decided from has_payer_authority, NOT from
+        # encounter._has_payer_identity_authority(): the encounter may be a
+        # sudo() recordset by now, and the superuser holds every group, so asking
+        # it would answer True for anyone who reached this line.
+        if not has_payer_authority:
+            encounter._assert_payer_identity_changeable()
+
+        self._apply_visit_payer(encounter, eligibility)
+        return self._visit_payer_result(visit, encounter)
+
+    @api.model
+    def _visit_payer_result(self, appointment, encounter):
+        """Bounded result. Records, never a money figure."""
+        return {
+            "appointment": appointment,
+            "encounter": encounter,
+            "patient_payer": encounter.patient_payer_id,
+            "payer_type": encounter.payer_type,
+            "front_desk_stage": appointment.front_desk_stage,
+        }
+
+    @api.model
+    def selectable_eligibilities(self, patient, company=None):
+        """Eligibilities this patient could be presented under TODAY.
+
+        The window is narrowed in SQL to what could possibly qualify, then
+        is_valid_today makes the final call -- it is a non-stored compute (it
+        depends on today) and therefore cannot appear in a domain. Its rules are
+        not restated here; that is the whole point of calling it.
+        """
+        patient.ensure_one()
+        company = company or self.env.company
+        today = fields.Date.context_today(self)
+        candidates = self.env["hospital.patient.payer"].search(
+            [
+                ("patient_id", "=", patient.id),
+                ("company_id", "=", company.id),
+                ("state", "=", "active"),
+                ("effective_from", "<=", today),
+                "|",
+                ("effective_to", "=", False),
+                ("effective_to", ">=", today),
+            ],
+            order="effective_from desc, id desc",
+        )
+        return candidates.filtered(lambda record: record.is_valid_today)
 
     @api.model
     def _maybe_issue_first_card(self, patient, encounter, issue_card=None):

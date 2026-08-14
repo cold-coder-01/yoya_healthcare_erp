@@ -105,7 +105,18 @@
                             <field name="guarantee_required"/>
                         </group>
                     </group>
-                    <group>
+                    <!--
+                        groups= on the CONTAINER, not only on the fields.
+
+                        tariff_mode and payment_terms_days carry
+                        groups=PAYER_COMMERCIAL_READ, so Odoo strips the field
+                        nodes for a reader without that group. Any modifier that
+                        still referenced a stripped field would then evaluate
+                        against a value the client never received, so every block
+                        whose modifier reads one of these fields is removed
+                        wholesale instead.
+                    -->
+                    <group groups="hospital_billing.group_hospital_insurance_officer,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
                         <group string="Commercial Terms">
                             <field name="tariff_mode"/>
                             <field name="payment_terms_days"/>
@@ -120,6 +131,7 @@
                         into force at this time.
                     </div>
                     <div class="alert alert-warning" role="alert"
+                        groups="hospital_billing.group_hospital_insurance_officer,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"
                         invisible="tariff_mode != 'agreement_price'">
                         Negotiated agreement pricing has no per-service tariff table yet, so
                         this agreement cannot be activated while it is selected.
@@ -137,14 +149,19 @@
                                     <field name="terminated_at"/>
                                 </group>
                             </group>
-                            <group string="Suspension Reason" invisible="not suspension_reason">
+                            <group string="Suspension Reason"
+                                groups="hospital_billing.group_hospital_insurance_officer,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"
+                                invisible="not suspension_reason">
                                 <field name="suspension_reason" nolabel="1"/>
                             </group>
-                            <group string="Termination Reason" invisible="not termination_reason">
+                            <group string="Termination Reason"
+                                groups="hospital_billing.group_hospital_insurance_officer,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"
+                                invisible="not termination_reason">
                                 <field name="termination_reason" nolabel="1"/>
                             </group>
                         </page>
-                        <page string="Notes" name="notes">
+                        <page string="Notes" name="notes"
+                            groups="hospital_billing.group_hospital_insurance_officer,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
                             <field name="notes" placeholder="Internal notes..."/>
                         </page>
                     </notebook>
