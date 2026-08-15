@@ -63,4 +63,12 @@
         <field name="padding">5</field>
         <field name="number_next">1</field>
     </record>
+
+    <record id="sequence_hospital_charge_responsibility" model="ir.sequence">
+        <field name="name">Charge Responsibility Sequence</field>
+        <field name="code">hospital.charge.responsibility</field>
+        <field name="prefix">RESP/</field>
+        <field name="padding">5</field>
+        <field name="number_next">1</field>
+    </record>
 </odoo>

@@ -18,6 +18,8 @@ AGREEMENT_TABLE = "hospital_payer_agreement"
 AGREEMENT_OVERLAP_CONSTRAINT = "hospital_payer_agreement_no_active_overlap"
 PATIENT_PAYER_TABLE = "hospital_patient_payer"
 PATIENT_PAYER_OVERLAP_CONSTRAINT = "hospital_patient_payer_no_active_overlap"
+RESPONSIBILITY_TABLE = "hospital_charge_responsibility"
+RESPONSIBILITY_LIVE_INDEX = "hospital_charge_responsibility_one_live_per_charge"
 
 # Two ACTIVE agreements for one payer in one company may not cover the same day.
 #
@@ -196,4 +198,55 @@ def ensure_patient_payer_overlap_exclusion(cr):
         PATIENT_PAYER_OVERLAP_CONSTRAINT,
         PATIENT_PAYER_TABLE,
     )
+    return "created"
+
+
+def ensure_charge_responsibility_live_unique(cr):
+    """At most ONE draft-or-authorized sponsor share per charge, at DB level.
+
+    Returns one of: 'present', 'created', 'no_table', 'conflicting_data'.
+
+    UNLIKE the two overlap guards above, this one is NOT best-effort and needs
+    no extension: a partial unique index is plain PostgreSQL. It is the real
+    race guard. hospital.charge.responsibility._check_single_live_allocation()
+    exists so the ordinary path fails with a readable message, but two
+    concurrent transactions can both pass a Python SELECT and only the index
+    stops the second COMMIT.
+
+    A partial index rather than a plain unique constraint because CANCELLED rows
+    must be allowed to accumulate: correcting a share is cancel + re-record, so
+    a charge legitimately ends up with many cancelled rows and at most one live.
+    """
+    if not _table_exists(cr, RESPONSIBILITY_TABLE):
+        _logger.info(
+            "hospital_billing: %s does not exist yet; skipping the live "
+            "responsibility unique index.",
+            RESPONSIBILITY_TABLE,
+        )
+        return "no_table"
+
+    cr.execute(
+        "SELECT 1 FROM pg_indexes WHERE indexname = %s", (RESPONSIBILITY_LIVE_INDEX,)
+    )
+    if cr.fetchone():
+        return "present"
+
+    created = _try(
+        cr,
+        "CREATE UNIQUE INDEX %s" % RESPONSIBILITY_LIVE_INDEX,
+        """
+        CREATE UNIQUE INDEX {index}
+            ON {table} (charge_id)
+         WHERE state IN ('draft', 'authorized')
+        """.format(index=RESPONSIBILITY_LIVE_INDEX, table=RESPONSIBILITY_TABLE),
+    )
+    if not created:
+        _logger.error(
+            "hospital_billing: the live-responsibility unique index was NOT "
+            "installed, which usually means data already violates it (more than "
+            "one draft/authorized sponsor share on one charge). Python still "
+            "refuses the ordinary path under an advisory lock, but a race could "
+            "produce a duplicate. Resolve the duplicates and re-run the upgrade."
+        )
+        return "conflicting_data"
     return "created"

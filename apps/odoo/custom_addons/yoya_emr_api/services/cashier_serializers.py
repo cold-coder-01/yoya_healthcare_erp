@@ -92,7 +92,15 @@ def serialize_cashier_encounter(encounter):
 
 
 def serialize_cashier_charge_line(charge):
-    """Operational money view of one charge. No accounting buckets."""
+    """Operational money view of one charge. No accounting buckets.
+
+    The responsibility keys are the OPERATIONAL split for this visit, not the
+    payer's commercial position. They are safe here for the same reason
+    `outstanding` is: the Cashier is inside OPERATIONAL_MONEY_READ, which is the
+    read group on every one of these fields. Contract terms -- limit_amount,
+    member_limit_amount, limit_scope, tariff_mode, payment_terms_days -- live
+    behind PAYER_COMMERCIAL_READ and appear nowhere in this module.
+    """
     return {
         "id": charge.id,
         "name": charge.name,
@@ -105,6 +113,70 @@ def serialize_cashier_charge_line(charge):
         "payment_state": selection_value(charge.payment_state),
         "operational_funding_state": selection_value(
             charge.operational_funding_state
+        ),
+        "sponsor_responsibility": float_value(charge.amount_sponsor_responsibility),
+        "sponsor_authorized": float_value(charge.amount_sponsor_authorized),
+        "patient_responsibility": float_value(charge.amount_patient_responsibility),
+        "responsibility_state": selection_value(charge.responsibility_state),
+    }
+
+
+def serialize_financial_block(encounter, account):
+    """THE canonical financial contract the future Cashier Desk consumes.
+
+    One object, one source. Every figure is read from a stored server-side
+    aggregate rather than assembled from parts, so the client never does
+    money arithmetic and cannot arrive at a different total than the server.
+
+    `responsibility_mode` is reported explicitly and is not optional: a client
+    that does not know whether the split is authoritative cannot honestly label
+    what it shows. Under 'off' and 'shadow' the split is present but
+    `financial_clearance_state` still reflects legacy behaviour, and
+    `responsibility_advisory` says so in one boolean.
+    """
+    mode = (encounter.company_id.sudo().payer_responsibility_mode or "off") if encounter else "off"
+    if not account:
+        return {
+            "currency": None,
+            "responsibility_mode": mode,
+            "responsibility_advisory": mode != "enforce",
+            "amount_estimated": 0.0,
+            "patient_responsibility": 0.0,
+            "sponsor_responsibility": 0.0,
+            "sponsor_authorized": 0.0,
+            "sponsor_outstanding": 0.0,
+            "patient_paid": 0.0,
+            "patient_outstanding": 0.0,
+            "responsibility_state": None,
+            "financial_clearance_state": None,
+            "financially_cleared": False,
+        }
+    return {
+        "currency": account.currency_id.name or None,
+        "responsibility_mode": mode,
+        # True while the split is recorded but NOT driving the cash gate, so the
+        # UI can show it without implying the patient may pay the smaller figure.
+        "responsibility_advisory": mode != "enforce",
+        # The total being split. There is no separate 'responsibility_total':
+        # amount_estimated IS it, and a second name for one number is how two
+        # sources of truth begin.
+        "amount_estimated": float_value(account.amount_estimated),
+        "patient_responsibility": float_value(account.amount_patient_responsibility),
+        "sponsor_responsibility": float_value(account.amount_sponsor_responsibility),
+        "sponsor_authorized": float_value(account.amount_sponsor_authorized),
+        # OPERATIONAL sponsor exposure, not an accounting receivable: no sponsor
+        # invoice, claim or settlement exists yet, so nothing reduces it.
+        "sponsor_outstanding": float_value(account.amount_sponsor_outstanding),
+        # PATIENT CASH ONLY. amount_received is the sum of confirmed receipt
+        # allocations and never contains a sponsor figure.
+        "patient_paid": float_value(account.amount_received),
+        "patient_outstanding": float_value(account.amount_patient_outstanding),
+        "responsibility_state": selection_value(account.responsibility_state),
+        "financial_clearance_state": selection_value(
+            account.financial_clearance_state
+        ),
+        "financially_cleared": bool(
+            encounter.reception_clearance_ok if encounter else False
         ),
     }
 
@@ -233,6 +305,7 @@ def serialize_cashier_payment_result(env, appointment, receipt):
         "patient": serialize_cashier_patient(appointment.patient_id),
         "encounter": serialize_cashier_encounter(encounter),
         "billing_account": serialize_cashier_account(account),
+        "financial": serialize_financial_block(encounter, account),
         "receipt": serialize_cashier_receipt(receipt),
         "charge_lines": [
             serialize_cashier_charge_line(line)

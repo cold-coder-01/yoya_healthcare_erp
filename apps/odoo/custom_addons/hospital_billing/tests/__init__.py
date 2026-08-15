@@ -1,4 +1,5 @@
 from . import test_billing_account_payer_source
+from . import test_payer_responsibility_allocation
 from . import test_payer_agreement_foundation
 from . import test_patient_payer_foundation
 from . import test_payer_field_exposure

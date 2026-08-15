@@ -683,15 +683,24 @@ class TestPayerAgreementFoundation(TransactionCase):
         )
 
     def test_35_phase_1_changes_no_live_behaviour(self):
-        """allocate_payer is still a stub and clearance is untouched.
+        """UPDATED IN PHASE 3C/3D. The guard it replaces did its job.
 
-        If a later phase lands these without updating this test, it fails loudly
-        rather than silently changing what a sponsored visit does.
+        The original assertion was that allocate_payer remained a stub, so that
+        a later phase could not land the responsibility engine silently. This is
+        that phase, and this is the conscious update.
+
+        What survives unchanged is the claim that actually protects a live
+        hospital: the engine ships at mode 'off', where no sponsor split can
+        affect anything, and allocate_payer still refuses to invent an amount.
         """
-        engine = self.env["hospital.billing.engine"]
+        # sudo(): the authority check is not what this test is about, and it
+        # returns early under env.su, so the refusal below is the one that
+        # matters -- the engine declining to invent an amount.
+        engine = self.env["hospital.billing.engine"].sudo()
+        self.assertEqual(self.company.payer_responsibility_mode, "off")
         with self.assertRaises(UserError) as caught:
             engine.allocate_payer(self.env["hospital.billing.account"])
-        self.assertIn("not implemented", str(caught.exception).lower())
+        self.assertIn("charge", str(caught.exception).lower())
 
         # Case-insensitive: the module states its scope as "PHASE 1 SCOPE" in a
         # section heading. The assertion is about the declaration still being

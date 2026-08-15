@@ -118,6 +118,11 @@ class HospitalEncounter(models.Model):
             ("pending", "Pending"),
             ("cleared", "Cleared"),
             ("credit_authorized", "Credit Authorized"),
+            # Phase 3. Must be listed here or the compute below raises the
+            # moment the engine returns it: this vocabulary is redeclared rather
+            # than imported (see the comment above), which keeps the two from
+            # drifting silently but means an addition has to be made twice.
+            ("sponsor_cleared", "Sponsor Cleared"),
             ("emergency_bypass", "Emergency Bypass"),
         ],
         string="Live Clearance",
@@ -161,11 +166,22 @@ class HospitalEncounter(models.Model):
             and line.billing_basis == "prepaid"
         ) if account else self.env["hospital.charge.line"]
 
+        # WHAT THE PATIENT IS ASKED FOR, which under 'enforce' is their share
+        # rather than the whole charge. Sourced from the charge's own helper so
+        # the desk quotes the same number the cashier will collect; under 'off'
+        # and 'shadow' the helper returns amount_estimated and this is unchanged.
+        def _required(line):
+            return (
+                line.amount_patient_responsibility
+                if line._responsibility_mode() == "enforce"
+                else line.amount_estimated
+            )
+
         return {
             "cleared": bool(result.get("cleared")),
             "state": result.get("state") or "not_required",
             "reason": result.get("reason") or "",
-            "required": sum(pre_service.mapped("amount_estimated")),
+            "required": sum(_required(line) for line in pre_service),
             "paid": sum(pre_service.mapped("amount_received")),
             "outstanding": result.get("amount_due", 0.0),
             "lines": [
@@ -173,7 +189,7 @@ class HospitalEncounter(models.Model):
                     "charge_id": line.id,
                     "name": line.name,
                     "description": line.description,
-                    "required": line.amount_estimated,
+                    "required": _required(line),
                     "received": line.amount_received,
                     "outstanding": line.amount_due_for_clearance,
                 }

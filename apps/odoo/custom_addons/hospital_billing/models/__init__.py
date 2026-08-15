@@ -9,6 +9,7 @@ from . import patient_billing
 from . import billing_account
 from . import charge_line
 from . import charge_receipt
+from . import charge_responsibility
 from . import encounter_payer
 from . import billing_engine
 from . import appointment_billing

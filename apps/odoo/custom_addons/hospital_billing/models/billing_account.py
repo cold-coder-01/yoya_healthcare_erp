@@ -19,6 +19,15 @@ FINANCIAL_CLEARANCE_STATES = [
     ("pending", "Pending"),
     ("cleared", "Cleared"),
     ("credit_authorized", "Credit Authorized"),
+    # Phase 3: a visit whose patient share is zero because an AUTHORIZED sponsor
+    # carries all of it. Deliberately NOT 'cleared': no patient cash was taken,
+    # no receipt exists, and conflating the two would make a fully sponsored
+    # visit indistinguishable from a paid one in every report and queue.
+    #
+    # Also deliberately NOT 'credit_authorized': that is the LEGACY whole-bill
+    # waiver driven by encounter.payer_type, which this phase does not touch and
+    # must stay separately identifiable.
+    ("sponsor_cleared", "Sponsor Cleared"),
     ("emergency_bypass", "Emergency Bypass"),
 ]
 
@@ -215,6 +224,58 @@ class HospitalBillingAccount(models.Model):
         help="Operational pre-service payment requirement. Not an accounting receivable.",
     )
 
+    # ------------------------------------------------------------------
+    # RESPONSIBILITY AGGREGATES (Phase 3).
+    #
+    # Live charges only, matching the scope every other forward-looking estimate
+    # on this model already uses: a cancelled charge's sponsor share must not
+    # inflate what a payer appears to owe.
+    #
+    # THERE IS NO amount_responsibility_total FIELD, deliberately. The total
+    # being split IS amount_estimated -- adding a second name for the same
+    # number would be the duplicate-source-of-truth mistake Phase 3A removed
+    # from payer_type. Likewise 'patient paid' is amount_received, which is
+    # patient cash and nothing else; no alias is introduced for it.
+    # ------------------------------------------------------------------
+    amount_sponsor_responsibility = fields.Float(
+        compute="_compute_amounts", store=True, digits=(16, 2),
+        compute_sudo=True, groups=OPERATIONAL_MONEY_READ,
+        help="Sponsor share claimed across live charges: drafted plus authorized.",
+    )
+    amount_sponsor_authorized = fields.Float(
+        compute="_compute_amounts", store=True, digits=(16, 2),
+        compute_sudo=True, groups=OPERATIONAL_MONEY_READ,
+        help="Sponsor share explicitly authorized. Only this reduces patient cash.",
+    )
+    amount_patient_responsibility = fields.Float(
+        compute="_compute_amounts", store=True, digits=(16, 2),
+        compute_sudo=True, groups=OPERATIONAL_MONEY_READ,
+        help="amount_estimated less the authorized sponsor share, per line, floored at zero.",
+    )
+    amount_patient_outstanding = fields.Float(
+        compute="_compute_amounts", store=True, digits=(16, 2),
+        compute_sudo=True, groups=OPERATIONAL_MONEY_READ,
+        index=True,
+        help="What the cashier may still collect from the patient. Indexed: the "
+        "future Cashier queue filters on it.",
+    )
+    amount_sponsor_outstanding = fields.Float(
+        compute="_compute_amounts", store=True, digits=(16, 2),
+        compute_sudo=True, groups=OPERATIONAL_MONEY_READ,
+        help="OPERATIONAL sponsor responsibility not yet settled. NOT an "
+        "accounting receivable: no sponsor invoice, claim or settlement exists "
+        "in this phase, so nothing can reduce it yet.",
+    )
+    responsibility_state = fields.Selection(
+        [
+            ("self_pay", "Patient Only"),
+            ("proposed", "Sponsor Share Proposed"),
+            ("authorized", "Sponsor Share Authorized"),
+            ("mixed", "Mixed"),
+        ],
+        compute="_compute_amounts", store=True, compute_sudo=True, index=True,
+    )
+
     # Accounting-only: invoice, credit and refund detail.
     amount_invoiced = fields.Float(
         compute="_compute_amounts", store=True, digits=(16, 2),
@@ -290,6 +351,10 @@ class HospitalBillingAccount(models.Model):
         "charge_line_ids.adjustment_state",
         "charge_line_ids.charge_state",
         "charge_line_ids.authorization_state",
+        "charge_line_ids.amount_sponsor_responsibility",
+        "charge_line_ids.amount_sponsor_authorized",
+        "charge_line_ids.amount_patient_responsibility",
+        "charge_line_ids.responsibility_state",
     )
     def _compute_amounts(self):
         """Every total is a direct aggregation of the corresponding line field.
@@ -352,6 +417,38 @@ class HospitalBillingAccount(models.Model):
             account.amount_outstanding = sum(lines.mapped("amount_outstanding"))
             account.amount_prepayment_held = sum(lines.mapped("amount_prepayment_held"))
             account.amount_patient_credit = sum(lines.mapped("amount_patient_credit"))
+
+            # --- responsibility: live charges only, like every other estimate
+            account.amount_sponsor_responsibility = sum(
+                live.mapped("amount_sponsor_responsibility")
+            )
+            account.amount_sponsor_authorized = sum(
+                live.mapped("amount_sponsor_authorized")
+            )
+            account.amount_patient_responsibility = sum(
+                live.mapped("amount_patient_responsibility")
+            )
+            # Cash the cashier may still take. Sums the LINES' own mode-aware
+            # figures rather than netting at account level, for the same reason
+            # amount_outstanding does: one line's shortfall must not be hidden
+            # by another line's overpayment.
+            account.amount_patient_outstanding = sum(
+                live.mapped("amount_due_for_clearance")
+            )
+            # Nothing settles a sponsor share yet, so authorized == outstanding.
+            # It is stated as its own field so the future claims phase has the
+            # subtraction point already named, rather than inventing one.
+            account.amount_sponsor_outstanding = account.amount_sponsor_authorized
+
+            responsibility_states = set(live.mapped("responsibility_state"))
+            if not responsibility_states or responsibility_states == {"self_pay"}:
+                account.responsibility_state = "self_pay"
+            elif responsibility_states == {"authorized"}:
+                account.responsibility_state = "authorized"
+            elif responsibility_states == {"proposed"}:
+                account.responsibility_state = "proposed"
+            else:
+                account.responsibility_state = "mixed"
 
     @api.depends(
         "amount_received",
@@ -431,6 +528,34 @@ class HospitalBillingAccount(models.Model):
                 account.fiscal_state = "reversed"
             else:
                 account.fiscal_state = "pending"
+
+    # ------------------------------------------------------------------
+    # Concurrency
+    # ------------------------------------------------------------------
+    @api.model
+    def _lock_responsibility_scope(self, account_id):
+        """THE serialization point for everything that moves money on one visit.
+
+        Taken by hospital.charge.responsibility (create / authorize / cancel)
+        AND by hospital.charge.receipt.allocation.create(). Those are the three
+        actors that can race:
+
+            officer authorizes a sponsor share  ||  cashier takes patient cash
+            officer edits the share             ||  officer authorizes it
+            cashier takes cash                  ||  share changes underneath
+
+        Without a shared lock the cashier can read a patient residual, have the
+        split change, and then write a receipt computed from a state that no
+        longer exists. pg_advisory_xact_lock is transaction-scoped and released
+        on commit or rollback -- the pattern payer_agreement._lock_overlap_scope
+        and patient_payer._lock_overlap_scope already use.
+        """
+        if not account_id:
+            return
+        self.env.cr.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            ["hospital.billing.account.responsibility:%s" % account_id],
+        )
 
     # ------------------------------------------------------------------
     # Constraints
