@@ -396,6 +396,51 @@ class HospitalChargeLine(models.Model):
         "Not an accounting receivable -- it exists before any invoice does.",
     )
 
+    # ------------------------------------------------------------------
+    # SPONSOR / PATIENT RESPONSIBILITY SPLIT (Phase 3).
+    #
+    # amount_estimated is the authoritative basis: it is the number this gate
+    # already divides, and it exists before delivery (amount_eligible is zero
+    # until then, and a pre-service split cannot divide zero).
+    #
+    # The patient figure is a RESIDUAL, never a stored decision. Only an
+    # AUTHORIZED sponsor row reduces it -- a draft is a proposal and buys the
+    # patient nothing at the cashier's window.
+    # ------------------------------------------------------------------
+    responsibility_ids = fields.One2many(
+        "hospital.charge.responsibility", "charge_id",
+        string="Sponsor Responsibility", groups=OPERATIONAL_MONEY_READ,
+    )
+    amount_sponsor_responsibility = fields.Float(
+        compute="_compute_responsibility", store=True, digits=(16, 2),
+        compute_sudo=True, groups=OPERATIONAL_MONEY_READ,
+        help="Sponsor share claimed on this charge: drafted plus authorized. "
+        "What is PROPOSED, which is not what the patient may rely on.",
+    )
+    amount_sponsor_authorized = fields.Float(
+        compute="_compute_responsibility", store=True, digits=(16, 2),
+        compute_sudo=True, groups=OPERATIONAL_MONEY_READ,
+        help="Sponsor share that has been explicitly authorized. This is the "
+        "only figure that reduces what the patient is asked to pay.",
+    )
+    amount_patient_responsibility = fields.Float(
+        compute="_compute_responsibility", store=True, digits=(16, 2),
+        compute_sudo=True, groups=OPERATIONAL_MONEY_READ,
+        help="max(0, amount_estimated - amount_sponsor_authorized). A residual, "
+        "so it cannot disagree with its own definition.",
+    )
+    responsibility_state = fields.Selection(
+        [
+            ("self_pay", "Patient Only"),
+            ("proposed", "Sponsor Share Proposed"),
+            ("authorized", "Sponsor Share Authorized"),
+        ],
+        compute="_compute_responsibility", store=True, compute_sudo=True,
+        index=True,
+        help="'self_pay' means no live sponsor row exists -- which is also what "
+        "a genuine self-pay visit looks like, deliberately.",
+    )
+
     # Accounting-only: application and refund detail is not front-desk information.
     amount_applied_to_invoice = fields.Float(
         default=0.0, digits=(16, 2), readonly=True, copy=False, groups=ACCOUNTING_READ,
@@ -635,6 +680,59 @@ class HospitalChargeLine(models.Model):
                 ).mapped("amount")
             )
 
+    # ------------------------------------------------------------------
+    # RESPONSIBILITY HELPERS -- THE ONLY PLACE THIS ARITHMETIC LIVES.
+    #
+    # Every consumer (the clearance engine, the receipt cap, the payment
+    # wizard, the API serializer) calls these rather than re-deriving a
+    # residual. A split re-implemented in four places is a split that will
+    # disagree with itself in four places.
+    # ------------------------------------------------------------------
+    def _responsibility_mode(self):
+        """'off' | 'shadow' | 'enforce' for this charge's company.
+
+        Falls back to 'off' -- the safe default -- when the company cannot be
+        resolved, so a half-built record can never accidentally enforce.
+        """
+        self.ensure_one()
+        company = self.company_id or self.billing_account_id.company_id
+        return company.sudo().payer_responsibility_mode or "off"
+
+    def get_authorized_sponsor_responsibility(self):
+        """The sponsor share that actually reduces the patient's cash demand."""
+        return sum(self.sudo().mapped("amount_sponsor_authorized"))
+
+    def get_patient_responsibility(self):
+        """The residual the patient carries: charge value less authorized sponsor."""
+        return sum(self.sudo().mapped("amount_patient_responsibility"))
+
+    def get_patient_cash_due(self):
+        """What the cashier may still collect from the patient, right now.
+
+        Mode-aware through amount_due_for_clearance, so 'off' and 'shadow'
+        return exactly the legacy figure.
+        """
+        return sum(self.sudo().mapped("amount_due_for_clearance"))
+
+    def get_patient_payable_ceiling(self):
+        """Upper bound on cash a receipt may allocate against these charges.
+
+        Under 'enforce' the patient may not be charged for the sponsor's share,
+        so the ceiling is the patient residual less what is already in hand.
+        Under 'off'/'shadow' it is the legacy whole-charge figure.
+        """
+        total = 0.0
+        for line in self.sudo():
+            target = (
+                line.amount_patient_responsibility
+                if line._responsibility_mode() == "enforce"
+                else line.amount_estimated
+            )
+            total += max(
+                0.0, target - line.amount_received + line.amount_refunded
+            )
+        return total
+
     @api.depends("qty_billable", "qty_invoiced", "qty_credited")
     def _compute_qty_to_invoice(self):
         for line in self:
@@ -701,9 +799,38 @@ class HospitalChargeLine(models.Model):
             line.amount_credited = line._value(line.qty_credited)
 
     @api.depends(
+        "amount_estimated",
+        "responsibility_ids.amount",
+        "responsibility_ids.state",
+    )
+    def _compute_responsibility(self):
+        """Sponsor shares in, patient residual out.
+
+        Cancelled rows contribute nothing -- they are history, not a claim.
+        """
+        for line in self:
+            live = line.responsibility_ids.filtered(
+                lambda r: r.state in ("draft", "authorized")
+            )
+            authorized = live.filtered(lambda r: r.state == "authorized")
+            line.amount_sponsor_responsibility = sum(live.mapped("amount"))
+            line.amount_sponsor_authorized = sum(authorized.mapped("amount"))
+            line.amount_patient_responsibility = max(
+                0.0, line.amount_estimated - line.amount_sponsor_authorized
+            )
+            if not live:
+                line.responsibility_state = "self_pay"
+            elif authorized:
+                line.responsibility_state = "authorized"
+            else:
+                line.responsibility_state = "proposed"
+
+    @api.depends(
         "amount_invoiced", "amount_credited", "amount_estimated", "amount_eligible", "billing_basis",
         "amount_received", "amount_applied_to_invoice",
         "amount_refunded_from_advance", "amount_refunded_from_credit",
+        "amount_patient_responsibility",
+        "billing_account_id.company_id.payer_responsibility_mode",
     )
     def _compute_outstanding(self):
         """Separates ADVANCE HELD (a deposit) from PATIENT CREDIT (a debt).
@@ -738,9 +865,23 @@ class HospitalChargeLine(models.Model):
             # regardless of whether an invoice exists yet. Pre-service clearance is
             # based on the frozen requested/estimated obligation, not on delivered or
             # invoice-eligible value: the patient is paying so service may commence.
+            #
+            # UNDER 'enforce' THE TARGET IS THE PATIENT'S SHARE, NOT THE WHOLE
+            # CHARGE. Under 'off' and 'shadow' it stays amount_estimated, so the
+            # figure the cashier collects is byte-identical to the legacy one --
+            # shadow observes the split without ever charging against it.
+            #
+            # Note the two collapse whenever no sponsor share is authorized:
+            # amount_patient_responsibility is then amount_estimated by
+            # definition, so enforce changes nothing for a self-pay visit.
             if line.billing_basis == "prepaid":
                 cash_in_hand = line.amount_received - line.amount_refunded_from_advance
-                line.amount_due_for_clearance = max(0.0, line.amount_estimated - cash_in_hand)
+                target = (
+                    line.amount_patient_responsibility
+                    if line._responsibility_mode() == "enforce"
+                    else line.amount_estimated
+                )
+                line.amount_due_for_clearance = max(0.0, target - cash_in_hand)
             else:
                 line.amount_due_for_clearance = 0.0
 
@@ -869,6 +1010,43 @@ class HospitalChargeLine(models.Model):
                 raise ValidationError(
                     f"Charge {line.name}: cannot refund {line.amount_refunded_from_credit:.2f} from "
                     f"patient credit when only {over_applied:.2f} was over-applied."
+                )
+
+    @api.constrains(
+        "amount_estimated",
+        # The inputs as well as the derived value: a constraint listed only on a
+        # stored compute can be evaluated after the write that caused it, and
+        # this one must refuse the write itself.
+        "qty_requested", "unit_price", "discount", "tax_treatment", "tax_rate",
+    )
+    def _check_covers_authorized_responsibility(self):
+        """A charge may not shrink below the sponsor share already authorized.
+
+        WHY THIS FAILS CLOSED RATHER THAN ADJUSTING.
+        amount_patient_responsibility is max(0, estimated - authorized), so a
+        reprice from 1500 to 700 against an authorized 1000 does not error on
+        its own -- it silently floors the patient at zero and leaves a sponsor
+        carrying more than the charge is worth. Nothing downstream would notice:
+        the residual is still non-negative and the totals still add up.
+
+        Correcting it properly means deciding what the sponsor now owes and
+        whether anything must be given back, which is the credit/adjustment
+        accounting this phase deliberately does not build. So the write is
+        refused, and the operator is pointed at the lifecycle that IS safe:
+        cancel the share, reprice, record the corrected share.
+
+        Only AUTHORIZED money constrains the charge. A draft is a proposal and
+        must never block an ordinary pricing correction.
+        """
+        for line in self.sudo():  # read-only elevation; see _check_allocation_non_negative
+            authorized = line.amount_sponsor_authorized
+            if authorized > line.amount_estimated + AMOUNT_TOLERANCE:
+                raise ValidationError(
+                    "Charge %s is worth %.2f but %.2f is already authorized to a "
+                    "sponsor. Reducing it would leave the sponsor carrying more "
+                    "than the charge.\n\nCancel the sponsor responsibility "
+                    "first, then reprice, then record the corrected share."
+                    % (line.name, line.amount_estimated, authorized)
                 )
 
     @api.constrains("qty_credited", "qty_invoiced")

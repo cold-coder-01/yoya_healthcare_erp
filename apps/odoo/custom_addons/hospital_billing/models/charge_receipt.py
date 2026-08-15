@@ -360,9 +360,61 @@ class HospitalChargeReceiptAllocation(models.Model):
                 % (action, ", ".join(g.split(".")[-1] for g in INTAKE_GROUPS))
             )
 
+    @api.constrains("amount", "charge_line_id", "receipt_state")
+    def _check_within_patient_responsibility(self):
+        """A patient may not be asked to fund the sponsor's share.
+
+        ENFORCE MODE ONLY. Under 'off' and 'shadow' this returns immediately, so
+        legacy receipt behaviour -- including deliberate over-collection that the
+        existing advance/credit machinery already handles -- is untouched. That
+        is what makes shadow safe to switch on mid-day.
+
+        The ceiling is the patient RESIDUAL, not the charge value: with 1000 of
+        1500 authorized to a sponsor, a receipt may allocate at most 500 to that
+        charge however the cashier reached the number.
+        """
+        for alloc in self:
+            charge = alloc.charge_line_id.sudo()
+            if not charge or charge._responsibility_mode() != "enforce":
+                continue
+            if alloc.receipt_state == "cancelled":
+                continue
+            ceiling = charge.amount_patient_responsibility
+            # Every allocation still in play, not just confirmed ones: this
+            # constraint fires while the receipt is still draft, so
+            # charge.amount_received does not yet include the row being written.
+            allocated = sum(
+                charge.allocation_ids.filtered(
+                    lambda a: a.receipt_state != "cancelled"
+                ).mapped("amount")
+            )
+            if allocated > ceiling + AMOUNT_TOLERANCE:
+                raise ValidationError(
+                    "Charge %s: %.2f has been allocated to the patient, but the "
+                    "patient is responsible for only %.2f -- a sponsor carries "
+                    "%.2f. The cashier collects the patient share, never the "
+                    "sponsor's."
+                    % (
+                        charge.name,
+                        allocated,
+                        ceiling,
+                        charge.amount_sponsor_authorized,
+                    )
+                )
+
     @api.model_create_multi
     def create(self, vals_list):
         self._assert_intake_group("allocate a payment")
+        # Serialize against a concurrent sponsor authorization or edit. Without
+        # this, a cashier can read a patient residual, have an officer change
+        # the split, and write a receipt computed from a state that no longer
+        # exists. Same advisory key the responsibility workflow takes.
+        Account = self.env["hospital.billing.account"]
+        for vals in vals_list:
+            charge = self.env["hospital.charge.line"].sudo().browse(
+                vals.get("charge_line_id")
+            )
+            Account._lock_responsibility_scope(charge.billing_account_id.id)
         allocations = super().create(vals_list)
         for alloc in allocations:
             alloc._log_audit("create",
@@ -470,19 +522,26 @@ class HospitalChargePaymentWizard(models.TransientModel):
     # ------------------------------------------------------------------
     @api.model
     def _payable_charges(self, charges):
-        """Active charges that can still legitimately receive money."""
+        """Active charges that can still legitimately receive PATIENT money.
+
+        Under 'enforce' a fully sponsored charge has a zero patient ceiling and
+        therefore drops out of the wizard entirely -- the cashier is never shown
+        a line they must not collect against.
+        """
         return charges.sudo().filtered(
             lambda c: c.charge_state == "active"
-            and (c.amount_estimated - c.amount_received + c.amount_refunded)
-            > AMOUNT_TOLERANCE
+            and self._charge_available(c) > AMOUNT_TOLERANCE
         )
 
     @api.model
     def _charge_available(self, charge):
-        charge = charge.sudo()
-        return max(
-            0.0, charge.amount_estimated - charge.amount_received + charge.amount_refunded
-        )
+        """Cash this charge may still take from the PATIENT.
+
+        Delegates to the charge's own helper so the sponsor/patient arithmetic
+        lives in exactly one place. Under 'off' and 'shadow' the helper returns
+        the legacy amount_estimated-based figure, so the wizard is unchanged.
+        """
+        return charge.sudo().get_patient_payable_ceiling()
 
     @api.model
     def _resolve_source_charges(self, charge_id=None, account_id=None, request_id=None, radiology_request_id=None):

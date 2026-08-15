@@ -2,6 +2,7 @@ from . import models
 
 from .db_constraints import (
     ensure_agreement_overlap_exclusion,
+    ensure_charge_responsibility_live_unique,
     ensure_patient_payer_overlap_exclusion,
 )
 
@@ -14,3 +15,4 @@ def post_init_hook(env):
     """
     ensure_agreement_overlap_exclusion(env.cr)
     ensure_patient_payer_overlap_exclusion(env.cr)
+    ensure_charge_responsibility_live_unique(env.cr)

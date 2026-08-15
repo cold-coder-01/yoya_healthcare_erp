@@ -10,7 +10,7 @@ controlled error so callers can be written against the stable API today.
 """
 
 from odoo import api, fields, models
-from odoo.exceptions import UserError
+from odoo.exceptions import UserError, ValidationError
 
 from .charge_line import ACCOUNTING_GROUPS, AMOUNT_TOLERANCE, G_RECEPTIONIST
 
@@ -293,8 +293,10 @@ class HospitalBillingEngine(models.AbstractModel):
                 lambda c: c.charge_state in ("draft", "active")
             )
 
-        # Emergency bypass short-circuits everything. It is already audited on the
-        # encounter (reason + authorizer + timestamp are mandatory there).
+        # Emergency bypass short-circuits everything, ahead of the mode read. It
+        # is an INDEPENDENT authorized route and is never merged with payer
+        # sponsorship: a bypass says care proceeds without payment being settled,
+        # which is a different claim from a sponsor having agreed to pay.
         if enc.emergency_bypass:
             _persist("emergency_bypass")
             return {
@@ -308,11 +310,31 @@ class HospitalBillingEngine(models.AbstractModel):
             return {"cleared": True, "state": "not_required", "amount_due": 0.0,
                     "reason": "No billing account; nothing to clear."}
 
+        mode = enc.company_id.sudo().payer_responsibility_mode or "off"
+
+        # WHICH DOMAIN OWNS THIS VISIT.
+        #
+        # Under 'enforce', a visit that participates in the NEW responsibility
+        # domain must be answered by the responsibility engine and by nothing
+        # else. Letting the legacy whole-bill waiver answer first would mean an
+        # encounter with a merely DRAFTED sponsor share -- one nobody
+        # authorized -- still cleared for zero cash, because payer_type happened
+        # to read 'insurance'. That is the exact bypass Phase 2B refused to
+        # create by writing payer_type, and it must not reappear here.
+        #
+        # A visit that does NOT participate keeps the legacy waiver untouched,
+        # so existing sponsored data goes on working with no migration.
+        new_domain = mode == "enforce" and self._participates_in_responsibility(
+            enc, _scope()
+        )
+
         # Third-party payers: clearance is authorization/credit, never cash.
-        # NOTE: this records that a payer has AUTHORIZED the charge. It is not a
-        # validation of the insurance policy itself -- no eligibility, benefit or
-        # coverage-limit checking exists yet.
-        if enc.payer_type != "self_pay":
+        #
+        # LEGACY. Driven by encounter.payer_type, which Phase 2B/3 deliberately
+        # does not write and this engine deliberately does not read as a source
+        # of any sponsor split. Untouched under 'off' and 'shadow', and untouched
+        # under 'enforce' for any visit outside the new domain.
+        if enc.payer_type != "self_pay" and not new_domain:
             pending = _scope().filtered(lambda c: c.authorization_state == "pending")
             if pending:
                 _persist("pending")
@@ -325,7 +347,18 @@ class HospitalBillingEngine(models.AbstractModel):
             return {"cleared": True, "state": "credit_authorized", "amount_due": 0.0,
                     "reason": "Payer credit authorized; no cash required."}
 
+        if mode == "enforce":
+            decision = self._responsibility_clearance(enc, _scope())
+            if decision is not None:
+                _persist(decision["state"])
+                return decision
+
         # Self-pay: only PREPAID services demand cash before delivery.
+        #
+        # Reached in every mode when no sponsor share is in play. Under 'off' and
+        # 'shadow' amount_due_for_clearance is the legacy whole-charge figure, so
+        # this arm is unchanged; under 'enforce' with no authorized sponsor the
+        # patient residual EQUALS amount_estimated, so it is unchanged there too.
         due = sum(_scope().mapped("amount_due_for_clearance"))
         if due > AMOUNT_TOLERANCE:
             _persist("pending")
@@ -334,6 +367,120 @@ class HospitalBillingEngine(models.AbstractModel):
         _persist("cleared")
         return {"cleared": True, "state": "cleared", "amount_due": 0.0,
                 "reason": "No outstanding pre-service payment."}
+
+    @api.model
+    def _participates_in_responsibility(self, encounter, charges):
+        """Is this visit inside the NEW payer responsibility domain?
+
+        Deterministic, and read from new-domain fields ONLY -- never inferred
+        from the legacy payer_type, and never from a business rule about what
+        kind of visit "ought" to be sponsored. Two signals, either sufficient:
+
+          1. the visit carries a payer eligibility (encounter.patient_payer_id),
+             which is the Front Desk act that puts a visit into this domain; or
+          2. some live charge already carries a sponsor share, drafted or
+             authorized (responsibility_state != 'self_pay').
+
+        Signal 1 matters on its own: an eligibility recorded with no share yet
+        means the sponsor carries NOTHING, so the patient carries everything.
+        Falling back to the legacy waiver there would clear the visit for zero
+        cash on the strength of an identity that promises no money.
+
+        Signal 2 catches the reverse case -- a share exists but the eligibility
+        was later cleared off the encounter -- so a row can never be orphaned
+        into a domain that no longer governs it.
+        """
+        if encounter.sudo().patient_payer_id:
+            return True
+        return bool(
+            charges.sudo().filtered(
+                lambda c: c.responsibility_state != "self_pay"
+            )
+        )
+
+    @api.model
+    def _responsibility_clearance(self, encounter, charges):
+        """ENFORCE-mode decision, or None to fall through to the cash arm.
+
+        Returns None -- not a verdict -- whenever no sponsor share is in play,
+        so a self-pay visit under 'enforce' takes exactly the same code path it
+        takes under 'off'. That is what makes enforce safe to switch on for a
+        hospital whose visits are mostly self-pay.
+
+        Order is deterministic and fails CLOSED:
+
+            1. a sponsor share exists but is only PROPOSED  -> blocked
+            2. patient cash still due                       -> blocked
+            3. patient share is zero, sponsor carries it all -> sponsor_cleared
+            4. mixed and settled                             -> cleared
+        """
+        sponsored = charges.filtered(
+            lambda c: c.responsibility_state in ("proposed", "authorized")
+        )
+        if not sponsored:
+            return None
+
+        # 1. An unauthorized proposal is not a promise to pay. A visit must never
+        #    be cleared merely because an eligibility was selected at the desk.
+        proposed = sponsored.filtered(
+            lambda c: c.responsibility_state == "proposed"
+        )
+        if proposed:
+            return {
+                "cleared": False,
+                "state": "pending",
+                "amount_due": sum(charges.mapped("amount_due_for_clearance")),
+                "reason": (
+                    "Sponsor responsibility is recorded but NOT authorized for: %s. "
+                    "An authorized sponsor share is required before the patient "
+                    "share can be treated as final."
+                    % ", ".join(proposed.mapped("description"))
+                ),
+            }
+
+        # 2. Whatever the patient still owes, on the patient share alone.
+        due = sum(charges.mapped("amount_due_for_clearance"))
+        if due > AMOUNT_TOLERANCE:
+            return {
+                "cleared": False,
+                "state": "pending",
+                "amount_due": due,
+                "reason": (
+                    "Patient responsibility of %.2f is required before service; "
+                    "the sponsor carries %.2f."
+                    % (due, sum(charges.mapped("amount_sponsor_authorized")))
+                ),
+            }
+
+        # 3. Fully sponsored: no cash was required and none was taken. This is a
+        #    financially valid state for the doctor-start gate, and it is NOT
+        #    'cleared' -- nothing was paid.
+        patient_share = sum(charges.mapped("amount_patient_responsibility"))
+        if patient_share <= AMOUNT_TOLERANCE:
+            return {
+                "cleared": True,
+                "state": "sponsor_cleared",
+                "amount_due": 0.0,
+                "reason": (
+                    "Fully sponsored: %.2f authorized to %s. No patient cash is "
+                    "required."
+                    % (
+                        sum(charges.mapped("amount_sponsor_authorized")),
+                        encounter.patient_payer_id.sudo().display_name or "the sponsor",
+                    )
+                ),
+            }
+
+        # 4. Mixed, and the patient's part has been settled.
+        return {
+            "cleared": True,
+            "state": "cleared",
+            "amount_due": 0.0,
+            "reason": (
+                "Patient responsibility settled; %.2f carried by the sponsor."
+                % sum(charges.mapped("amount_sponsor_authorized"))
+            ),
+        }
 
     @api.model
     def mark_charge_in_progress(self, charge):
@@ -403,8 +550,106 @@ class HospitalBillingEngine(models.AbstractModel):
         return self._not_implemented("reverse_charge")
 
     @api.model
-    def allocate_payer(self, billing_account):
-        return self._not_implemented("allocate_payer")
+    def allocate_payer(
+        self,
+        billing_account,
+        charge=None,
+        amount=None,
+        reason=None,
+        request_token=None,
+        authorize=False,
+        authorization_reference=None,
+    ):
+        """Record -- and optionally authorize -- a sponsor share for one charge.
+
+        RECORDS a decision; it does not CALCULATE one. There is no coverage
+        percentage, copay rate or benefit schedule anywhere in this system, so
+        the amount is supplied by an authorized officer. Deriving it would mean
+        inventing the rule.
+
+        Idempotent through ``request_token``: a retry returns the existing row
+        rather than adding a second share, exactly as
+        hospital.billing.account.record_operational_payment() does with
+        intake_token. Callers that omit the token get no replay protection.
+
+        Returns the hospital.charge.responsibility record.
+        """
+        Responsibility = self.env["hospital.charge.responsibility"]
+        Responsibility._assert_authority("allocate sponsor responsibility")
+
+        account = billing_account
+        if account:
+            account.ensure_one()
+        if charge is None:
+            raise UserError(
+                "allocate_payer requires the charge the sponsor share applies "
+                "to. Responsibility is per charge, because invoicing, delivery "
+                "and cash allocation are all per charge."
+            )
+        charge.ensure_one()
+        if account and charge.sudo().billing_account_id != account:
+            raise UserError(
+                "Charge %s does not belong to billing account %s."
+                % (charge.name, account.name)
+            )
+        account = account or charge.sudo().billing_account_id
+
+        # Serialize against the cashier and against a concurrent authorization
+        # BEFORE reading anything we are about to decide on.
+        self.env["hospital.billing.account"]._lock_responsibility_scope(account.id)
+
+        if request_token:
+            existing = Responsibility.sudo().search(
+                [("request_token", "=", request_token)], limit=1
+            )
+            if existing:
+                same_request = (
+                    existing.charge_id == charge
+                    and abs(existing.amount - float(amount or 0.0)) <= AMOUNT_TOLERANCE
+                )
+                if not same_request:
+                    raise ValidationError(
+                        "This responsibility request token has already been used "
+                        "for a different charge or amount."
+                    )
+                if authorize and existing.state == "draft":
+                    existing.action_authorize(
+                        authorization_reference=authorization_reference
+                    )
+                return existing
+
+        if amount is None:
+            raise UserError(
+                "allocate_payer requires an explicit sponsor amount. No coverage "
+                "rule exists from which one could be derived."
+            )
+        amount = float(amount)
+
+        encounter = charge.sudo().encounter_id
+        eligibility = encounter.patient_payer_id
+        if not eligibility:
+            raise UserError(
+                "Encounter %s has no payer eligibility selected, so no sponsor "
+                "can carry any part of its charges."
+                % encounter.name
+            )
+
+        record = Responsibility.create(
+            {
+                "charge_id": charge.id,
+                "patient_payer_id": eligibility.id,
+                "amount": amount,
+                "reason": reason or False,
+                # STORED, not merely searched. Omitting it made every retry miss
+                # the lookup above and create a second share.
+                "request_token": request_token or False,
+            }
+        )
+        if authorize:
+            record.action_authorize(
+                authorization_reference=authorization_reference
+            )
+        return record
 
     @api.model
     def create_invoice(self, billing_account, charges=None, request_token=None):

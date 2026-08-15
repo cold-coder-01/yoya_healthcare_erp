@@ -536,12 +536,21 @@ class TestPatientPayerFoundation(TransactionCase):
         eligibility.with_user(self.officer).action_activate()
         self.assertIn(eligibility, self.agreement.eligibility_ids)
 
-    def test_36_allocate_payer_remains_stub(self):
+    def test_36_allocate_payer_refuses_to_invent_a_split(self):
+        """UPDATED IN PHASE 3C/3D, which is what this test was built to force.
+
+        allocate_payer is no longer a stub. What it must still never do is
+        MANUFACTURE a split: the system has no coverage percentage, copay rate
+        or benefit schedule, so an amount has to be supplied by an authorized
+        officer. Called with no charge and no amount it refuses, rather than
+        guessing a number and writing it to a patient's bill.
+        """
+        engine = self.env["hospital.billing.engine"].with_user(self.manager)
         with self.assertRaises(UserError) as caught:
-            self.env["hospital.billing.engine"].allocate_payer(
-                self.env["hospital.billing.account"]
-            )
-        self.assertIn("not implemented", str(caught.exception).lower())
+            engine.allocate_payer(self.env["hospital.billing.account"])
+        message = str(caught.exception).lower()
+        self.assertIn("charge", message)
+        self.assertNotIn("not implemented", message)
 
     def test_37_financial_clearance_does_not_read_eligibility(self):
         source = inspect.getsource(
