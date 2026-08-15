@@ -89,10 +89,14 @@
                             <field name="currency_id" groups="base.group_multi_currency"/>
                             <field name="active"/>
                         </group>
+                        <!-- payer_type and payer_id are derived from the
+                             encounter and are read-only at model level. The
+                             `required` modifier is gone with the editability:
+                             a derived field is always populated, and the rule
+                             it expressed is enforced on the encounter itself. -->
                         <group string="Payer">
                             <field name="payer_type"/>
                             <field name="payer_id"
-                                required="payer_type != 'self_pay'"
                                 invisible="payer_type == 'self_pay'"/>
                             <field name="financial_clearance_state"/>
                         </group>

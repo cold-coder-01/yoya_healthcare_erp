@@ -46,19 +46,51 @@ class HospitalBillingAccount(models.Model):
     company_id = fields.Many2one(related="encounter_id.company_id", store=True, readonly=True)
     currency_id = fields.Many2one(related="encounter_id.currency_id", store=True, readonly=True)
 
+    # ------------------------------------------------------------------
+    # PAYER CLASSIFICATION -- THE ENCOUNTER IS THE AUTHORITATIVE SOURCE.
+    #
+    # These were plain columns, seeded once by
+    # hospital.billing.engine.get_or_create_billing_account() and never
+    # resynchronised afterwards. That produced two independently mutable
+    # classifications of the same fact:
+    #
+    #   hospital.billing.engine.check_financial_clearance()  reads ENCOUNTER.payer_type
+    #   hospital_billing_accounting._resolve_invoice_partner() reads ACCOUNT.payer_type
+    #
+    # so a legitimate post-creation correction on the encounter left the gate and
+    # the invoice customer disagreeing about who is paying, silently.
+    #
+    # The encounter wins, for three reasons:
+    #   1. It is what the CASH GATE already reads, and a gate that can be waived
+    #      by a stale copy is the more dangerous of the two failures.
+    #   2. It is already authority-guarded: encounter_payer.LEGACY_PAYER_FIELDS
+    #      restricts these two fields to PAYER_IDENTITY_AUTHORITY on every path,
+    #      including raw RPC. The account column had no such guard.
+    #   3. The account already derives patient_id, company_id and currency_id
+    #      from the encounter the same way. This adds no new idiom.
+    #
+    # readonly=True is load-bearing, not decoration: it suppresses the related
+    # field's inverse (odoo/fields.py, _setup_related_full), so the account can
+    # never write back to the encounter and bypass that guard. The account form
+    # therefore stops being a second, unguarded editor of the cash gate.
+    #
+    # NOT changed here, deliberately: check_financial_clearance() still reads the
+    # encounter and _resolve_invoice_partner() still reads the account. Both now
+    # read the same value by construction, so neither needed to move.
+    # ------------------------------------------------------------------
     payer_type = fields.Selection(
-        [
-            ("self_pay", "Self Pay"),
-            ("insurance", "Insurance"),
-            ("corporate", "Corporate"),
-            ("government", "Government"),
-            ("ngo", "NGO / Charity"),
-            ("other", "Other"),
-        ],
-        default="self_pay",
-        required=True,
+        related="encounter_id.payer_type",
+        store=True,
+        readonly=True,
+        index=True,
     )
-    payer_id = fields.Many2one("res.partner", string="Payer", ondelete="restrict")
+    payer_id = fields.Many2one(
+        related="encounter_id.payer_id",
+        string="Payer",
+        store=True,
+        readonly=True,
+        ondelete="restrict",
+    )
 
     financial_clearance_state = fields.Selection(
         FINANCIAL_CLEARANCE_STATES,
@@ -405,6 +437,11 @@ class HospitalBillingAccount(models.Model):
     # ------------------------------------------------------------------
     @api.constrains("payer_type", "payer_id")
     def _check_payer(self):
+        # Both fields are now derived from the encounter, whose own identical
+        # constraint (hospital_management.encounter._check_payer) already makes
+        # this unsatisfiable in practice. It is kept as a tripwire: if a later
+        # change ever un-relates these columns, the invariant fails loudly here
+        # rather than reaching the invoice engine as a payer-less credit account.
         for account in self:
             if account.payer_type != "self_pay" and not account.payer_id:
                 raise ValidationError("A payer is required when the payer type is not Self Pay.")
@@ -420,6 +457,36 @@ class HospitalBillingAccount(models.Model):
         return super().create(vals_list)
 
     def write(self, vals):
+        # THE PAYER CLASSIFICATION IS NOT WRITABLE HERE, BY ANY CALLER.
+        #
+        # readonly=True on the related fields is not sufficient on its own, and
+        # this is worth stating precisely because the gap is easy to re-open:
+        #
+        #   * at CREATE, a readonly computed field is not protected
+        #     (models.py, _prepare_create_values), so a supplied value is
+        #     recomputed away immediately -- harmless, and several existing
+        #     callers still pass payer_type there.
+        #   * at WRITE, nothing the related field DEPENDS ON has changed, so no
+        #     recomputation is scheduled and the supplied value simply persists
+        #     in the column. That is drift, reintroduced through the exact hole
+        #     this change exists to close.
+        #
+        # Superuser is NOT exempt. Unlike the derived financial states below,
+        # there is no controlled workflow that legitimately writes these on the
+        # account: the one former writer, get_or_create_billing_account(), has
+        # been changed to stop copying them. Recomputation from the encounter
+        # does not route through this method.
+        payer_classification = {"payer_type", "payer_id"} & set(vals)
+        if payer_classification:
+            raise AccessError(
+                "The payer classification is derived from the encounter and "
+                "cannot be set on the billing account: %s. Change it on "
+                "hospital.encounter, where it is restricted to the "
+                "Insurance/Credit Officer, Hospital Manager and System "
+                "Administrator roles, and the account will follow."
+                % ", ".join(sorted(payer_classification))
+            )
+
         protected_financial_states = {
             "operational_funding_state",
             "accounting_receipt_state",

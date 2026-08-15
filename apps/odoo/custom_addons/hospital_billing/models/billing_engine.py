@@ -85,12 +85,14 @@ class HospitalBillingEngine(models.AbstractModel):
         )
         if account:
             return account
+        # payer_type and payer_id are deliberately NOT passed. They used to be
+        # COPIED here, once, and never resynchronised -- which is exactly how the
+        # account's classification could drift away from the encounter's while
+        # check_financial_clearance kept reading the encounter and the invoice
+        # engine kept reading the account. They are now stored related fields on
+        # hospital.billing.account and derive themselves from encounter_id.
         return self.env["hospital.billing.account"].create(
-            {
-                "encounter_id": encounter.id,
-                "payer_type": encounter.payer_type,
-                "payer_id": encounter.payer_id.id or False,
-            }
+            {"encounter_id": encounter.id}
         )
 
     @api.model
