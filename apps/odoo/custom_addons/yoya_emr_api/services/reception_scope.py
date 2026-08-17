@@ -195,6 +195,45 @@ def may_triage(env):
     )
 
 
+# Who may OPEN the Cashier Desk (a read gate), as opposed to who may take money
+# (OPERATIONAL_INTAKE_GROUPS, the write gate). They are the same tuple today and
+# are still stated separately on purpose: reading the payment queue and moving
+# cash are different acts, and a future read-only supervisor role belongs here
+# without being handed intake rights.
+#
+# The Front Desk Nurse is deliberately ABSENT, mirroring FRONT_DESK_GROUPS'
+# exclusion of the Cashier. The two workstations do not read each other's
+# queues.
+CASHIER_DESK_GROUPS = OPERATIONAL_INTAKE_GROUPS
+
+
+def may_cashier_desk(env):
+    """May this user open the Cashier Desk and read its worklist?"""
+    return _in_any(env, CASHIER_DESK_GROUPS)
+
+
+def cashier_capability_flags(env):
+    """What the Cashier Desk may do. Every flag mirrors a server-side guard.
+
+    Deliberately NARROW. Sponsor authorization, eligibility editing and
+    consultation start are absent because the Cashier holds none of them, and a
+    flag the client could not act on anyway is an invitation to build a button
+    that 403s.
+    """
+    return {
+        "cashier_desk": may_cashier_desk(env),
+        "record_payment": may_record_payment(env),
+        # An accounting act. A cashier sees False and the server enforces it
+        # again in hospital_billing.
+        "post_receipt_accounting": _in_any(
+            env, (GROUP_ACCOUNTANT, GROUP_MANAGER, GROUP_SYSADMIN)
+        ),
+        # Reported so the desk can name the role that must unblock a visit whose
+        # sponsor share is unauthorized, WITHOUT offering the action.
+        "authorize_sponsor": may_authorize_payer(env),
+    }
+
+
 def front_desk_capability_flags(env):
     """Capabilities the front-desk workstation needs, all authoritative.
 

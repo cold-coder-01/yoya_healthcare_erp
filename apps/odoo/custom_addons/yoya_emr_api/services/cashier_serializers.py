@@ -291,12 +291,146 @@ def cashier_permitted_actions(env):
     }
 
 
-def serialize_cashier_payment_result(env, appointment, receipt):
-    """The complete cashier-safe payment response.
+# ----------------------------------------------------------------------
+# THE CASHIER LANE.
+#
+# Which of four operational situations a visit is in, decided SERVER-SIDE from
+# the authoritative figures. The desk renders the lane; it never derives it.
+#
+# 'blocked' is the one that matters: a sponsor share exists but nobody has
+# authorized it, so the patient must not be asked for the full amount and the
+# Cashier cannot fix it either. The visit stays VISIBLE -- hiding it would
+# strand a patient invisibly between two desks -- but the payment form is
+# closed and the desk names the role that can unblock it.
+# ----------------------------------------------------------------------
+CASHIER_LANES = ("collect", "partial", "blocked", "cleared")
 
-    Reads nothing a Hospital Cashier cannot read. Call it inside the same
-    savepoint as the payment mutation so that a failure here rolls the money
-    back instead of committing it behind an error response.
+
+def resolve_collectability(encounter, account):
+    """MAY the cashier take money for this visit, and if not, why not.
+
+    SERVER-AUTHORITATIVE AND COMPLETE. The desk renders this verdict; it never
+    infers one from amounts. Deriving collectability client-side from figures
+    alone cannot distinguish "nothing to pay because it is settled" from
+    "nothing to pay because nobody authorized the sponsor yet" -- two states
+    that look identical in numbers and mean opposite things at the window.
+
+    Order is deterministic and fails closed.
+    """
+    if not encounter or not account:
+        return {
+            "collectable": False,
+            "lane": "cleared",
+            "reason": "This visit has no billing account.",
+            "reason_code": "no_billing_account",
+        }
+
+    # Emergency bypass is an independent authorized route. Care proceeds without
+    # payment being settled; it is not a collection job and never enters the
+    # normal payment lane.
+    if encounter.emergency_bypass:
+        return {
+            "collectable": False,
+            "lane": "cleared",
+            "reason": "Emergency bypass authorized. No payment is required before care.",
+            "reason_code": "emergency_bypass",
+        }
+
+    # Live clearance, never the stored mirror. Covers self-pay paid, mixed
+    # settled, and fully sponsored (sponsor_cleared) in one test.
+    if encounter.reception_clearance_ok:
+        return {
+            "collectable": False,
+            "lane": "cleared",
+            "reason": "This visit is financially cleared. Nothing is due from the patient.",
+            "reason_code": "already_cleared",
+        }
+
+    # A sponsor share exists but nobody has authorized it. Only reachable under
+    # 'enforce': in off/shadow the responsibility engine gates nothing, so a
+    # proposed share never blocks and the visit is an ordinary collection.
+    mode = encounter.company_id.sudo().payer_responsibility_mode or "off"
+    if mode == "enforce" and account.responsibility_state == "proposed":
+        return {
+            "collectable": False,
+            "lane": "blocked",
+            "reason": (
+                "A sponsor share has been recorded but not authorized. The "
+                "patient must not be charged the full amount until an "
+                "Insurance/Credit Officer authorizes it."
+            ),
+            "reason_code": "sponsor_authorization_pending",
+        }
+
+    if account.amount_patient_outstanding <= 0.0:
+        # Not cleared, yet nothing outstanding: some other charge-level gate is
+        # holding the visit. Say so rather than offering a zero collection.
+        return {
+            "collectable": False,
+            "lane": "blocked",
+            "reason": "Nothing is currently collectable from the patient on this visit.",
+            "reason_code": "nothing_outstanding",
+        }
+
+    partial = account.amount_received > 0.0
+    return {
+        "collectable": True,
+        "lane": "partial" if partial else "collect",
+        "reason": None,
+        "reason_code": None,
+    }
+
+
+def resolve_cashier_lane(encounter, account):
+    """Lane only, for queue rows that do not need the full verdict."""
+    return resolve_collectability(encounter, account)["lane"]
+
+
+def serialize_cashier_worklist_row(appointment, stage):
+    """One queue row. Identity, lane and the single number that matters.
+
+    ``stage`` is passed IN, already resolved under sudo() by the controller.
+    It is not read from the appointment here: front_desk_stage is a non-stored
+    compute that traverses evaluation_ids into hospital.patient.evaluation,
+    which a Hospital Cashier holds no ACL on. Reading it as the cashier raises
+    AccessError -- the same failure mode this module's header documents for
+    clinical_queue_stage.
+    """
+    encounter = appointment.encounter_id
+    account = encounter.billing_account_id if encounter else None
+    patient = appointment.patient_id
+    return {
+        "appointment_id": appointment.id,
+        "appointment_code": appointment.appointment_code,
+        "appointment_date": datetime_value(appointment.appointment_date),
+        "stage": stage,
+        "lane": resolve_cashier_lane(encounter, account),
+        "patient": {
+            "id": patient.id,
+            "name": patient.name,
+            "identification_code": patient.identification_code,
+        },
+        "encounter_name": encounter.name if encounter else None,
+        # The one figure a cashier scans the queue for.
+        "patient_outstanding": float_value(
+            account.amount_patient_outstanding if account else 0.0
+        ),
+        "patient_paid": float_value(account.amount_received if account else 0.0),
+        "responsibility_state": selection_value(
+            account.responsibility_state if account else False
+        ),
+        "financially_cleared": bool(
+            encounter.reception_clearance_ok if encounter else False
+        ),
+    }
+
+
+def serialize_cashier_visit_detail(env, appointment):
+    """THE canonical cashier visit payload.
+
+    Returned by the detail endpoint AND embedded in every payment response, so
+    the desk has exactly one financial shape to render and a post-payment
+    refresh is a re-render rather than a second mapping.
     """
     encounter = appointment.encounter_id
     account = encounter.billing_account_id if encounter else None
@@ -306,7 +440,8 @@ def serialize_cashier_payment_result(env, appointment, receipt):
         "encounter": serialize_cashier_encounter(encounter),
         "billing_account": serialize_cashier_account(account),
         "financial": serialize_financial_block(encounter, account),
-        "receipt": serialize_cashier_receipt(receipt),
+        # The verdict, not the ingredients. See resolve_collectability.
+        "collectability": resolve_collectability(encounter, account),
         "charge_lines": [
             serialize_cashier_charge_line(line)
             for line in (account.charge_line_ids if account else [])
@@ -314,3 +449,18 @@ def serialize_cashier_payment_result(env, appointment, receipt):
         "clearance": serialize_cashier_clearance(encounter),
         "permitted_actions": cashier_permitted_actions(env),
     }
+
+
+def serialize_cashier_payment_result(env, appointment, receipt):
+    """The complete cashier-safe payment response.
+
+    Reads nothing a Hospital Cashier cannot read. Call it inside the same
+    savepoint as the payment mutation so that a failure here rolls the money
+    back instead of committing it behind an error response.
+
+    It is the canonical visit payload PLUS the receipt just created, so the
+    client can replace its whole visit state from one response.
+    """
+    payload = serialize_cashier_visit_detail(env, appointment)
+    payload["receipt"] = serialize_cashier_receipt(receipt)
+    return payload

@@ -1,9 +1,11 @@
 import Link from "next/link";
 
 import {
+  canUseCashier,
   canUseClinical,
   canUseFrontDesk,
   canUseReception,
+  CASHIER_ROUTE,
   FRONT_DESK_ROUTE,
   type ReceptionRoles,
 } from "@/lib/reception-roles";
@@ -27,6 +29,9 @@ export default function ReceptionSidebar({
   const showFrontDesk = canUseFrontDesk(roles);
   const showReception = canUseReception(roles);
   const showClinical = canUseClinical(roles);
+  // Offered to anyone who may open the desk, INCLUDING a manager or accountant
+  // who lands elsewhere. A landing route is a default, not a restriction.
+  const showCashier = canUseCashier(roles);
 
   // B2.2 RETIRED THE SCAFFOLDING.
   //
@@ -57,6 +62,7 @@ export default function ReceptionSidebar({
       href: "/triage",
       visible: showClinical && !showFrontDesk,
     },
+    { label: "Cashier Desk", href: CASHIER_ROUTE, visible: showCashier },
   ].filter((item) => item.visible);
 
   return (

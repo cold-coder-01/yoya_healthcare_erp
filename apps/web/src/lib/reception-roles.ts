@@ -34,6 +34,7 @@ export type ReceptionRoles = {
 export const RECEPTION_ROUTE = "/reception";
 export const CLINICAL_ROUTE = "/triage";
 export const FRONT_DESK_ROUTE = "/front-desk";
+export const CASHIER_ROUTE = "/cashier";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -133,6 +134,30 @@ export function canUseFrontDesk(roles: ReceptionRoles | null): boolean {
 }
 
 /**
+ * Cashier Desk visibility.
+ *
+ * Mirrors the server's CASHIER_DESK_GROUPS (yoya_emr_api reception_scope),
+ * which is OPERATIONAL_INTAKE_GROUPS: cashier, accountant, manager, admin.
+ * The server refuses the worklist for anyone else, so this only decides
+ * whether the link and the landing route are offered.
+ *
+ * A Front Desk Nurse is deliberately absent, mirroring the server's exclusion
+ * of the Cashier from the front-desk worklist. The two workstations do not
+ * read each other's queues.
+ */
+export function canUseCashier(roles: ReceptionRoles | null): boolean {
+  if (!roles) {
+    return false;
+  }
+  return (
+    roles.cashier ||
+    roles.accountant ||
+    roles.manager ||
+    roles.system_administrator
+  );
+}
+
+/**
  * Where a user belongs immediately after login.
  *
  * Front Desk is checked FIRST, ahead of the reception/clinical split. Without
@@ -145,10 +170,32 @@ export function canUseFrontDesk(roles: ReceptionRoles | null): boolean {
  * operational decision, so holding it is a statement of intent -- and the
  * sidebar still offers them every link their other roles allow, so nothing is
  * lost. A manager WITHOUT the group is completely unaffected.
+ *
+ * CASHIER sits between front desk and reception, and its absence was a real
+ * bug: a pure Cashier holds no front-desk and no reception-side role, so they
+ * fell through BOTH branches by elimination and landed on the clinical
+ * Evaluation Queue -- a workspace they cannot act in. `roles.cashier` was
+ * parsed by parseReceptionRoles all along and read by nothing.
+ *
+ * It is placed BELOW front desk for the reason above (that group is an explicit
+ * grant), and ABOVE reception because a reception-side role is broad: a Manager
+ * who also holds Cashier is far more likely to want the Reception Queue as
+ * their default, and canUseReception already catches them first... which is
+ * exactly why the cashier branch tests the NARROW flag. See canUseCashier:
+ * manager/admin do get the cashier LINK, but a manager still LANDS on
+ * reception, because canUseReception is evaluated on the same pass.
  */
 export function landingRouteForRoles(roles: ReceptionRoles | null): string {
   if (canUseFrontDesk(roles)) {
     return FRONT_DESK_ROUTE;
   }
-  return canUseReception(roles) ? RECEPTION_ROUTE : CLINICAL_ROUTE;
+  if (canUseReception(roles)) {
+    return RECEPTION_ROUTE;
+  }
+  // Narrow on purpose: only a user whose reception-side identity is "cashier"
+  // (or accountant) lands here. Manager and admin were already routed above.
+  if (canUseCashier(roles)) {
+    return CASHIER_ROUTE;
+  }
+  return CLINICAL_ROUTE;
 }
