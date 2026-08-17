@@ -118,6 +118,15 @@ FROZEN_TERM_FIELDS = frozenset(
         "authorization_required",
         "guarantee_required",
         "tariff_mode",
+        # Benefit policy. A coverage default decides how much of every
+        # unmatched charge a sponsor carries, which is as commercial as a
+        # ceiling -- omitting these was how an activated agreement's coverage
+        # stayed editable. The per-service rules live on their own model and
+        # cannot be frozen by a column list; hospital.payer.benefit.rule
+        # enforces the same rule against this agreement's state instead.
+        "default_coverage_policy",
+        "default_coverage_percent",
+        "benefit_period",
     }
 )
 
@@ -137,9 +146,19 @@ ALLOWED_TRANSITIONS = {
 }
 
 BOUNDED_LIMIT_BLOCKED = (
-    "Bounded payer limits require the utilization ledger.\n"
-    "Only Unlimited agreements can be activated at this time."
+    "An Agreement-wide Pool ceiling requires organisation-level utilization "
+    "aggregation, which does not exist yet.\n"
+    "Use Unlimited, Per Member or Per Visit."
 )
+
+# Limit scopes whose consumption this module can actually derive, and therefore
+# actually enforce. Per Member sums a patient's authorized sponsor shares over
+# the benefit period; Per Visit sums them within one encounter. Both are
+# answerable from hospital.charge.responsibility alone.
+#
+# 'agreement' is absent: an organisation-wide pool would have to aggregate
+# across every member of the contract, which this slice deliberately does not do.
+ENFORCEABLE_LIMIT_SCOPES = ("member", "visit")
 
 
 class HospitalPayerAgreement(models.Model):
@@ -290,6 +309,81 @@ class HospitalPayerAgreement(models.Model):
         "records the commercial intent without pretending the behaviour exists.",
     )
 
+    # --- Benefit policy ------------------------------------------------
+    #
+    # The rule table lives on its own model; only the AGREEMENT-WIDE fallback
+    # and the period live here. Putting per-service terms on the agreement is
+    # what turns a contract form into a configuration screen nobody reads.
+    # groups= is NOT decoration here. The Front Desk Nurse, Receptionist and
+    # Cashier all hold a read ACL on this model and none holds one on the rule
+    # model, so an unqualified agreement.read() -- which Odoo answers with every
+    # readable field -- would raise AccessError for all three the moment this
+    # One2many existed. test_payer_field_exposure caught exactly that.
+    #
+    # Protecting it also states the right thing: a coverage rate is a commercial
+    # term, and PAYER_COMMERCIAL_READ is where every other one already lives.
+    benefit_rule_ids = fields.One2many(
+        "hospital.payer.benefit.rule",
+        "agreement_id",
+        string="Benefit Rules",
+        groups=PAYER_COMMERCIAL_READ,
+        # copy=True IS LOAD-BEARING. Odoo defaults One2many to copy=False
+        # ("o2m are not copied by default", fields.py), so without this an
+        # amendment produced by _create_amendment() -> self.copy() carried NO
+        # coverage terms at all: the new version would silently cover nothing
+        # and every sponsored visit under it would fall back to the default
+        # policy. An amendment must continue the contract, not blank it.
+        #
+        # The copied rows are NEW records pointing at the NEW draft version, so
+        # the two versions never share a mutable rule.
+        copy=True,
+    )
+    benefit_rule_count = fields.Integer(
+        compute="_compute_benefit_rule_count",
+        compute_sudo=True,
+        groups=PAYER_COMMERCIAL_READ,
+    )
+    default_coverage_policy = fields.Selection(
+        [
+            ("manual_authorization", "Require Manual Authorization"),
+            ("not_covered", "Not Covered"),
+            ("default_percentage", "Default Percentage"),
+        ],
+        required=True,
+        # THE UPGRADE-SAFETY DEFAULT, and the single most important choice in
+        # this slice. Every agreement that existed before benefit rules gets
+        # 'manual_authorization', which permits nothing automatically and leaves
+        # the officer's manual decision exactly as authoritative as it was
+        # yesterday. Defaulting to a percentage would grant sponsor coverage, on
+        # contracts nobody has reviewed, the moment the module upgrades.
+        default="manual_authorization",
+        tracking=True,
+        groups=PAYER_COMMERCIAL_READ,
+        help="What applies to a service no benefit rule matches.",
+    )
+    default_coverage_percent = fields.Float(
+        string="Default Coverage (%)",
+        digits=(5, 2),
+        tracking=True,
+        groups=PAYER_COMMERCIAL_READ,
+        help="Used only when the default policy is Default Percentage.",
+    )
+    benefit_period = fields.Selection(
+        [
+            ("agreement_term", "Agreement Term"),
+            ("calendar_year", "Calendar Year"),
+        ],
+        required=True,
+        # Agreement term, NOT calendar year: a contract's own window is the
+        # period the parties actually agreed to. Assuming Jan-Dec would invent
+        # a reset date nobody signed.
+        default="agreement_term",
+        tracking=True,
+        groups=PAYER_COMMERCIAL_READ,
+        help="The window a Per Member ceiling is measured over. Ignored by "
+        "Unlimited and Per Visit scopes.",
+    )
+
     # --- History ------------------------------------------------------
     activated_by_id = fields.Many2one("res.users", readonly=True, copy=False)
     activated_at = fields.Datetime(readonly=True, copy=False)
@@ -366,6 +460,169 @@ class HospitalPayerAgreement(models.Model):
             if valid and agreement.effective_to and agreement.effective_to < today:
                 valid = False
             agreement.is_valid_today = valid
+
+    @api.depends("benefit_rule_ids")
+    def _compute_benefit_rule_count(self):
+        for agreement in self:
+            agreement.benefit_rule_count = len(agreement.benefit_rule_ids)
+
+    # ------------------------------------------------------------------
+    # BENEFIT CONSUMPTION -- DERIVED, NEVER STORED.
+    #
+    # There is no utilization ledger and deliberately so. Every figure a ledger
+    # would hold already exists on hospital.charge.responsibility:
+    #
+    #     reserved  = rows in state 'draft'      (proposed, not yet accepted)
+    #     consumed  = rows in state 'authorized' (the sponsor's commitment)
+    #     released  = rows in state 'cancelled'  (simply excluded below)
+    #
+    # A stored used_amount would be a second mutable number that can disagree
+    # with those rows -- the exact failure Phase 3A removed from
+    # billing_account.payer_type. A derived figure cannot drift from its own
+    # definition, and it makes "cancelled releases the reservation" true by
+    # construction rather than by remembering to write the compensating entry.
+    #
+    # Cost, stated honestly: this is a SUM over responsibility rows on every
+    # evaluation. The rows are indexed on agreement_id, patient_payer_id and
+    # encounter_id, and a single patient's set is small. If a future phase needs
+    # organisation-wide aggregation, THAT is when a ledger earns its place.
+    # ------------------------------------------------------------------
+    def _benefit_period_bounds(self, on_date=None):
+        """The window a Per Member ceiling is measured over, or None.
+
+        Returns (start, end) as dates, either bound possibly None for an open
+        window. Per Visit does not use this: its scope is one encounter, not a
+        period.
+        """
+        self.ensure_one()
+        on_date = on_date or fields.Date.context_today(self)
+        if self.benefit_period == "calendar_year":
+            return (on_date.replace(month=1, day=1), on_date.replace(month=12, day=31))
+        # agreement_term: the window the parties actually signed.
+        return (self.effective_from, self.effective_to)
+
+    def _responsibility_domain(self, patient_payer=None, encounter=None, on_date=None):
+        """Rows that count against this agreement's ceiling.
+
+        Draft AND authorized both count. A draft is an outstanding proposal, and
+        letting a second proposal be evaluated as though the first did not exist
+        is how two officers each authorize half a ceiling twice over.
+        """
+        self.ensure_one()
+        domain = [
+            ("agreement_id", "=", self.id),
+            ("state", "in", ["draft", "authorized"]),
+            ("active", "=", True),
+        ]
+        if self.limit_scope == "visit":
+            # Per Visit is scoped to the encounter and to nothing else.
+            domain.append(("encounter_id", "=", encounter.id if encounter else False))
+            return domain
+
+        if patient_payer:
+            domain.append(("patient_payer_id", "=", patient_payer.id))
+        start, end = self._benefit_period_bounds(on_date=on_date)
+        # Bucketed on the ENCOUNTER's own date -- when care happened -- not on
+        # when someone got round to authorizing it. Authorization date would let
+        # a late approval land in the wrong benefit year.
+        if start:
+            domain.append(("encounter_id.opened_at", ">=", fields.Datetime.to_datetime(start)))
+        if end:
+            end_dt = fields.Datetime.to_datetime(end)
+            domain.append(
+                ("encounter_id.opened_at", "<", end_dt + timedelta(days=1))
+            )
+        return domain
+
+    def benefit_limit_for(self, patient_payer=None):
+        """The configured ceiling for this scope, or None when unbounded.
+
+        None means "no ceiling", which is NOT the same as 0.0 -- zero is an
+        exhausted benefit. Conflating them would silently deny every unlimited
+        agreement.
+        """
+        self.ensure_one()
+        record = self.sudo()  # limit_amount is PAYER_COMMERCIAL_READ
+        if record.limit_scope == "unlimited":
+            return None
+        if record.limit_scope == "member":
+            # The MEMBER's own ceiling wins when set; patient_payer.
+            # member_limit_amount is required for member scope precisely so each
+            # member carries their own. Fall back to the agreement figure only
+            # when the eligibility has none.
+            if patient_payer:
+                member_ceiling = patient_payer.sudo().member_limit_amount
+                if member_ceiling:
+                    return max(0.0, member_ceiling)
+            return max(0.0, record.limit_amount)
+        if record.limit_scope == "visit":
+            return max(0.0, record.limit_amount)
+        # 'agreement' cannot activate, so it is unreachable from a live visit.
+        # Returning None here would silently grant an unlimited pool; return 0.
+        return 0.0
+
+    def benefit_consumed_for(self, patient_payer=None, encounter=None, on_date=None):
+        """Sponsor amount already reserved or authorized in the relevant scope."""
+        self.ensure_one()
+        # sudo: the caller may be an officer who can read responsibility rows,
+        # or the evaluator running for a clearance check that must not raise on
+        # a row the user cannot see. Amounts are summed, never returned per row.
+        Responsibility = self.env["hospital.charge.responsibility"].sudo()
+        rows = Responsibility.search(
+            self._responsibility_domain(
+                patient_payer=patient_payer, encounter=encounter, on_date=on_date
+            )
+        )
+        return sum(rows.mapped("amount"))
+
+    def remaining_benefit_for(self, patient_payer=None, encounter=None, on_date=None):
+        """available = limit - (reserved + consumed). None when unbounded."""
+        self.ensure_one()
+        limit = self.benefit_limit_for(patient_payer=patient_payer)
+        if limit is None:
+            return None
+        consumed = self.benefit_consumed_for(
+            patient_payer=patient_payer, encounter=encounter, on_date=on_date
+        )
+        return max(0.0, limit - consumed)
+
+    # ------------------------------------------------------------------
+    # RULE MATCHING. Three tiers, resolved in one pass, deterministically.
+    # ------------------------------------------------------------------
+    def match_benefit_rule(self, service):
+        """The rule governing ``service`` under this agreement, or empty.
+
+        Precedence, exactly:
+
+            1. an EXCLUSION at either tier   -- always wins
+            2. a rule naming this service    -- specific beats general
+            3. a rule naming its category    -- service_type
+            4. (no rule)                     -- caller applies the default policy
+
+        Exclusion is checked first and across both tiers because "this contract
+        does not cover major procedures" must not be defeated by someone adding
+        a generous category rule later. A denial is a stronger statement than a
+        grant, so it is resolved first rather than by sequence.
+        """
+        self.ensure_one()
+        rules = self.sudo().benefit_rule_ids.filtered("active")
+        if not rules or not service:
+            return self.env["hospital.payer.benefit.rule"]
+
+        specific = rules.filtered(lambda r: r.service_id == service)
+        category = rules.filtered(
+            lambda r: not r.service_id and r.service_type == service.service_type
+        )
+
+        excluded = (specific | category).filtered(
+            lambda r: r.coverage_type == "excluded"
+        )
+        if excluded:
+            # _order is (agreement, sequence, id), so [:1] is deterministic.
+            return excluded[:1]
+        if specific:
+            return specific[:1]
+        return category[:1]
 
     # ------------------------------------------------------------------
     # Constraints
@@ -512,11 +769,20 @@ class HospitalPayerAgreement(models.Model):
                     "positive limit amount."
                     % (self.display_name, self.limit_scope)
                 )
-            # THE PHASE GATE. Bounded limits are meaningless without the
-            # reservation/utilization ledger: allowing one to activate now would
-            # display a ceiling that nothing enforces, which is worse than having
-            # no ceiling at all because staff would trust it.
-            raise UserError(BOUNDED_LIMIT_BLOCKED)
+            # THE PHASE GATE, NARROWED -- not removed.
+            #
+            # It existed because a ceiling nothing enforces is worse than no
+            # ceiling: staff trust the number on screen. 'member' and 'visit'
+            # are now genuinely enforced -- consumption is derived from
+            # hospital.charge.responsibility and the evaluator caps every
+            # permitted sponsor amount by what remains (see
+            # remaining_benefit_for()). So those two open.
+            #
+            # 'agreement' (organisation-wide pool) stays blocked. Nothing in
+            # this slice aggregates across members, so its ceiling would still
+            # be decorative -- exactly the condition this gate exists for.
+            if self.limit_scope == "agreement":
+                raise UserError(BOUNDED_LIMIT_BLOCKED)
         if self.tariff_mode != "list_price":
             raise UserError(
                 "Agreement %s is set to negotiated pricing, but no per-service "

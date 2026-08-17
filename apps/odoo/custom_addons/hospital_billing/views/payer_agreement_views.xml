@@ -123,12 +123,25 @@
                         </group>
                     </group>
 
+                    <!--
+                        Per Member and Per Visit are enforced as of the benefit
+                        engine: consumption is derived from authorized
+                        hospital.charge.responsibility rows and the evaluator
+                        caps every permitted sponsor amount by what remains.
+                        Only the organisation-wide pool is still unsupported, so
+                        the notice now names that one case instead of claiming
+                        every bounded scope is inert.
+                    -->
+                    <div class="alert alert-info" role="alert"
+                        invisible="limit_scope not in ('member', 'visit')">
+                        Per Member and Per Visit benefit limits are supported and enforced:
+                        the remaining benefit is measured from authorized sponsor
+                        responsibility and caps what a sponsor may carry.
+                    </div>
                     <div class="alert alert-warning" role="alert"
-                        invisible="not limit_scope or limit_scope == 'unlimited'">
-                        Bounded limits are recorded but not yet enforced: the utilization
-                        ledger does not exist. An agreement with a bounded scope cannot be
-                        activated until it does. Only Unlimited agreements can be brought
-                        into force at this time.
+                        invisible="limit_scope != 'agreement'">
+                        Agreement-wide pooled limits are not yet supported. An agreement
+                        using this scope cannot be activated. Use Per Member or Per Visit.
                     </div>
                     <div class="alert alert-warning" role="alert"
                         groups="hospital_billing.group_hospital_insurance_officer,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"

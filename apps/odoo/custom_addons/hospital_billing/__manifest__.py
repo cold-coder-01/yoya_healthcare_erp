@@ -1,7 +1,7 @@
 {
     "name": "Hospital Billing",
     "summary": "Patient billing foundation for Ethiopian Hospital ERP",
-    "version": "18.0.1.10.0",
+    "version": "18.0.1.11.0",
     "category": "Healthcare",
     "author": "Synergy Tech soln",
     "license": "LGPL-3",
@@ -16,6 +16,7 @@
         "data/billing_sequence.xml",
         "views/payer_views.xml",
         "views/payer_agreement_views.xml",
+        "views/payer_benefit_rule_views.xml",
         "views/patient_payer_views.xml",
         "views/billing_service_views.xml",
         "views/billing_account_views.xml",

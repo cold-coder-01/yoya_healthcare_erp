@@ -2,6 +2,7 @@ from . import res_company
 from . import billing_service
 from . import payer
 from . import payer_agreement
+from . import payer_benefit_rule
 from . import patient_payer
 from . import patient_bill
 from . import patient_bill_payment
