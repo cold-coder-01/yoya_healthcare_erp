@@ -31,20 +31,48 @@ from odoo.addons.hospital_billing.models.charge_receipt import (
     REFERENCE_REQUIRED,
 )
 
+from odoo import fields
+from odoo.osv import expression
+
 from ..services.api_response import (
     ApiError,
     api_error_response,
     coerce_number,
     error_response,
+    parse_date,
+    parse_int_param,
     read_json_body,
     success_response,
 )
-from ..services.cashier_serializers import serialize_cashier_payment_result
-from ..services.reception_scope import may_record_payment
+from ..services.cashier_serializers import (
+    serialize_cashier_payment_result,
+    serialize_cashier_visit_detail,
+    serialize_cashier_worklist_row,
+)
+from ..services.reception_scope import (
+    cashier_capability_flags,
+    hospital_day_bounds_utc,
+    may_cashier_desk,
+    may_record_payment,
+)
 
 _logger = logging.getLogger(__name__)
 
 PAYMENT_METHOD_KEYS = {key for key, _label in PAYMENT_METHODS}
+
+# Which derived stages the Cashier Desk is about. 'awaiting_cashier' is the
+# authoritative membership test -- it already means "triage is complete AND
+# money still stands between this patient and the doctor", and it already
+# excludes emergency bypass and fully-authorized sponsorship because
+# _is_payment_blocking() resolves both to False.
+#
+# 'ready_doctor' is offered as an opt-in lane so a cashier can confirm a visit
+# they just settled. It is never the default.
+CASHIER_STAGES = ("awaiting_cashier", "ready_doctor")
+DEFAULT_CASHIER_STAGES = ("awaiting_cashier",)
+
+WORKLIST_LIMIT_DEFAULT = 100
+WORKLIST_LIMIT_MAX = 300
 
 
 class PaymentResponseError(Exception):
@@ -124,7 +152,23 @@ def _payment_validation_response(message):
         return error_response("payment_reference_required", message, 400)
     if "no payable charges" in lower or "allocate a positive amount" in lower:
         return error_response("no_payable_charges", message, 400)
-    if "overpayment" in lower or "may allocate at most" in lower:
+    # THE ENFORCE-MODE CEILING.
+    #
+    # hospital_billing refuses an allocation that exceeds the patient's residual
+    # with "...has been allocated to the patient, but the patient is responsible
+    # for only...". That message matches none of the older phrases, so it used
+    # to fall through to the generic branch and the desk could not tell a
+    # ceiling breach from a malformed request -- the difference between "collect
+    # less" and "fix your payload".
+    #
+    # Matched on the model's own wording rather than by changing that wording:
+    # the ValidationError text is read by hospital_billing's tests, and this is
+    # the API contract layer, which is where an HTTP error code belongs.
+    if (
+        "overpayment" in lower
+        or "may allocate at most" in lower
+        or "the patient is responsible for only" in lower
+    ):
         return error_response("overpayment_not_allowed", message, 400)
     return error_response("payment_validation_failed", message, 400)
 
@@ -206,7 +250,188 @@ def _coerce_payment_body():
     }
 
 
+def _require_cashier_desk(env):
+    if not may_cashier_desk(env):
+        raise ApiError(
+            "cashier_desk_not_authorized",
+            "The Cashier Desk requires the Hospital Cashier, Accountant, "
+            "Hospital Manager or Hospital System Administrator role.",
+            403,
+        )
+
+
+def _requested_lanes(raw):
+    """Stage filter, validated against the allowlist. Unknown values are 400."""
+    if not raw:
+        return DEFAULT_CASHIER_STAGES
+    requested = tuple(part.strip() for part in raw.split(",") if part.strip())
+    unknown = [stage for stage in requested if stage not in CASHIER_STAGES]
+    if unknown:
+        raise ApiError(
+            "invalid_stage",
+            "Unknown cashier stage(s): %s. Valid values: %s."
+            % (", ".join(sorted(unknown)), ", ".join(CASHIER_STAGES)),
+            400,
+        )
+    return requested or DEFAULT_CASHIER_STAGES
+
+
+def _worklist_limit(raw):
+    if not raw:
+        return WORKLIST_LIMIT_DEFAULT
+    value = parse_int_param("limit", raw)
+    if value < 1 or value > WORKLIST_LIMIT_MAX:
+        raise ApiError(
+            "invalid_limit",
+            "'limit' must be between 1 and %s." % WORKLIST_LIMIT_MAX,
+            400,
+        )
+    return value
+
+
+def _cashier_candidate_domain(env, day, department_id, search):
+    """Candidates, selected on STORED fields only.
+
+    front_desk_stage is a non-stored compute, so it cannot appear in a domain at
+    all -- and it traverses evaluation_ids, which a Cashier may not read. The
+    stage is therefore resolved in Python, under sudo(), AFTER this narrows the
+    set to one day's confirmed visits. Selecting broadly and filtering in Python
+    is the only correct order here; it is also why the day window is mandatory.
+    """
+    start, end = hospital_day_bounds_utc(env, day)
+    domain = [
+        ("appointment_date", ">=", start),
+        ("appointment_date", "<", end),
+        # Cancelled and draft visits are never a cashier's business, and this is
+        # a stored column so it costs nothing to exclude in SQL.
+        ("state", "in", ["confirmed", "in_consultation", "done"]),
+    ]
+    if department_id:
+        domain.append(("department_id", "=", department_id))
+    if search:
+        domain = expression.AND(
+            [
+                domain,
+                [
+                    "|", "|",
+                    ("patient_id.name", "ilike", search),
+                    ("patient_id.identification_code", "ilike", search),
+                    ("appointment_code", "ilike", search),
+                ],
+            ]
+        )
+    return domain
+
+
 class YoyaEmrCashierController(http.Controller):
+
+    @http.route(
+        "/yoya-emr/api/v1/cashier/worklist",
+        type="http", auth="user", methods=["GET"], csrf=False,
+    )
+    @cashier_endpoint
+    def worklist(self, **params):
+        """The Cashier queue.
+
+        THE ACCESS-CONTROL SHAPE OF THIS ENDPOINT IS THE WHOLE DESIGN.
+
+        A Hospital Cashier holds read ACLs on patient, appointment, encounter,
+        billing account, charge line, receipt and allocation -- and NOT on
+        hospital.patient.evaluation. Both front_desk_stage and
+        clinical_queue_stage are non-stored computes that traverse
+        evaluation_ids, so reading either as the cashier raises AccessError.
+        That is the same failure that once returned 403 to a cashier whose
+        payment had already been committed.
+
+        So: select as the CASHIER (record rules apply normally), resolve the
+        stage on a sudo() copy of exactly those records, and serialize only
+        cashier-safe fields. The sudo() is bounded to one field on one
+        recordset; no evaluation data is read, returned or logged.
+        """
+        env = request.env
+        _require_cashier_desk(env)
+
+        day = (
+            parse_date(params["date"])
+            if params.get("date")
+            else fields.Date.context_today(env["hospital.appointment"])
+        )
+        stages = _requested_lanes(params.get("stage"))
+        limit = _worklist_limit(params.get("limit"))
+        department_id = (
+            parse_int_param("department_id", params["department_id"])
+            if params.get("department_id")
+            else None
+        )
+        search = (params.get("q") or "").strip() or None
+
+        Appointment = env["hospital.appointment"]
+        candidates = Appointment.search(
+            _cashier_candidate_domain(env, day, department_id, search),
+            order="appointment_date asc, id asc",
+        )
+
+        # ONE bounded elevation: the derived stage, and nothing else. Reading it
+        # on the whole recordset batches the compute rather than going per row.
+        elevated = candidates.sudo()
+        stage_by_id = {
+            appointment.id: appointment.front_desk_stage
+            for appointment in elevated
+        }
+
+        selected = [
+            appointment
+            for appointment in candidates
+            if stage_by_id.get(appointment.id) in stages
+        ]
+        truncated = len(selected) > limit
+        rows = [
+            serialize_cashier_worklist_row(
+                appointment, stage_by_id.get(appointment.id)
+            )
+            for appointment in selected[:limit]
+        ]
+
+        # Counters describe the SAME day window the rows were drawn from, so the
+        # queue and its totals can never describe different populations.
+        counts = {"awaiting_cashier": 0, "ready_doctor": 0}
+        for appointment in candidates:
+            stage = stage_by_id.get(appointment.id)
+            if stage in counts:
+                counts[stage] += 1
+        lane_counts = {"collect": 0, "partial": 0, "blocked": 0, "cleared": 0}
+        for row in rows:
+            lane_counts[row["lane"]] = lane_counts.get(row["lane"], 0) + 1
+
+        return success_response(
+            {
+                "date": str(day),
+                "stages": list(stages),
+                "rows": rows,
+                "counts": counts,
+                "lane_counts": lane_counts,
+                "truncated": truncated,
+                "capabilities": cashier_capability_flags(env),
+            }
+        )
+
+    @http.route(
+        "/yoya-emr/api/v1/cashier/visits/<int:appointment_id>",
+        type="http", auth="user", methods=["GET"], csrf=False,
+    )
+    @cashier_endpoint
+    def visit_detail(self, appointment_id, **params):
+        """Canonical cashier visit payload.
+
+        Returns exactly what a successful payment returns, minus the receipt, so
+        the client has one shape to render and refreshing after payment is a
+        re-render rather than a second mapping.
+        """
+        env = request.env
+        _require_cashier_desk(env)
+
+        appointment = _get_or_404(env, "hospital.appointment", appointment_id, "Visit")
+        return success_response(serialize_cashier_visit_detail(env, appointment))
 
     @http.route(
         "/yoya-emr/api/v1/cashier/visits/<int:appointment_id>/payment",
