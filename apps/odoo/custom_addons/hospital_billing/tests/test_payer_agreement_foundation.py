@@ -263,13 +263,53 @@ class TestPayerAgreementFoundation(TransactionCase):
         with self.assertRaises(Exception):
             self.env["hospital.payer.agreement"].create(vals)
 
-    def test_15_bounded_activation_blocked_before_phase_4(self):
-        for scope in ("agreement", "member", "visit"):
-            agreement = self._draft(limit_scope=scope, limit_amount=50000.0)
-            with self.assertRaises(UserError) as caught:
+    def test_15_only_the_organisation_wide_pool_stays_blocked(self):
+        """The phase gate was NARROWED by the benefit engine, not removed.
+
+        'member' and 'visit' now have real enforcement: consumption is derived
+        from hospital.charge.responsibility and the evaluator caps every
+        permitted sponsor amount by what remains. So they activate.
+
+        'agreement' (organisation-wide pool) does not. Nothing aggregates across
+        the members of a contract yet, so its ceiling would still be decorative,
+        which is precisely the condition this gate exists to prevent.
+        """
+        blocked = self._draft(limit_scope="agreement", limit_amount=50000.0)
+        with self.assertRaises(UserError) as caught:
+            blocked.with_user(self.manager).action_activate()
+        self.assertIn("Agreement-wide Pool", str(caught.exception))
+        self.assertEqual(blocked.state, "draft")
+
+        for scope in ("member", "visit"):
+            with self.subTest(scope=scope):
+                # A DISTINCT payer per scope: the EXCLUDE constraint forbids two
+                # active agreements for one payer over overlapping dates, and
+                # both of these activate. Reusing cls.payer would test that
+                # constraint rather than this gate.
+                partner = self.env["res.partner"].sudo().create(
+                    {"name": "Bounded Scope %s" % uuid.uuid4().hex[:6]}
+                )
+                payer = self.env["hospital.payer"].sudo().create(
+                    {
+                        "name": partner.name,
+                        "payer_type": "insurance",
+                        "partner_id": partner.id,
+                        "company_id": self.company.id,
+                    }
+                )
+                agreement = self._draft(
+                    payer_id=payer.id, limit_scope=scope, limit_amount=50000.0
+                )
                 agreement.with_user(self.manager).action_activate()
-            self.assertIn("utilization ledger", str(caught.exception))
-            self.assertEqual(agreement.state, "draft")
+                self.assertEqual(agreement.state, "active")
+
+    def test_15b_bounded_scope_still_needs_a_positive_amount(self):
+        for scope in ("member", "visit"):
+            with self.subTest(scope=scope):
+                agreement = self._draft(limit_scope=scope, limit_amount=0.0)
+                with self.assertRaises(UserError):
+                    agreement.with_user(self.manager).action_activate()
+                self.assertEqual(agreement.state, "draft")
 
     def test_16_unlimited_activation_succeeds(self):
         agreement = self._draft()

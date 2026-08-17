@@ -543,6 +543,204 @@ class HospitalBillingEngine(models.AbstractModel):
         return charge
 
     # ------------------------------------------------------------------
+    # BENEFIT COVERAGE EVALUATION
+    # ------------------------------------------------------------------
+    @api.model
+    def evaluate_charge_coverage(self, charge, patient_payer=None, on_date=None):
+        """What the AGREEMENT PERMITS a sponsor to carry for one charge.
+
+        READ-ONLY, AND THAT IS THE POINT. It creates nothing, authorizes
+        nothing and writes nothing -- not a responsibility row, not a
+        reservation, not a state change. It answers "what does the contract
+        allow", and the Insurance/Credit workflow separately decides whether to
+        accept that answer by calling allocate_payer().
+
+        Keeping the two apart is what preserves auditability. A rule edited next
+        year must never restate what a sponsor accepted last year, so the
+        historical fact lives on hospital.charge.responsibility with its own
+        frozen snapshot, and this method only ever describes policy AS IT
+        STANDS TODAY.
+
+        Basis: charge.amount_estimated -- the same figure the responsibility
+        engine divides and the cash gate reads. A second billing basis here
+        would let the permitted share and the residual disagree.
+
+        Returns a dict; it never raises for a business outcome. A denial is a
+        result with a reason_code, not an exception, because the caller is
+        usually rendering it rather than reacting to it.
+        """
+        charge.ensure_one()
+        record = charge.sudo()
+        charge_amount = max(0.0, record.amount_estimated or 0.0)
+
+        def result(**overrides):
+            payload = {
+                "charge_id": record.id,
+                "charge_amount": charge_amount,
+                "currency_id": record.currency_id.id or False,
+                "matched_rule_id": False,
+                "coverage_state": "not_covered",
+                "excluded": False,
+                "requires_authorization": False,
+                "calculated_sponsor_amount": 0.0,
+                "limit_available": None,
+                "permitted_sponsor_amount": 0.0,
+                "patient_residual": charge_amount,
+                "reason_code": "no_coverage",
+                "reason": "",
+            }
+            payload.update(overrides)
+            # THE INVARIANTS, enforced at the single exit rather than trusted at
+            # each branch: no negative amount, no sponsor share exceeding the
+            # charge, and a residual that is always the arithmetic complement of
+            # what was permitted.
+            permitted = max(0.0, min(payload["permitted_sponsor_amount"], charge_amount))
+            payload["permitted_sponsor_amount"] = permitted
+            payload["calculated_sponsor_amount"] = max(
+                0.0, min(payload["calculated_sponsor_amount"], charge_amount)
+            )
+            payload["patient_residual"] = max(0.0, charge_amount - permitted)
+            return payload
+
+        # --- eligibility and agreement must both be live -------------------
+        eligibility = patient_payer or record.encounter_id.sudo().patient_payer_id
+        if not eligibility:
+            return result(
+                reason_code="no_eligibility",
+                reason="This visit carries no payer eligibility, so the patient "
+                "is responsible for the full amount.",
+            )
+        eligibility = eligibility.sudo()
+        agreement = eligibility.agreement_id
+
+        if eligibility.patient_id != record.patient_id:
+            return result(
+                reason_code="eligibility_patient_mismatch",
+                reason="Eligibility %s belongs to a different patient."
+                % eligibility.display_name,
+            )
+        if agreement.company_id != record.company_id:
+            return result(
+                reason_code="company_mismatch",
+                reason="Agreement %s belongs to another company."
+                % agreement.display_name,
+            )
+        if agreement.currency_id and record.currency_id and (
+            agreement.currency_id != record.currency_id
+        ):
+            return result(
+                reason_code="currency_mismatch",
+                reason="Agreement %s is denominated in %s but this charge is in %s."
+                % (
+                    agreement.display_name,
+                    agreement.currency_id.name,
+                    record.currency_id.name,
+                ),
+            )
+        # is_valid_today already composes the eligibility's own state and window
+        # WITH its agreement's. An expired contract or a suspended member grants
+        # nothing, and that predicate is the one Front Desk selection already
+        # trusts -- restating it here would let the two drift.
+        if not eligibility.is_valid_today:
+            return result(
+                reason_code="eligibility_not_valid",
+                reason="Eligibility %s is not valid today (eligibility '%s', "
+                "agreement '%s')."
+                % (eligibility.display_name, eligibility.state, agreement.state),
+            )
+
+        # --- resolve the rule ---------------------------------------------
+        rule = agreement.match_benefit_rule(record.service_id)
+        requires_auth = bool(agreement.sudo().authorization_required)
+
+        if rule:
+            requires_auth = requires_auth or bool(rule.authorization_required)
+            if rule.coverage_type == "excluded":
+                return result(
+                    matched_rule_id=rule.id,
+                    excluded=True,
+                    coverage_state="excluded",
+                    requires_authorization=requires_auth,
+                    reason_code="service_excluded",
+                    reason="This agreement explicitly excludes %s."
+                    % (record.service_id.display_name or record.description),
+                )
+            eligible = rule._sponsor_eligible_for(charge_amount)
+            state = "covered"
+            reason_code = "rule_matched"
+            reason = "Benefit rule %s applies." % rule.display_name
+        else:
+            policy = agreement.sudo().default_coverage_policy
+            if policy == "not_covered":
+                return result(
+                    coverage_state="not_covered",
+                    requires_authorization=requires_auth,
+                    reason_code="default_not_covered",
+                    reason="No benefit rule matches and this agreement covers "
+                    "nothing by default.",
+                )
+            if policy == "default_percentage":
+                eligible = max(
+                    0.0,
+                    min(
+                        charge_amount
+                        * (agreement.sudo().default_coverage_percent or 0.0)
+                        / 100.0,
+                        charge_amount,
+                    ),
+                )
+                state = "covered"
+                reason_code = "default_percentage"
+                reason = "No benefit rule matches; the agreement default applies."
+            else:
+                # manual_authorization -- and THE upgrade-safe path. Every
+                # agreement that predates benefit rules lands here and permits
+                # nothing automatically, leaving the officer's manual decision
+                # exactly as authoritative as it was before this module changed.
+                return result(
+                    coverage_state="manual_authorization",
+                    requires_authorization=True,
+                    reason_code="default_manual",
+                    reason="No benefit rule matches. An Insurance/Credit Officer "
+                    "must decide this share manually.",
+                )
+
+        # --- cap by the remaining ceiling ---------------------------------
+        remaining = agreement.remaining_benefit_for(
+            patient_payer=eligibility,
+            encounter=record.encounter_id,
+            on_date=on_date,
+        )
+        permitted = eligible
+        if remaining is not None:
+            permitted = min(eligible, remaining)
+            if permitted <= AMOUNT_TOLERANCE and eligible > AMOUNT_TOLERANCE:
+                state = "limit_exhausted"
+                reason_code = "limit_exhausted"
+                reason = (
+                    "The benefit ceiling for this agreement is exhausted; the "
+                    "patient carries the full amount."
+                )
+            elif permitted + AMOUNT_TOLERANCE < eligible:
+                state = "limit_capped"
+                reason_code = "limit_capped"
+                reason = (
+                    "Coverage of %.2f was reduced to %.2f by the remaining "
+                    "benefit ceiling." % (eligible, permitted)
+                )
+
+        return result(
+            matched_rule_id=rule.id if rule else False,
+            coverage_state=state,
+            requires_authorization=requires_auth,
+            calculated_sponsor_amount=eligible,
+            limit_available=remaining,
+            permitted_sponsor_amount=permitted,
+            reason_code=reason_code,
+            reason=reason,
+        )
+
+    # ------------------------------------------------------------------
     # Later phases — stable signatures, controlled failure
     # ------------------------------------------------------------------
     @api.model

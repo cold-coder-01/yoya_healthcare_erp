@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!--
+        The rule TABLE, not a configuration form.
+
+        Coverage terms are read across rows: an officer checks "what do we cover
+        for laboratory" by scanning a column, not by opening eight records. So
+        the list is editable inline, and each amount column appears only for the
+        coverage type that actually uses it; a percentage agreement never shows
+        the copay column.
+
+        Cell visibility is a legibility aid, not a control. The model's
+        constraints are what refuse a bad value.
+
+        NOTE ON COMMENT STYLE: no double hyphen may appear inside an XML
+        comment. It is not a style preference; the XML spec forbids it and the
+        module fails to load.
+    -->
+    <record id="view_hospital_payer_benefit_rule_list" model="ir.ui.view">
+        <field name="name">hospital.payer.benefit.rule.list</field>
+        <field name="model">hospital.payer.benefit.rule</field>
+        <field name="arch" type="xml">
+            <list string="Benefit Rules" editable="bottom">
+                <field name="sequence" widget="handle"/>
+                <field name="service_id"
+                    options="{'no_create': True}"
+                    placeholder="Specific service..."/>
+                <field name="service_type" placeholder="or a category..."/>
+                <field name="coverage_type"/>
+                <field name="coverage_percent"
+                    invisible="coverage_type != 'percentage'"/>
+                <field name="sponsor_amount"
+                    invisible="coverage_type != 'fixed_sponsor'"/>
+                <field name="patient_copay_amount"
+                    invisible="coverage_type != 'patient_copay'"/>
+                <field name="authorization_required"/>
+                <field name="currency_id" column_invisible="True"/>
+                <field name="active" widget="boolean_toggle"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_payer_benefit_rule_form" model="ir.ui.view">
+        <field name="name">hospital.payer.benefit.rule.form</field>
+        <field name="model">hospital.payer.benefit.rule</field>
+        <field name="arch" type="xml">
+            <form string="Benefit Rule">
+                <sheet>
+                    <group>
+                        <group string="Applies To">
+                            <field name="agreement_id" options="{'no_create': True}"/>
+                            <field name="service_id" options="{'no_create': True}"/>
+                            <field name="service_type"/>
+                            <field name="sequence"/>
+                            <field name="active"/>
+                        </group>
+                        <group string="Coverage">
+                            <field name="coverage_type"/>
+                            <field name="coverage_percent"
+                                invisible="coverage_type != 'percentage'"/>
+                            <field name="sponsor_amount"
+                                invisible="coverage_type != 'fixed_sponsor'"/>
+                            <field name="patient_copay_amount"
+                                invisible="coverage_type != 'patient_copay'"/>
+                            <field name="authorization_required"/>
+                            <field name="currency_id" invisible="1"/>
+                        </group>
+                    </group>
+                    <group string="Notes">
+                        <field name="notes" nolabel="1" placeholder="Internal notes..."/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!--
+        Benefit policy on the agreement.
+
+        Added as a NEW notebook page rather than more fields in the header
+        group. The agreement form already carries identity, validity, limits and
+        commercial terms, and a contract that needs scrolling to read is a
+        contract nobody checks.
+
+        The whole page carries the PAYER_COMMERCIAL_READ group list, matching
+        the fields inside it. Without that, a Front Desk Nurse or Cashier (both
+        hold a read ACL on the agreement) would be shown an empty labelled page
+        with every coverage term stripped out.
+    -->
+    <record id="view_hospital_payer_agreement_form_benefits" model="ir.ui.view">
+        <field name="name">hospital.payer.agreement.form.benefits</field>
+        <field name="model">hospital.payer.agreement</field>
+        <field name="inherit_id" ref="hospital_billing.view_hospital_payer_agreement_form"/>
+        <field name="arch" type="xml">
+            <notebook position="inside">
+                <page string="Benefit Policy" name="benefit_policy"
+                    groups="hospital_billing.group_hospital_insurance_officer,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
+                    <group>
+                        <group string="Default Policy">
+                            <field name="default_coverage_policy"/>
+                            <field name="default_coverage_percent"
+                                invisible="default_coverage_policy != 'default_percentage'"/>
+                        </group>
+                        <group string="Benefit Period">
+                            <field name="benefit_period"
+                                invisible="limit_scope != 'member'"/>
+                            <field name="benefit_rule_count"/>
+                        </group>
+                    </group>
+                    <div class="alert alert-warning" role="alert"
+                        invisible="state == 'draft'">
+                        These coverage terms are frozen because the agreement is no longer
+                        a draft. Use Create Amendment to issue a new version; it copies
+                        these rules and leaves historical visits on the terms that applied
+                        at the time.
+                    </div>
+                    <!--
+                        readonly on the One2many is what removes "Add a line",
+                        the inline inputs and the row delete control: Odoo
+                        suppresses all three for a readonly relational field. A
+                        dynamic create=/delete= on the embedded list is NOT used,
+                        because those are static view options rather than
+                        evaluated modifiers.
+
+                        Presentation only. hospital.payer.benefit.rule refuses
+                        the create, write and unlink itself, because a readonly
+                        attribute is advice to the web client and a raw RPC call
+                        never sees it.
+                    -->
+                    <field name="benefit_rule_ids"
+                        context="{'default_agreement_id': id}"
+                        readonly="state != 'draft'">
+                        <list string="Benefit Rules" editable="bottom">
+                            <field name="sequence" widget="handle"/>
+                            <field name="service_id" options="{'no_create': True}"
+                                placeholder="Specific service..."/>
+                            <field name="service_type" placeholder="or a category..."/>
+                            <field name="coverage_type"/>
+                            <field name="coverage_percent"
+                                invisible="coverage_type != 'percentage'"/>
+                            <field name="sponsor_amount"
+                                invisible="coverage_type != 'fixed_sponsor'"/>
+                            <field name="patient_copay_amount"
+                                invisible="coverage_type != 'patient_copay'"/>
+                            <field name="authorization_required"/>
+                            <field name="currency_id" column_invisible="True"/>
+                            <field name="active" widget="boolean_toggle"/>
+                        </list>
+                    </field>
+                    <p class="text-muted">
+                        A specific service rule overrides its category. An explicit
+                        exclusion overrides both. Services matched by no rule follow
+                        the default policy above.
+                    </p>
+                </page>
+            </notebook>
+        </field>
+    </record>
+
+</odoo>
