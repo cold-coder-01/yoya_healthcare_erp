@@ -118,6 +118,31 @@ def role_flags(env):
         # front end routes a PURE officer to their own workspace with it; a
         # manager who also holds it keeps their existing landing page.
         "insurance_officer": user.has_group(GROUP_INSURANCE_OFFICER),
+        # Authoritative Odoo group membership, and NOT the same kind of flag as
+        # the two above. Read the difference before routing on it.
+        #
+        # Nothing implies group_hospital_front_desk_nurse or the officer group,
+        # so those two are effectively direct membership. group_hospital_doctor
+        # IS implied: hospital_management's group_hospital_manager carries
+        # implied_ids = receptionist + doctor + nurse, and
+        # group_hospital_system_administrator implies manager. has_group()
+        # honours the implication chain, so a MANAGER AND AN ADMIN BOTH READ
+        # TRUE HERE. That is correct -- they really do hold the Doctor group,
+        # and _assert_may_start_consultation lets them start a consultation on
+        # that basis -- but it means this flag alone cannot answer "is this
+        # person a doctor rather than a manager".
+        #
+        # What keeps the routing right is PRECEDENCE, not narrowness:
+        # landingRouteForRoles tests the reception branch (which claims manager
+        # and admin) before it reaches the doctor branch, so only a user whose
+        # remaining identity is Doctor lands on /doctor. See the ordering note
+        # in apps/web/src/lib/reception-roles.ts.
+        #
+        # Derived from group membership ONLY: never from a job title, never
+        # from the presence of a hospital.doctor record, and never inferred
+        # from the ABSENCE of another role -- that last one is what would drag
+        # every plain nurse out of /triage.
+        "doctor": user.has_group(GROUP_DOCTOR),
     }
 
 
@@ -236,6 +261,49 @@ INSURANCE_CREDIT_GROUPS = (
 def may_insurance_credit(env):
     """May this user open the Insurance/Credit Desk and authorize a sponsor?"""
     return _in_any(env, INSURANCE_CREDIT_GROUPS)
+
+
+# Who may OPEN the Doctor Desk (a read gate).
+#
+# MIRRORS the authorization half of
+# yoya_reception_bridge.hospital_appointment._assert_may_start_consultation,
+# which admits the ASSIGNED doctor plus CONSULTATION_OVERRIDE_GROUPS
+# (manager, admin). The per-visit assignment half cannot be a group tuple, so
+# it is not restated here: scoping resolves it (clinical_scope._doctor_domain
+# restricts a pure doctor to doctor_id.user_id = me) and the model method
+# enforces it again on the mutation.
+#
+# Deliberately EXCLUDES Nurse, Front Desk Nurse, Receptionist, Cashier and
+# Accountant. The nurse's triage surface is /front-desk and /triage; the Doctor
+# Desk is not a second door into it.
+#
+# It is the same tuple front_desk_capability_flags already reports as
+# "start_consultation_role", which is not a coincidence: the desk exists to
+# perform that one act.
+DOCTOR_DESK_GROUPS = (GROUP_DOCTOR, GROUP_MANAGER, GROUP_SYSADMIN)
+
+
+def may_doctor_desk(env):
+    """May this user open the Doctor Desk and read its worklist?"""
+    return _in_any(env, DOCTOR_DESK_GROUPS)
+
+
+def doctor_capability_flags(env):
+    """What the Doctor Desk may do. Every flag mirrors a server-side guard.
+
+    Deliberately NARROW. There is no payment flag, no sponsor-authorization
+    flag and no intake flag, because a doctor holds none of them and a flag the
+    client could not act on is an invitation to build a button that 403s.
+
+    'start_consultation_role' is the GROUP half only. Whether THIS doctor may
+    start THIS visit also depends on assignment, which is per-visit and is
+    decided by _assert_may_start_consultation; the serializer resolves it per
+    row rather than pretending a group tuple could answer it.
+    """
+    return {
+        "doctor_desk": may_doctor_desk(env),
+        "start_consultation_role": may_doctor_desk(env),
+    }
 
 
 def insurance_credit_capability_flags(env):

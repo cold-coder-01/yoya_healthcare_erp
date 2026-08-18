@@ -3,11 +3,13 @@ import { test } from "node:test";
 
 import {
   CASHIER_ROUTE,
+  DOCTOR_ROUTE,
   INSURANCE_CREDIT_ROUTE,
   CLINICAL_ROUTE,
   FRONT_DESK_ROUTE,
   RECEPTION_ROUTE,
   canUseCashier,
+  canUseDoctorDesk,
   canUseInsuranceCredit,
   landingRouteForRoles,
   parseReceptionRoles,
@@ -38,8 +40,31 @@ function roles(overrides: Partial<ReceptionRoles> = {}): ReceptionRoles {
     emergency_authorizer: false,
     front_desk_nurse: false,
     insurance_officer: false,
+    doctor: false,
     ...overrides,
   };
+}
+
+/**
+ * A MANAGER AS ODOO ACTUALLY REPORTS THEM.
+ *
+ * group_hospital_manager carries implied_ids = receptionist + doctor + nurse,
+ * so role_flags() sets BOTH manager and doctor for one. Tests that build a
+ * manager with only `{manager: true}` are testing a user Odoo cannot produce,
+ * and would not catch a precedence regression that moved managers to /doctor.
+ */
+function managerRoles(overrides: Partial<ReceptionRoles> = {}): ReceptionRoles {
+  return roles({ manager: true, receptionist: true, doctor: true, ...overrides });
+}
+
+function adminRoles(overrides: Partial<ReceptionRoles> = {}): ReceptionRoles {
+  return roles({
+    system_administrator: true,
+    manager: true,
+    receptionist: true,
+    doctor: true,
+    ...overrides,
+  });
 }
 
 test("a pure cashier lands on the cashier desk", () => {
@@ -164,4 +189,71 @@ test("canUseInsuranceCredit mirrors the server's INSURANCE_CREDIT_GROUPS", () =>
   assert.equal(canUseInsuranceCredit(roles({ accountant: true })), false);
   assert.equal(canUseInsuranceCredit(roles({ cashier: true })), false);
   assert.equal(canUseInsuranceCredit(null), false);
+});
+
+/* ------------------------------------------------------------------ *
+ * Doctor Desk
+ * ------------------------------------------------------------------ */
+
+test("a pure doctor lands on the doctor desk", () => {
+  assert.equal(landingRouteForRoles(roles({ doctor: true })), DOCTOR_ROUTE);
+});
+
+test("a plain nurse still lands on /triage and is never routed to the doctor desk", () => {
+  // THE regression this branch must not cause. A nurse holds no reception-side
+  // role, so before the doctor branch existed they reached /triage by
+  // elimination -- and they must still, because `doctor` is real group
+  // membership and is never inferred from the absence of another role.
+  assert.equal(landingRouteForRoles(roles()), CLINICAL_ROUTE);
+  assert.equal(landingRouteForRoles(roles({ emergency_authorizer: true })), CLINICAL_ROUTE);
+});
+
+test("a manager as Odoo really reports them still lands on reception", () => {
+  // group_hospital_manager IMPLIES group_hospital_doctor, so a real manager
+  // carries doctor === true. Precedence, not flag width, is what keeps them on
+  // /reception -- canUseReception claims them four branches before the doctor
+  // branch is reached.
+  assert.equal(landingRouteForRoles(managerRoles()), RECEPTION_ROUTE);
+  assert.equal(landingRouteForRoles(adminRoles()), RECEPTION_ROUTE);
+});
+
+test("every existing landing role outranks the doctor branch", () => {
+  // No user who has an operational landing page today may be moved to the
+  // Doctor Desk by the addition of this flag.
+  assert.equal(
+    landingRouteForRoles(roles({ front_desk_nurse: true, doctor: true })),
+    FRONT_DESK_ROUTE,
+  );
+  assert.equal(
+    landingRouteForRoles(roles({ receptionist: true, doctor: true })),
+    RECEPTION_ROUTE,
+  );
+  assert.equal(
+    landingRouteForRoles(roles({ cashier: true, doctor: true })),
+    CASHIER_ROUTE,
+  );
+  assert.equal(
+    landingRouteForRoles(roles({ insurance_officer: true, doctor: true })),
+    INSURANCE_CREDIT_ROUTE,
+  );
+});
+
+test("canUseDoctorDesk mirrors the server's DOCTOR_DESK_GROUPS", () => {
+  assert.equal(canUseDoctorDesk(roles({ doctor: true })), true);
+  assert.equal(canUseDoctorDesk(roles({ manager: true })), true);
+  assert.equal(canUseDoctorDesk(roles({ system_administrator: true })), true);
+  // Absent from the server tuple: the desk is not a second door into the
+  // nursing or cash surfaces.
+  assert.equal(canUseDoctorDesk(roles({ front_desk_nurse: true })), false);
+  assert.equal(canUseDoctorDesk(roles({ receptionist: true })), false);
+  assert.equal(canUseDoctorDesk(roles({ cashier: true })), false);
+  assert.equal(canUseDoctorDesk(roles({ accountant: true })), false);
+  assert.equal(canUseDoctorDesk(null), false);
+});
+
+test("parseReceptionRoles surfaces the doctor flag strictly", () => {
+  assert.equal(parseReceptionRoles({ doctor: true })?.doctor, true);
+  // An un-upgraded Odoo that sends no doctor key must not grant the desk.
+  assert.equal(parseReceptionRoles({ cashier: true })?.doctor, false);
+  assert.equal(parseReceptionRoles({ doctor: "yes" })?.doctor, false);
 });

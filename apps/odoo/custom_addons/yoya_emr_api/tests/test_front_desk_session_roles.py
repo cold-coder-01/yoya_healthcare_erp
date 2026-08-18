@@ -14,6 +14,7 @@ import uuid
 from odoo.tests import TransactionCase, tagged
 
 from odoo.addons.yoya_emr_api.services.reception_scope import (
+    may_doctor_desk,
     may_front_desk,
     role_flags,
 )
@@ -22,6 +23,9 @@ G_FRONT_DESK_NURSE = "yoya_reception_bridge.group_hospital_front_desk_nurse"
 G_NURSE = "hospital_management.group_hospital_nurse"
 G_RECEPTIONIST = "hospital_management.group_hospital_receptionist"
 G_CASHIER = "hospital_billing.group_hospital_cashier"
+G_DOCTOR = "hospital_management.group_hospital_doctor"
+G_MANAGER = "hospital_management.group_hospital_manager"
+G_SYSADMIN = "hospital_management.group_hospital_system_administrator"
 
 # Mirrors the ReceptionRoles type in apps/web/src/lib/reception-roles.ts. If a
 # flag is added or renamed here the TypeScript contract has to move with it.
@@ -39,6 +43,12 @@ EXPECTED_ROLE_KEYS = {
     # officer. ReceptionRoles in apps/web/src/lib/reception-roles.ts carries the
     # matching field; this test is what stops the two drifting apart.
     "insurance_officer",
+    # Added with the Doctor Desk. NARROW, like the two above: direct membership
+    # of group_hospital_doctor, not may_doctor_desk() (which also admits
+    # manager and admin). The front end routes a PURE doctor to /doctor with
+    # it, and a manager -- who is routed to /reception well before the doctor
+    # branch is reached -- is untouched.
+    "doctor",
 }
 
 
@@ -51,6 +61,7 @@ class TestFrontDeskSessionRoles(TransactionCase):
         cls.nurse = cls._make_user("fdsr_nurse", [G_NURSE])
         cls.receptionist = cls._make_user("fdsr_recep", [G_RECEPTIONIST])
         cls.cashier = cls._make_user("fdsr_cashier", [G_CASHIER])
+        cls.doctor = cls._make_user("fdsr_doctor", [G_DOCTOR])
 
     @classmethod
     def _make_user(cls, login, group_xmlids):
@@ -119,6 +130,61 @@ class TestFrontDeskSessionRoles(TransactionCase):
 
         self.assertTrue(may_front_desk(self.env(user=self.front_desk)))
         self.assertTrue(self._flags(self.front_desk)["front_desk_nurse"])
+
+    # ------------------------------------------------------------------
+    # The doctor flag
+    # ------------------------------------------------------------------
+    def test_doctor_reads_true(self):
+        self.assertTrue(self._flags(self.doctor)["doctor"])
+
+    def test_doctor_flag_is_not_granted_by_elimination(self):
+        """A user with no reception-side role is NOT thereby a doctor.
+
+        This is the property that keeps a plain nurse on /triage. The flag is
+        authoritative group membership and nothing else -- there is no title
+        heuristic and no "has no other role, must be clinical" inference.
+        """
+        self.assertFalse(self._flags(self.nurse)["doctor"])
+        self.assertFalse(self._flags(self.receptionist)["doctor"])
+        self.assertFalse(self._flags(self.cashier)["doctor"])
+        self.assertFalse(self._flags(self.front_desk)["doctor"])
+
+    def test_manager_reads_true_because_the_group_is_implied(self):
+        """PINS THE PROPERTY THAT MAKES THE ROUTING SUBTLE.
+
+        Unlike front_desk_nurse and insurance_officer -- which nothing implies,
+        so they amount to direct membership -- group_hospital_doctor IS
+        implied: manager carries implied_ids = receptionist + doctor + nurse,
+        and system administrator implies manager. has_group() honours that, so
+        both read True here.
+
+        This is not a bug and must not be "fixed" by testing for direct
+        membership: a manager genuinely holds the Doctor group and
+        _assert_may_start_consultation admits them on exactly that basis. What
+        keeps a manager on /reception is the ORDER of the branches in
+        landingRouteForRoles, not the width of this flag. If that ordering is
+        ever changed, this test is the note explaining why it mattered.
+        """
+        manager = self._make_user("fdsr_mgr", [G_MANAGER])
+        admin = self._make_user("fdsr_admin", [G_SYSADMIN])
+
+        self.assertTrue(self._flags(manager)["doctor"])
+        self.assertTrue(self._flags(admin)["doctor"])
+        # ...and the reception flag that outranks it is set too, which is what
+        # the front end's precedence relies on.
+        self.assertTrue(self._flags(manager)["manager"])
+        self.assertTrue(self._flags(admin)["system_administrator"])
+
+    def test_may_doctor_desk_admits_doctor_manager_admin_and_nobody_else(self):
+        manager = self._make_user("fdsr_mgr2", [G_MANAGER])
+        admin = self._make_user("fdsr_admin2", [G_SYSADMIN])
+
+        for user in (self.doctor, manager, admin):
+            self.assertTrue(may_doctor_desk(self.env(user=user)))
+
+        # The desk is not a second door into the nursing or cash surfaces.
+        for user in (self.nurse, self.front_desk, self.receptionist, self.cashier):
+            self.assertFalse(may_doctor_desk(self.env(user=user)))
 
     # ------------------------------------------------------------------
     # Payload contract
