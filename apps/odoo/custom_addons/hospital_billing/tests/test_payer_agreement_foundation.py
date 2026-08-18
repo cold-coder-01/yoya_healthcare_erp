@@ -715,7 +715,6 @@ class TestPayerAgreementFoundation(TransactionCase):
     # FEATURE FLAG + NO LIVE BEHAVIOUR CHANGE
     # ==================================================================
     def test_34_feature_flag_defaults_to_off(self):
-        self.assertEqual(self.company.payer_responsibility_mode, "off")
         field = self.env["res.company"]._fields["payer_responsibility_mode"]
         self.assertEqual(field.default(self.env["res.company"]), "off")
         self.assertEqual(
@@ -737,7 +736,12 @@ class TestPayerAgreementFoundation(TransactionCase):
         # returns early under env.su, so the refusal below is the one that
         # matters -- the engine declining to invent an amount.
         engine = self.env["hospital.billing.engine"].sudo()
-        self.assertEqual(self.company.payer_responsibility_mode, "off")
+        # The CODE default, not the live company's current value. A UAT or
+        # production database may legitimately be switched to shadow or
+        # enforce by an operator; what must not drift is that the feature
+        # SHIPS off, so an upgrade never turns it on for anyone.
+        field = self.env["res.company"]._fields["payer_responsibility_mode"]
+        self.assertEqual(field.default(self.env["res.company"]), "off")
         with self.assertRaises(UserError) as caught:
             engine.allocate_payer(self.env["hospital.billing.account"])
         self.assertIn("charge", str(caught.exception).lower())

@@ -270,6 +270,14 @@ class TestFrontDeskWorklist(HttpCase):
         """
         first, _ = self._register()
         patient = first.patient_id
+
+        # UPDATED: one active episode per patient. A returning patient is now a
+        # SEQUENTIAL attendance -- the first visit must be finished before the
+        # second is registered, which is what the hospital actually does and
+        # what hospital.encounter now enforces. The claim under test is
+        # unchanged: two visits, two rows, ONE medical record number.
+        first.encounter_id.sudo().write({"state": "closed"})
+
         second_result = self.env["hospital.reception.workflow"].with_user(
             self.front_desk
         ).create_visit(

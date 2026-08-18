@@ -239,6 +239,107 @@ class HospitalEncounter(models.Model):
         return not any(user.has_group(group) for group in ENCOUNTER_CREATE_ALLOWED_GROUPS)
 
     # ------------------------------------------------------------------
+    # ONE ACTIVE EPISODE PER PATIENT
+    #
+    # Manual UAT showed the front desk opening a second visit for a patient
+    # whose first was still awaiting the cashier. Two live episodes for one
+    # person means two consultation charges, two cashier liabilities, two draws
+    # against the same corporate benefit and two triage flows for one body.
+    #
+    # WHY THE GUARD IS ON THE ENCOUNTER AND NOT ON create_visit()
+    # The encounter IS the episode of care. Every route to a new one passes
+    # through this create() -- the reception workflow, action_confirm, a direct
+    # ORM call, a second front end, a double-clicked button. A guard in the
+    # workflow service would be the one place a determined caller can go round.
+    #
+    # WHY STATE AND NOT TIME. Repeated vitals, several lab requests and a
+    # cashier visit all belong to ONE episode and stay perfectly legal; what is
+    # refused is opening a SECOND episode while the first is unfinished. A "not
+    # within an hour" rule would forbid the legitimate case and permit the
+    # illegitimate one an hour later.
+    # ------------------------------------------------------------------
+    #
+    # Terminal from the episode's point of view: the visit is over and a new one
+    # is a genuinely new attendance. Everything else is still in progress.
+    EPISODE_CLOSED_STATES = ("completed", "closed", "cancelled")
+
+    def _lock_patient_episode(self, patient_id, company_id):
+        """Serialize episode creation for one patient in one company.
+
+        A SELECT-then-INSERT cannot stop two concurrent registrations: both
+        transactions read "no active episode" before either writes. The advisory
+        lock makes the check and the insert one critical section, and it is
+        transaction-scoped so it releases on commit or rollback without cleanup.
+        Same mechanism hospital.billing.account and hospital.patient.payer use.
+        """
+        self.env.cr.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            ["hospital.encounter.episode:%s:%s" % (patient_id, company_id)],
+        )
+
+    @api.model
+    def assert_patient_has_no_active_episode(self, patient, company=None):
+        """PRE-FLIGHT form, callable before anything has been created.
+
+        The model-level guard in create() fires too late to be the only check:
+        by the time an encounter is being created, hospital.reception.workflow
+        has already created the appointment, and an API decorator that catches
+        the ValidationError and returns JSON lets Odoo commit that appointment.
+        The result was an orphan visit in the queue behind a "duplicate" error.
+
+        So the workflow calls THIS first, before its first write. Same lock,
+        same key, same query as the create() guard -- one implementation, so
+        the two can never disagree about what an active episode is.
+        """
+        if not patient:
+            return
+        self._assert_no_active_episode(
+            {
+                "patient_id": patient.id,
+                "company_id": (company or self.env.company).id,
+            }
+        )
+
+    @api.model
+    def _assert_no_active_episode(self, vals):
+        """Refuse a second live episode for the same patient and company."""
+        patient_id = vals.get("patient_id")
+        if not patient_id:
+            return
+        company_id = vals.get("company_id") or self.env.company.id
+
+        self._lock_patient_episode(patient_id, company_id)
+
+        # sudo: the guard must see an episode the caller may not read -- a front
+        # desk nurse and a doctor have different row visibility, and a duplicate
+        # is a duplicate either way. It only ever refuses; it grants nothing.
+        existing = self.sudo().search(
+            [
+                ("patient_id", "=", patient_id),
+                ("company_id", "=", company_id),
+                ("state", "not in", list(self.EPISODE_CLOSED_STATES)),
+            ],
+            order="id desc",
+            limit=1,
+        )
+        if not existing:
+            return
+
+        # Name the visit so the desk can find it rather than guess. The
+        # appointment code is what staff actually search on; nothing clinical
+        # is disclosed.
+        reference = (
+            existing.appointment_id.appointment_code
+            or existing.name
+            or "an existing visit"
+        )
+        raise ValidationError(
+            "%s already has an active visit (%s). Complete or cancel it before "
+            "registering another."
+            % (existing.patient_id.display_name, reference)
+        )
+
+    # ------------------------------------------------------------------
     # CRUD guards
     # ------------------------------------------------------------------
     @api.model_create_multi
@@ -248,6 +349,27 @@ class HospitalEncounter(models.Model):
                 "Front Desk Nurses may open encounters only through the "
                 "authoritative reception workflow."
             )
+
+        # Two passes, and the second is not redundant.
+        #
+        # _assert_no_active_episode reads the DATABASE, so in a single
+        # create([a, b]) for one patient neither row exists yet when the other
+        # is checked and BOTH pass. The batch itself has to be de-duplicated
+        # separately -- an ORM caller can hand us the duplicate in one call
+        # rather than two transactions.
+        seen = set()
+        for vals in vals_list:
+            patient_id = vals.get("patient_id")
+            if patient_id:
+                key = (patient_id, vals.get("company_id") or self.env.company.id)
+                if key in seen:
+                    raise ValidationError(
+                        "This request would open two visits at once for the "
+                        "same patient. A patient may have only one active "
+                        "visit."
+                    )
+                seen.add(key)
+            self._assert_no_active_episode(vals)
 
         for vals in vals_list:
             touched = BYPASS_GUARDED_FIELDS.intersection(vals)

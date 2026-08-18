@@ -29,12 +29,14 @@ export type ReceptionRoles = {
   system_administrator: boolean;
   emergency_authorizer: boolean;
   front_desk_nurse: boolean;
+  insurance_officer: boolean;
 };
 
 export const RECEPTION_ROUTE = "/reception";
 export const CLINICAL_ROUTE = "/triage";
 export const FRONT_DESK_ROUTE = "/front-desk";
 export const CASHIER_ROUTE = "/cashier";
+export const INSURANCE_CREDIT_ROUTE = "/insurance-credit";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -54,6 +56,7 @@ export function parseReceptionRoles(value: unknown): ReceptionRoles | null {
     "system_administrator",
     "emergency_authorizer",
     "front_desk_nurse",
+    "insurance_officer",
   ];
   if (!known.some((key) => key in value)) {
     return null;
@@ -69,6 +72,7 @@ export function parseReceptionRoles(value: unknown): ReceptionRoles | null {
     system_administrator: flag("system_administrator"),
     emergency_authorizer: flag("emergency_authorizer"),
     front_desk_nurse: flag("front_desk_nurse"),
+    insurance_officer: flag("insurance_officer"),
   };
 }
 
@@ -197,5 +201,40 @@ export function landingRouteForRoles(roles: ReceptionRoles | null): string {
   if (canUseCashier(roles)) {
     return CASHIER_ROUTE;
   }
+  // AFTER cashier, deliberately, and this ordering is a no-regression choice.
+  //
+  // A PURE Insurance/Credit Officer holds none of the branches above, so today
+  // they fall through to the clinical queue by elimination -- the same bug the
+  // Cashier and the Front Desk Nurse each hit before their branch was added.
+  //
+  // Placing this branch BELOW cashier means a user who holds BOTH keeps the
+  // landing page they have today (/cashier). Putting it above would silently
+  // move them, which is a regression dressed up as a feature. The narrow flag
+  // is used so manager and admin, already routed to reception above, are
+  // untouched either way.
+  if (roles?.insurance_officer === true) {
+    return INSURANCE_CREDIT_ROUTE;
+  }
   return CLINICAL_ROUTE;
+}
+
+/**
+ * Insurance/Credit Desk visibility.
+ *
+ * BROADER than the landing check above, and mirrors the server's
+ * INSURANCE_CREDIT_GROUPS (officer, manager, admin). A manager still LANDS on
+ * reception but is offered the link, because a landing route is a default and
+ * not a restriction.
+ *
+ * The Accountant is deliberately absent, exactly as they are from the server's
+ * RESPONSIBILITY_AUTHORITY: they read sponsor exposure for finance work, but
+ * the party who books the receivable does not decide it.
+ */
+export function canUseInsuranceCredit(roles: ReceptionRoles | null): boolean {
+  if (!roles) {
+    return false;
+  }
+  return (
+    roles.insurance_officer || roles.manager || roles.system_administrator
+  );
 }

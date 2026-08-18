@@ -478,25 +478,44 @@ class YoyaEmrReceptionController(http.Controller):
                 "Patient eligibility",
             )
 
-        # THE only mutation. One call, one transaction.
-        result = env["hospital.reception.workflow"].create_visit(
-            patient=patient,
-            patient_values=patient_values,
-            visit_type=visit_type,
-            department=department,
-            doctor=doctor,
-            appointment_date=appointment_date,
-            reason=reason,
-            triage_destination=triage_destination,
-            issue_card=issue_card,
-            patient_payer=patient_payer,
-        )
+        # ONE ATOMIC UNIT: the registration AND its serialized response.
+        #
+        # This savepoint is not belt-and-braces, it is the fix for a defect UAT
+        # actually hit. reception_endpoint below catches ValidationError and
+        # RETURNS a Response; Odoo's dispatcher reads a normal return as a
+        # served request and COMMITS. So anything create_visit() wrote before
+        # raising survived -- an orphan confirmed appointment with no encounter,
+        # sitting in the front-desk queue behind a "duplicate visit" error.
+        #
+        # env.cr.savepoint() is a _FlushingSavepoint: it flushes on entry and,
+        # on any exception, clears pending ORM state and issues ROLLBACK TO
+        # SAVEPOINT before re-raising. By the time the decorator builds the
+        # error body, the appointment is gone.
+        #
+        # The response is built INSIDE the block for the same reason the cashier
+        # payment endpoint does it: a failure while SERIALIZING must not leave a
+        # committed visit behind an error the client reads as failure.
+        with env.cr.savepoint():
+            result = env["hospital.reception.workflow"].create_visit(
+                patient=patient,
+                patient_values=patient_values,
+                visit_type=visit_type,
+                department=department,
+                doctor=doctor,
+                appointment_date=appointment_date,
+                reason=reason,
+                triage_destination=triage_destination,
+                issue_card=issue_card,
+                patient_payer=patient_payer,
+            )
 
-        appointment = result["appointment"]
-        return success_response(
-            serialize_visit_detail(env, appointment, capability_flags(env)),
-            status=201,
-        )
+            appointment = result["appointment"]
+            response = success_response(
+                serialize_visit_detail(env, appointment, capability_flags(env)),
+                status=201,
+            )
+
+        return response
 
     # ------------------------------------------------------------------
     # 5. Visit detail

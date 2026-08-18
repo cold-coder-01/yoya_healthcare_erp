@@ -497,6 +497,28 @@ class TestPaymentAuthorizationBoundary(TransactionCase):
         self.assertEqual(self._receipt_count(), before)
 
     def test_account_method_manager_overpayment_requires_note(self):
+        """Overpayment is a LEGACY-mode affordance, so the mode is stated here.
+
+        This test used to inherit whatever payer_responsibility_mode the
+        database happened to carry. Under 'enforce' an allocation above the
+        patient's residual is refused outright by
+        charge_receipt._check_within_patient_responsibility, so the note
+        requirement could never be reached and the test failed for a reason
+        that had nothing to do with notes.
+
+        Setting the mode explicitly makes the test independent of UAT data.
+        The enforce-side behaviour has its own coverage in the cashier suite
+        (test_51_enforce_ceiling_returns_a_specific_error_code).
+        """
+        # Captured BEFORE the write, or the restore would put back the value
+        # this test just set. TransactionCase rolls back anyway; this keeps the
+        # intent readable rather than relying on that.
+        original_mode = self.env.company.payer_responsibility_mode
+        self.env.company.sudo().write({"payer_responsibility_mode": "off"})
+        self.addCleanup(
+            self.env.company.sudo().write,
+            {"payer_responsibility_mode": original_mode},
+        )
         manager = self._make_user(
             "account_method_overpay_manager", ["hospital_management.group_hospital_manager"]
         )

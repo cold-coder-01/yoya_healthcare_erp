@@ -166,7 +166,17 @@ class HospitalBillingEngine(models.AbstractModel):
 
         if not existing:
             # The snapshot is taken HERE, once, and never again.
-            return charge_model.create(vals)
+            created = charge_model.create(vals)
+            # HOOK 1 of 3. Every clinical module routes charge creation through
+            # this method, so this is the one place that sees a new charge
+            # whatever raised it. If the visit already carries an eligibility,
+            # the agreement's own decision is applied immediately -- so a lab or
+            # pharmacy charge is already split before the cashier ever reads it.
+            #
+            # Idempotent and silent when there is no payer, so a self-pay visit
+            # pays nothing for this call.
+            self.resolve_charge_coverage(created)
+            return created
 
         if existing.charge_state in FROZEN_CHARGE_STATES:
             return existing
@@ -739,6 +749,370 @@ class HospitalBillingEngine(models.AbstractModel):
             reason_code=reason_code,
             reason=reason,
         )
+
+    # ------------------------------------------------------------------
+    # AUTOMATIC COVERAGE RESOLUTION
+    #
+    # THE PROBLEM THIS SOLVES. An agreement that says "consultation, 80%,
+    # no prior authorization" has already made the decision. Routing that
+    # through a human queue means an officer clicks Approve on the same 80%
+    # several hundred times a day, and until they do, the cashier asks the
+    # patient for the full 300 that the contract says the sponsor owes 240 of.
+    #
+    # So: whenever the agreement contains enough information to decide, the
+    # server decides. Only genuine judgement reaches the Insurance/Credit desk.
+    #
+    # WHAT COUNTS AS "ENOUGH INFORMATION"
+    #   permitted > 0 and no authorization required  -> authorize permitted
+    #   permitted == 0 for a stated reason           -> authorize ZERO (a denial)
+    #   authorization required                       -> leave it for an officer
+    #   no policy at all (default manual)            -> leave it for an officer
+    #
+    # A zero authorization is a real decision, not an absence of one: the
+    # patient carries the full charge, no benefit is consumed, and the visit
+    # leaves the review queue. See hospital.charge.responsibility.
+    # ------------------------------------------------------------------
+    #
+    # Evaluator reason codes whose outcome is settled without a human. Each
+    # names a decision the CONTRACT made: an explicit exclusion, a policy of
+    # covering nothing, or a ceiling that is spent. 'default_manual' is
+    # deliberately absent -- it means no policy matched at all, which is the one
+    # case that genuinely needs judgement.
+    DETERMINISTIC_ZERO_REASONS = frozenset(
+        {
+            "service_excluded",
+            "default_not_covered",
+            "limit_exhausted",
+        }
+    )
+
+    @api.model
+    def charge_requires_manual_decision(self, charge, patient_payer=None):
+        """Does this charge genuinely need an Insurance/Credit officer?
+
+        THE QUEUE PREDICATE. Used by the officer worklist so the desk shows
+        exceptions rather than every sponsored charge in the hospital.
+        """
+        record = charge.sudo()
+        if record.charge_state not in ("draft", "active"):
+            return False
+        # A live row means somebody or something already decided.
+        if record.responsibility_state != "self_pay":
+            return False
+
+        encounter = record.encounter_id
+        eligibility = patient_payer or encounter.patient_payer_id
+        if not eligibility or not eligibility.sudo().is_valid_today:
+            # No sponsor domain at all: this is a self-pay charge, not a
+            # pending insurance decision.
+            return False
+
+        coverage = self.evaluate_charge_coverage(record, eligibility)
+        return self._coverage_needs_officer(coverage)
+
+    @api.model
+    def _coverage_needs_officer(self, coverage):
+        """One place decides deterministic-vs-manual, so the queue and the
+        auto-resolver can never disagree about the same charge."""
+        if coverage["reason_code"] == "default_manual":
+            return True
+        if coverage["requires_authorization"] and (
+            coverage["permitted_sponsor_amount"] > AMOUNT_TOLERANCE
+        ):
+            # There is something to authorize and the contract says a human
+            # must. When the permitted amount is zero there is nothing for the
+            # officer to approve, so the flag changes no outcome.
+            return True
+        return False
+
+    @api.model
+    def resolve_charge_coverage(self, charge, patient_payer=None):
+        """Apply the agreement's own decision to one charge, if it has one.
+
+        IDEMPOTENT AND SAFE TO CALL REPEATEDLY. It returns early when a live
+        responsibility row already exists, so re-running it after every charge
+        update, payer change and triage handoff costs a read and changes
+        nothing.
+
+        Returns the responsibility record it created, or an empty recordset when
+        the decision belongs to an officer (or there is no sponsor at all).
+        """
+        Responsibility = self.env["hospital.charge.responsibility"]
+        empty = Responsibility.browse()
+
+        record = charge.sudo()
+        if record.charge_state not in ("draft", "active"):
+            return empty
+
+        encounter = record.encounter_id
+        eligibility = patient_payer or encounter.patient_payer_id
+        if not eligibility:
+            return empty
+        eligibility = eligibility.sudo()
+        if not eligibility.is_valid_today:
+            # An expired or suspended member is not a denial: the front desk may
+            # still fix the eligibility. Leave the charge alone rather than
+            # recording a zero the officer would have to unpick.
+            return empty
+
+        account = record.billing_account_id
+        if not account:
+            return empty
+
+        # THE SAME LOCK the cashier and the officer take. Everything below reads
+        # live benefit availability, so it has to be serialized against anything
+        # that could consume it between the read and the write.
+        self.env["hospital.billing.account"]._lock_responsibility_scope(account.id)
+
+        # Re-read AFTER the lock: another visit may have consumed the member's
+        # remaining benefit while this transaction was waiting for it.
+        record.invalidate_recordset(
+            ["responsibility_state", "amount_sponsor_authorized"]
+        )
+        if record.responsibility_state != "self_pay":
+            # Already decided -- by an officer, or by a previous run of this
+            # method. Authorized rows are frozen and are never rewritten here.
+            return empty
+
+        # A charge whose sponsor decision is frozen by a receipt or an invoice
+        # must not gain one now: the patient figure it would change has already
+        # been acted upon.
+        if account.sudo().amount_received > AMOUNT_TOLERANCE:
+            return empty
+        if record.invoice_state != "not_invoiced":
+            return empty
+
+        coverage = self.evaluate_charge_coverage(record, eligibility)
+        if self._coverage_needs_officer(coverage):
+            return empty
+
+        permitted = coverage["permitted_sponsor_amount"]
+        reason_code = coverage["reason_code"]
+
+        if permitted <= AMOUNT_TOLERANCE:
+            if reason_code not in self.DETERMINISTIC_ZERO_REASONS:
+                # Zero for a reason nobody stated. Refusing to guess is the
+                # whole discipline here: leave it visible rather than record a
+                # denial the contract never made.
+                return empty
+            amount = 0.0
+        else:
+            amount = permitted
+
+        # A SYSTEM reason, not a human one. action_authorize requires a
+        # documented reason because a human decision that changes the patient's
+        # bill must be explainable; an automatic one is explained by naming the
+        # rule that produced it, which is exactly as auditable and does not
+        # invite an operator to type "ok" several hundred times a day.
+        reason = "Automatic (%s): %s" % (
+            reason_code or "agreement_policy",
+            coverage["reason"] or "resolved from the agreement's benefit policy",
+        )
+
+        # Deterministic token: re-running this for the same charge and the same
+        # eligibility cannot create a second row even if the early return above
+        # is somehow bypassed. The unique index on request_token is the backstop.
+        token = "auto:%s:%s" % (record.id, eligibility.id)
+
+        return self.allocate_payer(
+            account,
+            charge=record,
+            amount=amount,
+            reason=reason,
+            request_token=token,
+            authorize=True,
+            authorization_reference=None,
+        )
+
+    @api.model
+    def resolve_account_coverage(self, billing_account):
+        """Resolve every live charge on one visit. Idempotent.
+
+        THE RECONCILIATION ENTRY POINT. Charges and payer identity arrive in
+        either order -- a consultation charge is raised by action_confirm before
+        the front desk has chosen an eligibility, while a lab charge is raised
+        long after -- so resolution cannot be a single event at charge creation.
+        This is called from both sides and again at the triage handoff, and
+        being idempotent is what makes that safe rather than merely tolerable.
+        """
+        account = billing_account
+        if not account:
+            return self.env["hospital.charge.responsibility"].browse()
+        account.ensure_one()
+
+        encounter = account.sudo().encounter_id
+        if not encounter or not encounter.patient_payer_id:
+            return self.env["hospital.charge.responsibility"].browse()
+
+        resolved = self.env["hospital.charge.responsibility"].browse()
+        for charge in account.sudo().charge_line_ids:
+            if charge.charge_state in ("draft", "active"):
+                resolved |= self.resolve_charge_coverage(charge)
+        return resolved
+
+    # ------------------------------------------------------------------
+    # INSURANCE / CREDIT AUTHORIZATION
+    # ------------------------------------------------------------------
+    @api.model
+    def authorize_visit_coverage(
+        self, billing_account, decisions, request_token=None
+    ):
+        """Authorize sponsor shares for several charges as ONE decision.
+
+        THE EVALUATOR SAYS WHAT THE AGREEMENT PERMITS. THIS SAYS WHAT THE
+        OFFICER AUTHORIZED. The two are kept apart deliberately: a benefit rule
+        edited next year must never restate what a sponsor accepted today, so
+        the permitted figure is recomputed on demand while the authorized figure
+        is a frozen row on hospital.charge.responsibility.
+
+        ``decisions``: [{"charge_id": int, "amount": float, "reason": str}, ...]
+
+        WHY THE BROWSER'S NUMBER IS NEVER TRUSTED
+        -----------------------------------------
+        The officer's page may have been open for minutes while another visit
+        consumed the same member ceiling. Every charge is therefore RE-EVALUATED
+        inside the lock, and the requested amount is validated against that live
+        figure -- not against whatever the client believed when it rendered. An
+        officer who requests 4,000 against a ceiling that now has 2,000 left is
+        refused outright rather than silently capped: silently giving someone a
+        different number than they authorized is worse than making them look
+        again.
+
+        ATOMIC. One lock, one transaction, no partial success. Either every
+        decision in the batch is authorized or none is, because a half-applied
+        batch leaves the officer unable to tell what they actually approved.
+
+        ZERO IS A LEGITIMATE DECISION -- it is how the desk records "the sponsor
+        will not cover this". It needs a reason like any other authorization,
+        consumes no benefit, and leaves the patient carrying the full charge.
+        See the denial note on hospital.charge.responsibility.
+
+        Returns the hospital.charge.responsibility records, one per decision.
+        """
+        account = billing_account
+        account.ensure_one()
+
+        Responsibility = self.env["hospital.charge.responsibility"]
+        Responsibility._assert_authority("authorize sponsor responsibility")
+
+        if not decisions:
+            raise UserError("No charges were selected for authorization.")
+
+        # ONE lock for the whole batch, taken before the first read. The same
+        # key the cashier takes, so an officer authorizing and a cashier
+        # collecting cannot interleave and compute a residual from a state
+        # neither of them ever saw.
+        self.env["hospital.billing.account"]._lock_responsibility_scope(account.id)
+
+        encounter = account.sudo().encounter_id
+        eligibility = encounter.patient_payer_id
+        if not eligibility:
+            raise UserError(
+                "Encounter %s has no payer eligibility selected. There is no "
+                "sponsor to authorize." % encounter.name
+            )
+
+        results = Responsibility.browse()
+        for index, decision in enumerate(decisions):
+            charge = self.env["hospital.charge.line"].browse(
+                decision.get("charge_id")
+            ).exists()
+            if not charge:
+                raise UserError(
+                    "Charge %s does not exist." % decision.get("charge_id")
+                )
+            if charge.sudo().billing_account_id != account:
+                raise UserError(
+                    "Charge %s does not belong to this visit." % charge.sudo().name
+                )
+
+            requested = decision.get("amount")
+            if requested is None:
+                raise UserError(
+                    "Charge %s has no authorized amount." % charge.sudo().name
+                )
+            requested = float(requested)
+            if requested < 0.0:
+                raise UserError(
+                    "Charge %s: an authorized sponsor amount cannot be negative."
+                    % charge.sudo().name
+                )
+
+            reason = (decision.get("reason") or "").strip()
+
+            # LIVE re-evaluation, inside the lock. This is the whole point.
+            coverage = self.evaluate_charge_coverage(charge, eligibility)
+            permitted = coverage["permitted_sponsor_amount"]
+
+            if requested > permitted + AMOUNT_TOLERANCE:
+                raise UserError(
+                    "Charge %s: %.2f cannot be authorized because the agreement "
+                    "currently permits at most %.2f (%s).\n\n"
+                    "The available benefit may have changed since this page was "
+                    "opened. Reload the visit and decide again."
+                    % (charge.sudo().name, requested, permitted, coverage["reason"])
+                )
+
+            # A reduction or a denial is a departure from what the agreement
+            # allows, so it has to be explained. Accepting the full permitted
+            # amount does not -- the rule already documents that.
+            if requested + AMOUNT_TOLERANCE < permitted and not reason:
+                raise UserError(
+                    "Charge %s: authorizing %.2f instead of the permitted %.2f "
+                    "requires a documented reason."
+                    % (charge.sudo().name, requested, permitted)
+                )
+            if not reason:
+                reason = "Authorized in full per %s." % (
+                    coverage["reason"] or "the agreement's benefit policy"
+                )
+
+            # A live row for this charge already exists. Authorized rows are
+            # frozen, so a CHANGE is cancel + recreate -- never an in-place
+            # rewrite of a decision someone already made.
+            existing = Responsibility.sudo().search(
+                [
+                    ("charge_id", "=", charge.id),
+                    ("state", "in", ["draft", "authorized"]),
+                ],
+                limit=1,
+            )
+            if existing:
+                if existing.state == "authorized":
+                    if abs(existing.amount - requested) <= AMOUNT_TOLERANCE:
+                        # Same decision, already recorded. Idempotent.
+                        results |= existing
+                        continue
+                    raise UserError(
+                        "Charge %s already carries an authorized sponsor share of "
+                        "%.2f. Cancel it before authorizing a different amount: "
+                        "an authorized decision is never rewritten in place."
+                        % (charge.sudo().name, existing.amount)
+                    )
+                # A draft proposal: carry the officer's figure onto it.
+                existing.write({"amount": requested, "reason": reason})
+                existing.action_authorize(
+                    authorization_reference=decision.get("authorization_reference")
+                )
+                results |= existing
+                continue
+
+            # Per-charge token so a replayed batch cannot double-allocate, while
+            # each charge still gets its own unique key.
+            token = (
+                "%s:%s" % (request_token, charge.id) if request_token else None
+            )
+            results |= self.allocate_payer(
+                account,
+                charge=charge,
+                amount=requested,
+                reason=reason,
+                request_token=token,
+                authorize=True,
+                authorization_reference=decision.get("authorization_reference"),
+            )
+
+        return results
 
     # ------------------------------------------------------------------
     # Later phases — stable signatures, controlled failure

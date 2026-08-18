@@ -228,6 +228,35 @@ class HospitalReceptionWorkflow(models.AbstractModel):
         if not patient:
             patient = self.register_new_patient(patient_values)
 
+        # PRE-FLIGHT, BEFORE THE FIRST WRITE OF THE VISIT.
+        #
+        # hospital.encounter.create() refuses a second live episode, but it is
+        # reached only AFTER this method has created the appointment. The API
+        # decorator then catches the ValidationError and returns JSON, at which
+        # point Odoo's dispatcher considers the request served and COMMITS --
+        # leaving an orphan confirmed appointment in the queue behind a
+        # "duplicate visit" error. UAT saw exactly that: two phantom rows, one
+        # at intake and one at triage.
+        #
+        # Checking here means the refusal happens before anything exists to be
+        # committed. The model guard STAYS: this one protects the workflow, that
+        # one protects every other route to an episode.
+        #
+        # The lock is taken here and is transaction-scoped, so it is still held
+        # when the encounter is created further down -- check and create are one
+        # critical section, and two simultaneous registrations serialize rather
+        # than both passing.
+        #
+        # A brand-new patient cannot have an episode, so this costs them one
+        # cheap indexed read.
+        # self.env.company, not the patient's: hospital.patient carries no
+        # company_id. The encounter does, and it defaults to the acting user's
+        # company -- which is the same value create() will resolve below, so
+        # the pre-flight and the model guard look at the same scope.
+        self.env["hospital.encounter"].assert_patient_has_no_active_episode(
+            patient, self.env.company
+        )
+
         now = fields.Datetime.now()
         appointment_values = {
             "patient_id": patient.id,
@@ -334,8 +363,48 @@ class HospitalReceptionWorkflow(models.AbstractModel):
             eligibility, encounter.patient_id, encounter.company_id
         )
 
+        previous = encounter.patient_payer_id
+
         with payer_identity_capability():
             encounter.write({"patient_payer_id": eligibility.id or False})
+
+        # A CHANGED payer invalidates any automatic split recorded under the old
+        # one: those rows carry the previous agreement as a frozen snapshot, and
+        # leaving them would credit this visit against a contract it is no
+        # longer presented under.
+        #
+        # Only rows that are still cancellable are touched. A row frozen by a
+        # confirmed receipt cannot be reached from here at all -- set_visit_payer
+        # refuses the payer change itself once cash has been taken
+        # (_payer_identity_freeze_reason), so the two guards agree by
+        # construction rather than by coincidence.
+        if previous and previous != eligibility:
+            engine = self.env["hospital.billing.engine"].sudo()
+            account = encounter.sudo().billing_account_id
+            stale = self.env["hospital.charge.responsibility"].sudo().search(
+                [
+                    ("billing_account_id", "=", account.id),
+                    ("patient_payer_id", "=", previous.id),
+                    ("state", "in", ["draft", "authorized"]),
+                ]
+            ) if account else self.env["hospital.charge.responsibility"].sudo()
+            if stale:
+                stale.action_cancel(
+                    reason="Payer identity changed from %s to %s."
+                    % (
+                        previous.display_name,
+                        eligibility.display_name or "no sponsor",
+                    )
+                )
+
+        # HOOK 2 of 3. The eligibility may have been chosen AFTER the charges
+        # existed -- the consultation charge is raised by action_confirm, before
+        # the front desk picks a payer -- so resolving only at charge creation
+        # would leave exactly the common case unsplit.
+        if eligibility:
+            self.env["hospital.billing.engine"].sudo().resolve_account_coverage(
+                encounter.sudo().billing_account_id
+            )
         return encounter
 
     @api.model
@@ -625,6 +694,23 @@ class HospitalReceptionWorkflow(models.AbstractModel):
         #
         # The clearance summary is returned below for information, so the desk
         # can tell the patient what to pay -- it no longer decides anything here.
+        # HOOK 3 of 3, and the one that makes the guarantee hold.
+        #
+        # This is the handoff to the cashier, and it is an explicit workflow
+        # ACTION rather than a read -- which is why the reconciliation lives
+        # here and not inside a serializer. A cashier must never be shown the
+        # full 300 on a visit the contract already splits 240/60 merely because
+        # some earlier hook did not fire: charges raised out of order, an
+        # eligibility corrected after registration, a charge repriced.
+        #
+        # Idempotent, so on the ordinary path it finds every charge already
+        # resolved and does nothing. Deliberately BEFORE the clearance summary
+        # below, so the figure the desk reports to the patient is the split one.
+        self.env["hospital.billing.engine"].sudo().resolve_account_coverage(
+            encounter.sudo().billing_account_id
+        )
+        encounter.invalidate_recordset()
+
         clearance = encounter._reception_clearance_summary()
 
         if destination != appointment.triage_destination_id:
