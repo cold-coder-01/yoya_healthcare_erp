@@ -5,7 +5,15 @@
  * add NO dependency to the project. Imports are relative rather than aliased
  * for the same reason -- they resolve under any runner.
  *
- * Run: see the note in src/lib/doctor-adapt.test.ts.
+ * Run with `npm test`.
+ *
+ * THE PROPERTY THESE TESTS EXIST FOR: readiness and the Review bucket are the
+ * AUTHORITATIVE stage, hospital.appointment.front_desk_stage, and nothing else.
+ * The previous implementation reconstructed both from triage status plus the
+ * consultation-scoped billing flag, which files a patient who is triage-complete
+ * but still owes money at the desk under Review and offers Start Consultation
+ * for them. front_desk_stage answers that correctly because it consults
+ * encounter-WIDE clearance; several tests below pin exactly that case.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -20,8 +28,11 @@ import {
   statLabel,
   vitalText,
   visitReadiness,
-} from "./doctor-format";
-import type { DoctorQueueRow, DoctorVitals } from "../types/doctor";
+  // Explicit .ts extension: Node's ESM resolver does not add one, and
+  // reception-roles.test.ts (the working precedent in this project) imports the
+  // same way. Without it `npm test` cannot resolve the module at all.
+} from "./doctor-format.ts";
+import type { DoctorQueueRow, DoctorVitals } from "../types/doctor.ts";
 
 const EMPTY_VITALS: DoctorVitals = {
   weight: null,
@@ -49,13 +60,25 @@ function row(overrides: Partial<DoctorQueueRow> = {}): DoctorQueueRow {
     department: { id: 1, name: "Medical" },
     doctor: { id: 1, name: "Dr Test" },
     encounter: null,
-    queue_stage: null,
-    visit_type: null,
+    queue_stage: "ready_doctor",
+    visit_type: "routine",
     triage_status: "completed",
     triage_priority: "routine",
     chief_complaint: null,
     urgent: false,
-    clearance: { blocked: false, message: null },
+    clearance: { blocked: false, state: "cleared", reason: null },
+    can_start_consultation: true,
+    ...overrides,
+  };
+}
+
+/** A ready visit: every gate satisfied. */
+function readyInput(overrides: Partial<Parameters<typeof visitReadiness>[0]> = {}) {
+  return {
+    state: "confirmed",
+    queueStage: "ready_doctor" as const,
+    canStart: true,
+    clearanceReason: null,
     ...overrides,
   };
 }
@@ -64,73 +87,78 @@ function row(overrides: Partial<DoctorQueueRow> = {}): DoctorQueueRow {
  * The gates
  * ------------------------------------------------------------------ */
 
-test("a confirmed, triaged, cleared visit is ready", () => {
-  const readiness = visitReadiness({
-    state: "confirmed",
-    triageStatus: "completed",
-    clearanceBlocked: false,
-    clearanceMessage: null,
-  });
+test("a confirmed visit at ready_doctor is ready", () => {
+  const readiness = visitReadiness(readyInput());
   assert.equal(readiness.ready, true);
   assert.equal(readiness.gate, null);
+  assert.equal(readiness.reason, null);
 });
 
-test("incomplete triage blocks the button and names the triage gate", () => {
-  for (const status of ["not_started", "waiting", "in_progress", "cancelled"] as const) {
-    const readiness = visitReadiness({
-      state: "confirmed",
-      triageStatus: status,
-      clearanceBlocked: false,
-      clearanceMessage: null,
-    });
-    assert.equal(readiness.ready, false, `triage=${status} must not be ready`);
-    assert.equal(readiness.gate, "triage");
+test("ONLY ready_doctor is ready -- no earlier stage ever is", () => {
+  for (const stage of ["new", "intake", "triage", "awaiting_cashier"] as const) {
+    const readiness = visitReadiness(readyInput({ queueStage: stage }));
+    assert.equal(readiness.ready, false, `stage=${stage} must not be ready`);
+    assert.ok(readiness.reason && readiness.reason.length > 0);
   }
 });
 
-test("blocked clearance blocks the button and surfaces Odoo's reason", () => {
-  const readiness = visitReadiness({
-    state: "confirmed",
-    triageStatus: "completed",
-    clearanceBlocked: true,
-    clearanceMessage: "Outstanding consultation charge.",
-  });
+test("awaiting_cashier is never ready even when triage is complete", () => {
+  // THE REGRESSION. The old rule read triage_status === "completed" and a
+  // clearance flag scoped to the consultation charge, and called this ready.
+  // front_desk_stage says awaiting_cashier because the patient still owes at
+  // the desk, and that verdict is final.
+  const readiness = visitReadiness(
+    readyInput({
+      queueStage: "awaiting_cashier",
+      clearanceReason: "Financial clearance is still pending at the front desk.",
+    }),
+  );
   assert.equal(readiness.ready, false);
   assert.equal(readiness.gate, "clearance");
-  assert.equal(readiness.reason, "Outstanding consultation charge.");
+  assert.equal(
+    readiness.reason,
+    "Financial clearance is still pending at the front desk.",
+  );
 });
 
-test("clearance still blocks when Odoo sent no reason", () => {
-  const readiness = visitReadiness({
-    state: "confirmed",
-    triageStatus: "completed",
-    clearanceBlocked: true,
-    clearanceMessage: null,
-  });
+test("awaiting_cashier still blocks when Odoo sent no reason", () => {
+  const readiness = visitReadiness(
+    readyInput({ queueStage: "awaiting_cashier" }),
+  );
   assert.equal(readiness.ready, false);
   assert.equal(readiness.gate, "clearance");
   assert.ok(readiness.reason && readiness.reason.length > 0);
 });
 
-test("triage is checked before clearance, so an untriaged patient is never sent to the cashier", () => {
-  const readiness = visitReadiness({
-    state: "confirmed",
-    triageStatus: "waiting",
-    clearanceBlocked: true,
-    clearanceMessage: "Outstanding balance.",
-  });
-  assert.equal(readiness.gate, "triage");
+test("a stage before the cashier names the triage gate, not the money", () => {
+  for (const stage of ["new", "intake", "triage"] as const) {
+    const readiness = visitReadiness(readyInput({ queueStage: stage }));
+    assert.equal(readiness.gate, "stage");
+    assert.ok(/triage/i.test(readiness.reason ?? ""), `stage=${stage}`);
+  }
 });
 
-test("a visit that is not confirmed can never be ready, whatever else is true", () => {
+test("a visit that is not confirmed can never be ready, whatever the stage says", () => {
   for (const state of ["draft", "in_consultation", "done", "cancelled", null]) {
-    const readiness = visitReadiness({
-      state,
-      triageStatus: "completed",
-      clearanceBlocked: false,
-      clearanceMessage: null,
-    });
+    const readiness = visitReadiness(readyInput({ state }));
     assert.equal(readiness.ready, false, `state=${state} must not be ready`);
+    assert.equal(readiness.gate, "state");
+  }
+});
+
+test("a ready stage the server will not act on is refused, and says why", () => {
+  // The browser cannot see whether this user is the assigned doctor. The server
+  // can, and its verdict is ANDed in rather than guessed at.
+  const readiness = visitReadiness(readyInput({ canStart: false }));
+  assert.equal(readiness.ready, false);
+  assert.equal(readiness.gate, "assignment");
+  assert.ok(/assigned/i.test(readiness.reason ?? ""));
+});
+
+test("readiness never claims ready on a finished visit reached by stage alone", () => {
+  for (const stage of ["in_consultation", "completed", "cancelled"] as const) {
+    const readiness = visitReadiness(readyInput({ queueStage: stage }));
+    assert.equal(readiness.ready, false, `stage=${stage}`);
     assert.equal(readiness.gate, "state");
   }
 });
@@ -139,42 +167,77 @@ test("a visit that is not confirmed can never be ready, whatever else is true", 
  * Buckets
  * ------------------------------------------------------------------ */
 
-test("buckets map triage and visit state the way the worklist strip claims", () => {
-  assert.equal(bucketOf(row({ triage_status: "waiting" })), "wait");
-  assert.equal(bucketOf(row({ triage_status: "in_progress" })), "wait");
-  assert.equal(bucketOf(row({ triage_status: "not_started" })), "wait");
-  assert.equal(bucketOf(row({ triage_status: "completed" })), "review");
-  assert.equal(bucketOf(row({ state: "in_consultation" })), "finished");
-  assert.equal(bucketOf(row({ state: "done" })), "finished");
+test("buckets are driven by the authoritative stage", () => {
+  assert.equal(bucketOf(row({ queue_stage: "new" })), "wait");
+  assert.equal(bucketOf(row({ queue_stage: "intake" })), "wait");
+  assert.equal(bucketOf(row({ queue_stage: "triage" })), "wait");
+  assert.equal(bucketOf(row({ queue_stage: "awaiting_cashier" })), "wait");
+  assert.equal(bucketOf(row({ queue_stage: "ready_doctor" })), "review");
+  assert.equal(
+    bucketOf(row({ queue_stage: "in_consultation", state: "in_consultation" })),
+    "finished",
+  );
+  assert.equal(bucketOf(row({ queue_stage: "completed", state: "done" })), "finished");
+});
+
+test("Review requires ready_doctor -- completed triage alone does not earn it", () => {
+  // The exact row the old rule mis-filed: triage done, money still owed.
+  const atCashier = row({
+    queue_stage: "awaiting_cashier",
+    triage_status: "completed",
+    clearance: { blocked: true, state: "pending", reason: "Pending at the desk." },
+  });
+  assert.equal(bucketOf(atCashier), "wait");
+  assert.notEqual(bucketOf(atCashier), "review");
+});
+
+test("Review also requires the visit to still be confirmed", () => {
+  assert.equal(
+    bucketOf(row({ queue_stage: "ready_doctor", state: "in_consultation" })),
+    "wait",
+  );
 });
 
 test("a started consultation counts as finished even if triage never completed", () => {
   assert.equal(
-    bucketOf(row({ state: "in_consultation", triage_status: "waiting" })),
+    bucketOf(
+      row({
+        queue_stage: "in_consultation",
+        state: "in_consultation",
+        triage_status: "waiting",
+      }),
+    ),
     "finished",
   );
 });
 
 test("bucket counts sum to the total", () => {
   const rows = [
-    row({ appointment_id: 1, triage_status: "waiting" }),
-    row({ appointment_id: 2, triage_status: "completed" }),
-    row({ appointment_id: 3, state: "done" }),
-    row({ appointment_id: 4, triage_status: "completed" }),
+    row({ appointment_id: 1, queue_stage: "triage" }),
+    row({ appointment_id: 2, queue_stage: "ready_doctor" }),
+    row({ appointment_id: 3, queue_stage: "completed", state: "done" }),
+    row({ appointment_id: 4, queue_stage: "ready_doctor" }),
+    row({ appointment_id: 5, queue_stage: "awaiting_cashier" }),
   ];
   const counts = bucketCounts(rows);
-  assert.equal(counts.all, 4);
-  assert.equal(counts.wait, 1);
+  assert.equal(counts.all, 5);
+  assert.equal(counts.wait, 2);
   assert.equal(counts.review, 2);
   assert.equal(counts.finished, 1);
   assert.equal(counts.wait + counts.review + counts.finished, counts.all);
 });
 
 test("stat labels stay within the vendor column's short register", () => {
-  assert.equal(statLabel(row({ triage_status: "waiting" })), "Wait");
-  assert.equal(statLabel(row({ triage_status: "completed" })), "Rev");
-  assert.equal(statLabel(row({ state: "in_consultation" })), "Cons");
-  assert.equal(statLabel(row({ state: "done" })), "Done");
+  assert.equal(statLabel(row({ queue_stage: "intake" })), "Wait");
+  assert.equal(statLabel(row({ queue_stage: "triage" })), "Wait");
+  // The desk still has them: worth distinguishing, still not workable.
+  assert.equal(statLabel(row({ queue_stage: "awaiting_cashier" })), "Cash");
+  assert.equal(statLabel(row({ queue_stage: "ready_doctor" })), "Rev");
+  assert.equal(
+    statLabel(row({ queue_stage: "in_consultation", state: "in_consultation" })),
+    "Cons",
+  );
+  assert.equal(statLabel(row({ queue_stage: "completed", state: "done" })), "Done");
 });
 
 /* ------------------------------------------------------------------ *
@@ -206,6 +269,13 @@ test("payer labels cover the sponsorship categories and nothing commercial", () 
   assert.equal(doctorLabel("self_pay"), "Self Pay");
   assert.equal(doctorLabel("insurance"), "Insurance");
   assert.equal(doctorLabel("credit"), "Credit");
+});
+
+test("stage labels render the authoritative vocabulary", () => {
+  assert.equal(doctorLabel("ready_doctor"), "Ready");
+  assert.equal(doctorLabel("awaiting_cashier"), "Cashier");
+  assert.equal(doctorLabel("triage"), "Triage");
+  assert.equal(doctorLabel("intake"), "Intake");
 });
 
 test("unknown selection values degrade to a readable label, not a crash", () => {

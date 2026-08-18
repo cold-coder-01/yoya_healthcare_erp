@@ -1,5 +1,5 @@
 import { doctorLabel } from "@/lib/doctor-format";
-import type { DoctorTriageStatus } from "@/types/doctor";
+import type { DoctorQueueStage, DoctorTriageStatus } from "@/types/doctor";
 
 /**
  * COLOUR CARRIES ONE MEANING EACH, and selection is not one of them.
@@ -89,17 +89,28 @@ export function ClearanceBadge({ blocked }: { blocked: boolean }) {
 }
 
 /**
- * A field the current backend cannot supply yet. Shown instead of a plausible
- * default so nobody reads an absence as a value. Disappears on its own once
- * the payload starts carrying the field.
+ * The AUTHORITATIVE queue stage: hospital.appointment.front_desk_stage.
+ *
+ * Emerald is reserved for ready_doctor, and this is the only badge on the desk
+ * allowed to render it -- the one state that means "you may see this patient".
+ * awaiting_cashier is amber (something is owed), triage cyan (in flight),
+ * everything else neutral slate.
  */
-export function PendingFieldChip({ label }: { label: string }) {
+const STAGE_TONE: Record<string, string> = {
+  new: "border-slate-300 bg-slate-100 text-slate-700",
+  intake: "border-slate-300 bg-slate-100 text-slate-700",
+  triage: "border-cyan-300 bg-cyan-50 text-cyan-900",
+  awaiting_cashier: "border-amber-400 bg-amber-50 text-amber-900",
+  ready_doctor: "border-emerald-400 bg-emerald-50 text-emerald-900",
+  in_consultation: "border-indigo-300 bg-indigo-50 text-indigo-900",
+  completed: "border-slate-300 bg-white text-slate-600",
+  cancelled: "border-slate-300 bg-white text-slate-500",
+};
+
+export function StageBadge({ stage }: { stage: DoctorQueueStage }) {
   return (
-    <span
-      className="inline-flex h-5 shrink-0 items-center rounded border border-dashed border-slate-300 bg-slate-50 px-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400"
-      title={`${label} is not available from the current API. It will appear here once the doctor endpoint is added.`}
-    >
-      {label} n/a
+    <span className={`${BADGE_BASE} ${STAGE_TONE[stage] ?? STAGE_TONE.intake}`}>
+      {doctorLabel(stage)}
     </span>
   );
 }

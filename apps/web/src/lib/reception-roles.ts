@@ -30,6 +30,23 @@ export type ReceptionRoles = {
   emergency_authorizer: boolean;
   front_desk_nurse: boolean;
   insurance_officer: boolean;
+  /**
+   * Membership of hospital_management.group_hospital_doctor.
+   *
+   * NOT the same KIND of flag as front_desk_nurse and insurance_officer, and
+   * the difference decides where the branch below has to sit. Nothing implies
+   * those two, so they amount to direct membership. group_hospital_doctor IS
+   * implied: group_hospital_manager carries implied_ids = receptionist +
+   * doctor + nurse, and system administrator implies manager. Odoo's
+   * has_group() honours that chain, so A MANAGER AND AN ADMIN BOTH READ TRUE
+   * HERE.
+   *
+   * That is correct rather than a leak -- they really do hold the group, and
+   * _assert_may_start_consultation admits them on exactly that basis -- but it
+   * means this flag alone cannot say "doctor rather than manager". Precedence
+   * does; see landingRouteForRoles.
+   */
+  doctor: boolean;
 };
 
 export const RECEPTION_ROUTE = "/reception";
@@ -37,6 +54,7 @@ export const CLINICAL_ROUTE = "/triage";
 export const FRONT_DESK_ROUTE = "/front-desk";
 export const CASHIER_ROUTE = "/cashier";
 export const INSURANCE_CREDIT_ROUTE = "/insurance-credit";
+export const DOCTOR_ROUTE = "/doctor";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -57,6 +75,7 @@ export function parseReceptionRoles(value: unknown): ReceptionRoles | null {
     "emergency_authorizer",
     "front_desk_nurse",
     "insurance_officer",
+    "doctor",
   ];
   if (!known.some((key) => key in value)) {
     return null;
@@ -73,6 +92,7 @@ export function parseReceptionRoles(value: unknown): ReceptionRoles | null {
     emergency_authorizer: flag("emergency_authorizer"),
     front_desk_nurse: flag("front_desk_nurse"),
     insurance_officer: flag("insurance_officer"),
+    doctor: flag("doctor"),
   };
 }
 
@@ -215,7 +235,48 @@ export function landingRouteForRoles(roles: ReceptionRoles | null): string {
   if (roles?.insurance_officer === true) {
     return INSURANCE_CREDIT_ROUTE;
   }
+  // LAST before the clinical fallback, and that position is the whole design.
+  //
+  // Every branch above claims a user whose operational identity is already
+  // settled -- front desk, reception (which includes manager and admin),
+  // cashier, insurance/credit. Reaching this line means none of them did, so
+  // the only remaining question is "clinical: doctor, or everyone else".
+  //
+  // This ordering is what stops the flag's WIDTH becoming a routing bug. A
+  // manager reads doctor === true, because group_hospital_manager implies
+  // group_hospital_doctor -- but canUseReception claimed them four branches
+  // ago, so they still land on /reception exactly as they do today. The same
+  // holds for an admin. Moving this branch any higher would silently relocate
+  // both, which is a regression dressed up as a feature.
+  //
+  // A plain Nurse holds no reception-side role AND not the doctor group, so
+  // they fall past this to /triage -- unchanged. Readiness to route here is
+  // authoritative group membership only: no title heuristic, and never an
+  // inference from the ABSENCE of another role.
+  if (roles?.doctor === true) {
+    return DOCTOR_ROUTE;
+  }
   return CLINICAL_ROUTE;
+}
+
+/**
+ * Doctor Desk visibility.
+ *
+ * BROADER than the landing check above, and mirrors the server's
+ * DOCTOR_DESK_GROUPS (doctor, manager, admin) in yoya_emr_api reception_scope.
+ * A manager still LANDS on reception but is offered the link, because a landing
+ * route is a default and not a restriction -- the same relationship
+ * canUseInsuranceCredit has with its landing branch.
+ *
+ * Nurse, Front Desk Nurse, Receptionist, Cashier and Accountant are absent, as
+ * they are from the server tuple: the Doctor Desk is not a second door into the
+ * nursing or cash surfaces.
+ */
+export function canUseDoctorDesk(roles: ReceptionRoles | null): boolean {
+  if (!roles) {
+    return false;
+  }
+  return roles.doctor || roles.manager || roles.system_administrator;
 }
 
 /**

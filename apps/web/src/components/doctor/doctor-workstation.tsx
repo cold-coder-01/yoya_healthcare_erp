@@ -7,7 +7,6 @@ import { hospitalToday } from "@/lib/clinical-format";
 import { bucketCounts, bucketOf, type DoctorBucket } from "@/lib/doctor-format";
 import type {
   ApiEnvelope,
-  DoctorPendingField,
   DoctorQueueResponse,
   DoctorQueueRow,
   DoctorVisitResponse,
@@ -38,7 +37,6 @@ export default function DoctorWorkstation() {
 
   const [rows, setRows] = useState<DoctorQueueRow[]>([]);
   const [truncated, setTruncated] = useState(false);
-  const [pendingFields, setPendingFields] = useState<DoctorPendingField[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [detail, setDetail] = useState<DoctorVisitResponse | null>(null);
 
@@ -75,7 +73,6 @@ export default function DoctorWorkstation() {
         const nextRows = payload.data.rows ?? [];
         setRows(nextRows);
         setTruncated(payload.data.meta.truncated);
-        setPendingFields(payload.data.meta.pending_fields ?? []);
         setQueueError(null);
         // Keep the current patient selected across refreshes; fall back to the
         // top of the queue only when they are genuinely gone from it.
@@ -205,7 +202,6 @@ export default function DoctorWorkstation() {
           loading={queueLoading}
           error={queueError}
           truncated={truncated}
-          stagePending={pendingFields.includes("queue_stage")}
           onSelect={setSelectedId}
         />
         <DoctorPatientPanel

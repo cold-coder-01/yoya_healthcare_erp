@@ -18,8 +18,8 @@ import type { ApiEnvelope, DoctorVisitDetail } from "@/types/doctor";
 
 import {
   ClearanceBadge,
-  PendingFieldChip,
   PriorityBadge,
+  StageBadge,
   TriageBadge,
   VisitStateBadge,
 } from "./doctor-badges";
@@ -123,11 +123,13 @@ export default function DoctorPatientPanel({
 
   const { visit, patient, triage, medical_alerts: alerts, encounter, clearance } = detail;
 
+  // Readiness is the AUTHORITATIVE stage plus the server's own assignment
+  // verdict. Nothing here re-derives it from triage state and a billing flag.
   const readiness = visitReadiness({
     state: visit.state,
-    triageStatus: triage.status,
-    clearanceBlocked: clearance.blocked,
-    clearanceMessage: clearance.message,
+    queueStage: visit.queue_stage,
+    canStart: detail.can_start_consultation,
+    clearanceReason: clearance.reason,
   });
 
   async function startConsultation() {
@@ -182,6 +184,9 @@ export default function DoctorPatientPanel({
         </div>
 
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          {/* The authoritative stage leads: it is the one badge that decides
+              whether this patient may be seen. */}
+          <StageBadge stage={visit.queue_stage} />
           <VisitStateBadge state={visit.state} />
           <PriorityBadge priority={triage.priority} />
           <TriageBadge status={triage.status} />
@@ -190,9 +195,7 @@ export default function DoctorPatientPanel({
             <span className="inline-flex h-5 items-center rounded border border-slate-300 bg-white px-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-700">
               {doctorLabel(visit.visit_type)}
             </span>
-          ) : (
-            <PendingFieldChip label="Visit type" />
-          )}
+          ) : null}
         </div>
       </header>
 
@@ -217,20 +220,7 @@ export default function DoctorPatientPanel({
             and hospital.patient.payer carry no Doctor ACL and no named payer,
             agreement or membership is ever requested or rendered.
           */}
-          <div className="flex min-w-0 flex-col">
-            <span className="text-[9px] font-bold uppercase tracking-wide text-slate-500">
-              Payer
-            </span>
-            {visit.appointment_id && detail.payer_type ? (
-              <span className="truncate text-[12px] font-semibold text-slate-900">
-                {doctorLabel(detail.payer_type)}
-              </span>
-            ) : (
-              <span className="mt-0.5">
-                <PendingFieldChip label="Payer" />
-              </span>
-            )}
-          </div>
+          <Field label="Payer" value={doctorLabel(detail.payer_type, "—")} />
         </div>
 
         {/* ---- Medical Alerts ----
@@ -333,7 +323,7 @@ export default function DoctorPatientPanel({
           <p className="min-w-0 flex-1 text-[11px] leading-snug text-slate-600">
             {readiness.ready ? (
               <span className="font-semibold text-emerald-800">
-                Triage complete and financially cleared.
+                Ready for doctor. Triage complete and cleared at the desk.
               </span>
             ) : (
               <>

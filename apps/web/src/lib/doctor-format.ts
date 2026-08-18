@@ -4,12 +4,27 @@
  * Pure presentation. Nothing here writes, and nothing here is authorization --
  * see the note on `visitReadiness`.
  */
+// TYPE-ONLY, and it has to stay that way. TypeScript erases this statement
+// entirely, which is what lets node:test run doctor-format.test.ts directly
+// with no resolver, no transform and no config -- the `@/` alias is a
+// tsconfig path Node knows nothing about. A runtime import from here would
+// make this module untestable under `npm test`.
 import type {
   DoctorQueueRow,
+  DoctorQueueStage,
   DoctorReadiness,
-  DoctorTriageStatus,
   DoctorVitals,
 } from "@/types/doctor";
+
+/**
+ * THE stage that means workable: hospital.appointment.front_desk_stage ==
+ * 'ready_doctor'. Compared against, never recomputed.
+ *
+ * Declared here rather than in types/doctor.ts so that module stays purely
+ * declarative -- see the note on the import above. It mirrors READY_STAGE in
+ * yoya_emr_api/services/doctor_serializers.py, which is the authority.
+ */
+export const READY_STAGE = "ready_doctor";
 
 const LABELS: Record<string, string> = {
   // hospital.appointment.state
@@ -19,7 +34,7 @@ const LABELS: Record<string, string> = {
   done: "Completed",
   cancelled: "Cancelled",
 
-  // front_desk_stage (rendered once the backend supplies it)
+  // front_desk_stage -- authoritative, supplied by the doctor controller
   new: "Intake",
   intake: "Intake",
   triage: "Triage",
@@ -72,13 +87,24 @@ export function compactGender(value: string | null | undefined) {
 /**
  * The vendor OPD screen files every row into All / Wait / Review / Finished,
  * and doctors read that strip before anything else, so the vocabulary is kept
- * exactly. The MAPPING is ours, and is built only from facts the payload
- * actually carries:
+ * exactly. The MAPPING is now driven by the AUTHORITATIVE stage:
  *
- *   wait      triage is not finished yet -- the patient is not workable
- *   review    triage is done and the visit is still confirmed -- the doctor's
- *             actual working set
- *   finished  the visit has moved to consultation or beyond
+ *   wait      any stage before ready_doctor that still belongs in the doctor's
+ *             day -- intake, triage, awaiting_cashier
+ *   review    queue_stage === ready_doctor AND the visit is still confirmed --
+ *             the doctor's actual working set
+ *   finished  in_consultation / completed
+ *
+ * WHAT THIS REPLACED, AND WHY. Review used to be `triage_status === "completed"`.
+ * Triage completion is NOT readiness: a patient whose triage is done but who
+ * still owes money sits at awaiting_cashier, and the old rule filed them under
+ * Review -- inviting the doctor to call them through while the desk still had
+ * them. front_desk_stage already answers this question correctly, having
+ * consulted encounter-wide clearance, so the answer is read rather than
+ * re-derived.
+ *
+ * Mirrors bucket_of() in yoya_emr_api/services/doctor_serializers.py, which
+ * computes the counters server-side from the same rule.
  *
  * This is a VIEW FILTER over rows Odoo already returned. It grants nothing and
  * hides nothing that scope did not already hide.
@@ -92,9 +118,12 @@ export const DOCTOR_BUCKETS = [
 
 export type DoctorBucket = (typeof DOCTOR_BUCKETS)[number]["key"];
 
+const FINISHED_STAGES: readonly DoctorQueueStage[] = ["in_consultation", "completed"];
+
 export function bucketOf(row: DoctorQueueRow): Exclude<DoctorBucket, "all"> {
-  if (row.state === "in_consultation" || row.state === "done") return "finished";
-  return row.triage_status === "completed" ? "review" : "wait";
+  if (FINISHED_STAGES.includes(row.queue_stage)) return "finished";
+  if (row.queue_stage === READY_STAGE && row.state === "confirmed") return "review";
+  return "wait";
 }
 
 export function bucketCounts(rows: DoctorQueueRow[]) {
@@ -106,8 +135,14 @@ export function bucketCounts(rows: DoctorQueueRow[]) {
 /** Short Stat cell, matching the vendor column's three-letter register. */
 export function statLabel(row: DoctorQueueRow) {
   const bucket = bucketOf(row);
-  if (bucket === "finished") return row.state === "done" ? "Done" : "Cons";
+  if (bucket === "finished") {
+    return row.queue_stage === "completed" ? "Done" : "Cons";
+  }
   if (bucket === "review") return "Rev";
+  // Distinguishes the two reasons a patient is waiting, which is the single
+  // most useful thing this column can say: the desk still has them, or triage
+  // does. Both remain non-workable.
+  if (row.queue_stage === "awaiting_cashier") return "Cash";
   return "Wait";
 }
 
@@ -124,52 +159,87 @@ export function statLabel(row: DoctorQueueRow) {
  * independently and authoritatively, by
  * hospital.appointment.action_start_consultation() at the model layer.
  *
- * It is deliberately CONSERVATIVE in one direction only: it may report "not
- * ready" for a visit Odoo would in fact accept, and the doctor can still send
- * the request and get Odoo's own answer. It must never report ready for one
- * Odoo would refuse, which is why the assigned-doctor check is NOT attempted
- * here -- the browser cannot see the four groups that gate it, and guessing
- * would be the one failure mode that matters.
+ * READINESS IS THE AUTHORITATIVE STAGE, AND NOTHING ELSE.
+ * This function no longer reconstructs readiness from triage status and a
+ * billing flag. It asks one question -- is queue_stage `ready_doctor` -- and
+ * uses the stage it is NOT at to explain why. That is the whole point of the
+ * integration: front_desk_stage has already composed appointment state, the
+ * nursing evaluation and encounter-WIDE financial clearance, and re-deriving
+ * any of those in a browser can only produce a different, worse answer.
+ *
+ * `canStart` is the server's own affordance verdict, which additionally folds
+ * in whether THIS user is the assigned doctor -- a question the browser cannot
+ * answer and must not guess. It is ANDed in, so this can only ever be more
+ * conservative than the stage alone.
+ *
+ * THERE IS DELIBERATELY NO `clearanceBlocked` INPUT. It would be dead weight:
+ * clearance.blocked is hospital.appointment._is_payment_blocking(), and
+ * front_desk_stage returns ready_doctor only when that same predicate is
+ * false. The two cannot disagree, so testing both would suggest a second gate
+ * where there is one. `clearanceReason` is still taken -- not to decide
+ * anything, only to quote Odoo's allowlisted sentence when the stage is
+ * awaiting_cashier.
  */
 export function visitReadiness(input: {
   state: string | null;
-  triageStatus: DoctorTriageStatus;
-  clearanceBlocked: boolean;
-  clearanceMessage: string | null;
+  queueStage: DoctorQueueStage;
+  canStart: boolean;
+  clearanceReason: string | null;
 }): DoctorReadiness {
-  if (input.state === "in_consultation") {
+  if (input.state === "in_consultation" || input.queueStage === "in_consultation") {
     return { ready: false, reason: "Consultation already in progress.", gate: "state" };
   }
-  if (input.state === "done") {
+  if (input.state === "done" || input.queueStage === "completed") {
     return { ready: false, reason: "This visit is already completed.", gate: "state" };
   }
-  if (input.state === "cancelled") {
+  if (input.state === "cancelled" || input.queueStage === "cancelled") {
     return { ready: false, reason: "This visit was cancelled.", gate: "state" };
   }
   if (input.state !== "confirmed") {
+    return { ready: false, reason: "The visit is not confirmed yet.", gate: "state" };
+  }
+
+  if (input.queueStage !== READY_STAGE) {
     return {
       ready: false,
-      reason: "The visit is not confirmed yet.",
-      gate: "state",
+      reason: stageBlockReason(input.queueStage, input.clearanceReason),
+      gate: input.queueStage === "awaiting_cashier" ? "clearance" : "stage",
     };
   }
-  if (input.triageStatus !== "completed") {
-    return {
-      ready: false,
-      reason: "Nursing triage must be completed before consultation can start.",
-      gate: "triage",
-    };
-  }
-  if (input.clearanceBlocked) {
+
+  // The stage says workable. The server may still withhold the action because
+  // this user is not the doctor the visit is assigned to.
+  if (!input.canStart) {
     return {
       ready: false,
       reason:
-        input.clearanceMessage ??
-        "Financial clearance is required before consultation can start.",
-      gate: "clearance",
+        "This visit is ready, but it is not assigned to you. Only the assigned " +
+        "doctor, a Hospital Manager or a System Administrator may start it.",
+      gate: "assignment",
     };
   }
+
   return { ready: true, reason: null, gate: null };
+}
+
+/** Operator-facing sentence for a stage that is not yet ready_doctor. */
+function stageBlockReason(
+  stage: DoctorQueueStage,
+  clearanceReason: string | null,
+): string {
+  if (stage === "awaiting_cashier") {
+    // Odoo's allowlisted sentence when it has one. It is a fixed string from
+    // DOCTOR_CLEARANCE_REASONS and carries no figure and no payer name.
+    return (
+      clearanceReason ??
+      "Financial clearance is still pending at the front desk."
+    );
+  }
+  if (stage === "triage") {
+    return "Nursing triage is in progress.";
+  }
+  // new / intake
+  return "Nursing triage must be completed before consultation can start.";
 }
 
 /* ------------------------------------------------------------------ *

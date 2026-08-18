@@ -1,50 +1,73 @@
 /**
  * THE Doctor Desk wire contract.
  *
- * This file is the agreement between the workstation and whatever serves it.
- * Today the BFF builds these shapes by adapting the existing doctor-readable
- * clinical endpoints (see app/api/doctor/_adapter.ts). When the dedicated
- * Odoo controller lands it will emit these shapes directly and the adapter is
- * deleted -- no component changes, because nothing below describes the
- * transport.
+ * These shapes are emitted DIRECTLY by yoya_emr_api's dedicated doctor
+ * controller (controllers/doctor.py + services/doctor_serializers.py). The BFF
+ * routes under app/api/doctor/* forward them unchanged; there is no adapter and
+ * no field is reshaped in JavaScript.
  *
- * THREE FIELDS ARE DELIBERATELY NULLABLE-BY-BACKEND, not nullable-by-domain:
+ * WHAT CHANGED, AND WHY IT MATTERS
+ * `queue_stage` is now AUTHORITATIVE. It is hospital.appointment.front_desk_stage,
+ * serialized unchanged by the Odoo serializer, and it is the ONLY thing that may
+ * be read as "this patient may be seen now". It used to be permanently null and
+ * reported through a `pending_fields` list, which forced the workstation to
+ * approximate readiness from triage status plus a billing flag -- an
+ * approximation that could label a patient Ready while they still owed money at
+ * the desk, because front_desk_stage derives from ENCOUNTER-WIDE clearance while
+ * `billing_blocked` is scoped to the consultation charge alone.
  *
- *     queue_stage    hospital.appointment.front_desk_stage
- *     visit_type     hospital.appointment.visit_type
- *     payer_type     hospital.encounter.payer_type
- *
- * All three exist and are readable by a doctor at the model layer, but no
- * endpoint a doctor may call returns them yet. They are typed `| null` and
- * every consumer renders a "pending" affordance rather than a wrong value.
- * `meta.pending_fields` names them at runtime so the UI never has to guess.
+ * `visit_type` and `payer_type` are likewise real values now. `pending_fields`
+ * is gone entirely rather than kept as an always-empty array.
  *
  * WHAT IS ABSENT IS AS DELIBERATE AS WHAT IS PRESENT.
- * There is no amount, balance, receipt, sponsor-responsibility or agreement
- * field anywhere in this file, and no named payer. A doctor gets a clearance
- * VERDICT and its reason; money and commercial payer data belong to the
- * cashier and Front Desk surfaces and are not modelled here at all. Adding
- * such a field to this file is the change that would need review.
+ * There is no amount, balance, receipt, sponsor-responsibility, agreement or
+ * membership field anywhere in this file, and no named payer. A doctor gets a
+ * clearance VERDICT, a categorical state and a fixed operational sentence drawn
+ * from a server-side allowlist -- never hospital.billing.engine's own message,
+ * which embeds figures and, when a visit is fully sponsored, the sponsor's name.
+ * Adding such a field here is the change that would need review.
  */
 
 import type { ApiEnvelope, Many2OneValue } from "./clinical";
 
 export type { ApiEnvelope, Many2OneValue };
 
-/** Fields the current backend cannot supply. Empty once the controller lands. */
-export type DoctorPendingField = "queue_stage" | "visit_type" | "payer_type";
+/**
+ * hospital.appointment.front_desk_stage, in workflow order.
+ *
+ * Mirrors FRONT_DESK_STAGES in
+ * yoya_reception_bridge/models/hospital_appointment.py, which is the single
+ * derivation both this desk and the Front Desk read.
+ */
+export type DoctorQueueStage =
+  | "new"
+  | "intake"
+  | "triage"
+  | "awaiting_cashier"
+  | "ready_doctor"
+  | "in_consultation"
+  | "completed"
+  | "cancelled";
 
 /**
- * The operational clearance indicator. A verdict and a sentence, nothing else.
+ * The operational clearance indicator: a verdict, a category and a sentence.
  *
- * `blocked` is hospital.appointment.billing_blocked and `message` is
- * billing_clearance_message -- both compute_sudo on the Odoo side, so a doctor
- * reads the verdict without holding rights on any cash field and without the
- * API calling sudo() anywhere.
+ * `blocked` is hospital.appointment._is_payment_blocking() -- the model's own
+ * predicate, and the SAME input front_desk_stage consults to decide
+ * awaiting_cashier vs ready_doctor, so this can never disagree with the
+ * `queue_stage` beside it.
+ *
+ * `state` is hospital.encounter.reception_clearance_state: a Selection KEY
+ * (not_required | pending | cleared | credit_authorized | sponsor_cleared |
+ * emergency_bypass). It carries no amount and names no payer.
+ *
+ * `reason` comes from DOCTOR_CLEARANCE_REASONS, a closed set of literal strings
+ * in doctor_serializers.py with no interpolation anywhere in it.
  */
 export type DoctorClearance = {
   blocked: boolean;
-  message: string | null;
+  state: string | null;
+  reason: string | null;
 };
 
 export type DoctorPatientIdentity = {
@@ -64,46 +87,61 @@ export type DoctorTriageStatus =
   | "completed"
   | "cancelled";
 
+export type DoctorEncounter = {
+  id: number;
+  name: string;
+  state: string | null;
+  encounter_type: string | null;
+};
+
 export type DoctorQueueRow = {
   appointment_id: number;
   appointment_code: string | null;
   appointment_date: string | null;
-  /** hospital.appointment.state: confirmed | in_consultation | ... */
+  /** hospital.appointment.state: confirmed | in_consultation | done. */
   state: string | null;
   patient: DoctorPatientIdentity;
   department: Many2OneValue;
   doctor: Many2OneValue;
-  encounter: { id: number; name: string; state: string | null } | null;
+  encounter: DoctorEncounter | null;
 
-  /** Pending backend. front_desk_stage: the authoritative Ready-For-Doctor signal. */
-  queue_stage: string | null;
-  /** Pending backend. routine | emergency | follow_up. */
+  /** AUTHORITATIVE. hospital.appointment.front_desk_stage, unchanged. */
+  queue_stage: DoctorQueueStage;
+  /** routine | emergency | follow_up | referral. */
   visit_type: string | null;
 
   triage_status: DoctorTriageStatus;
   triage_priority: string | null;
   chief_complaint: string | null;
-  /** Priority indicator, not a stage. True for urgent/emergency triage priority. */
+  /** Priority indicator, not a stage. True for urgent/emergency or bypass. */
   urgent: boolean;
 
   clearance: DoctorClearance;
+
+  /**
+   * The server's own affordance verdict: may THIS user start THIS consultation
+   * right now. It already folds in assignment, appointment state and the
+   * authoritative stage.
+   *
+   * STILL NOT AUTHORIZATION. hospital.appointment.action_start_consultation()
+   * re-runs every gate and is the only thing that decides.
+   */
+  can_start_consultation: boolean;
 };
 
 /**
  * Whether this row may be worked right now, and if not, why.
  *
  * Computed in the browser for AFFORDANCE ONLY -- to grey a button and explain
- * it before the doctor clicks. It is not authorization. Every one of these
- * conditions is enforced again, independently, by
- * hospital.appointment.action_start_consultation() at the model layer, which
- * is the only thing that decides whether a consultation actually starts.
+ * it before the doctor clicks. Every condition is enforced again, independently,
+ * by hospital.appointment.action_start_consultation() at the model layer.
  */
 export type DoctorReadiness = {
   ready: boolean;
-  /** Operator-facing reason the desk is not ready. Null when ready. */
+  /** Operator-facing reason the visit is not workable. Null when ready. */
   reason: string | null;
   /** Which gate is not satisfied. Null when ready. */
-  gate: "triage" | "clearance" | "state" | null;
+  gate: "stage" | "clearance" | "state" | "assignment" | null;
 };
 
 export type DoctorVitals = {
@@ -145,9 +183,8 @@ export type DoctorVisitDetail = {
     reason: string | null;
     department: Many2OneValue;
     doctor: Many2OneValue;
-    /** Pending backend. */
-    queue_stage: string | null;
-    /** Pending backend. */
+    /** AUTHORITATIVE. */
+    queue_stage: DoctorQueueStage;
     visit_type: string | null;
   };
   patient: DoctorPatientIdentity & {
@@ -159,12 +196,7 @@ export type DoctorVisitDetail = {
     past_medical_history: string | null;
   };
   medical_alerts: DoctorMedicalAlert[];
-  encounter: {
-    id: number;
-    name: string;
-    state: string | null;
-    encounter_type: string | null;
-  } | null;
+  encounter: DoctorEncounter | null;
   triage: {
     evaluation_id: number | null;
     status: DoctorTriageStatus;
@@ -177,29 +209,47 @@ export type DoctorVisitDetail = {
   };
   previous_vitals: (DoctorVitals & { evaluation_id: number }) | null;
   /**
-   * Pending backend. Sponsorship CATEGORY only -- self_pay | insurance | credit.
-   * Never a payer name, agreement or membership: those models have no Doctor
-   * ACL and the commercial relationship is not a clinician's concern.
+   * Sponsorship CATEGORY only -- self_pay | insurance | corporate | government
+   * | ngo | other. hospital.encounter.payer_type carries no groups= and the
+   * Doctor group already holds read on hospital.encounter, so exposing it
+   * widened no ACL. Never a payer name, agreement or membership number: those
+   * live on models a doctor has no ACL for and are not reachable from here.
    */
   payer_type: string | null;
   clearance: DoctorClearance;
+  can_start_consultation: boolean;
 };
 
-export type DoctorQueueMeta = {
-  date: string;
-  count: number;
-  truncated: boolean;
-  /** Fields this backend could not supply. See the module note. */
-  pending_fields: DoctorPendingField[];
+export type DoctorBucketCounts = {
+  all: number;
+  wait: number;
+  review: number;
+  finished: number;
 };
 
 export type DoctorQueueResponse = {
   rows: DoctorQueueRow[];
-  meta: DoctorQueueMeta;
+  counts: DoctorBucketCounts;
+  capabilities: DoctorCapabilities;
+  filters: {
+    date: string;
+    department_id: number | null;
+    q: string | null;
+    limit: number;
+  };
+  meta: {
+    row_count: number;
+    truncated: boolean;
+    states: string[];
+    stages: DoctorQueueStage[];
+  };
 };
 
-export type DoctorVisitResponse = DoctorVisitDetail & {
-  meta: { pending_fields: DoctorPendingField[] };
+export type DoctorVisitResponse = DoctorVisitDetail;
+
+export type DoctorCapabilities = {
+  doctor_desk: boolean;
+  start_consultation_role: boolean;
 };
 
 export type DoctorSession = {
@@ -208,10 +258,10 @@ export type DoctorSession = {
   doctor: Many2OneValue;
   /** True when the signed-in user holds group_hospital_doctor. */
   is_doctor: boolean;
-  groups: Record<string, boolean> | string[];
+  capabilities: DoctorCapabilities;
 };
 
-export type DoctorStartConsultationResponse = {
-  appointment: { id: number; state: string | null } | null;
-  encounter: { id: number; name: string; state: string | null } | null;
+/** The visit as it stands AFTER the mutation, plus its new bucket. */
+export type DoctorStartConsultationResponse = DoctorVisitDetail & {
+  bucket: "wait" | "review" | "finished";
 };

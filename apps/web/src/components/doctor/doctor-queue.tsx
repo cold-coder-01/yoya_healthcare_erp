@@ -6,8 +6,6 @@ import { formatHospitalTime } from "@/lib/clinical-format";
 import { compactGender, doctorLabel, statLabel } from "@/lib/doctor-format";
 import type { DoctorQueueRow } from "@/types/doctor";
 
-import { PendingFieldChip } from "./doctor-badges";
-
 /**
  * ONE grid template for the header and every row, so the two cannot drift.
  *
@@ -23,9 +21,16 @@ const GRID =
   "grid grid-cols-[46px_minmax(0,1fr)_46px_74px] gap-x-2 " +
   "lg:grid-cols-[46px_72px_minmax(0,1fr)_62px_46px_minmax(0,1.1fr)_74px]";
 
+/**
+ * Stat tones. Emerald is reserved for Rev -- the ONE cell that means the
+ * patient may be called through -- so a doctor scanning the column can find
+ * their workable set without reading a word. Cash is amber (money is owed),
+ * Wait neutral, Cons indigo, Done spent.
+ */
 const STAT_TONE: Record<string, string> = {
-  Wait: "bg-amber-100 text-amber-900 border-amber-300",
-  Rev: "bg-cyan-100 text-cyan-900 border-cyan-300",
+  Wait: "bg-slate-100 text-slate-700 border-slate-300",
+  Cash: "bg-amber-100 text-amber-900 border-amber-300",
+  Rev: "bg-emerald-100 text-emerald-900 border-emerald-400",
   Cons: "bg-indigo-100 text-indigo-900 border-indigo-300",
   Done: "bg-slate-100 text-slate-600 border-slate-300",
 };
@@ -114,7 +119,9 @@ function QueueRow({
           {row.clearance.blocked ? (
             <span
               className="h-4 w-4 shrink-0 rounded-sm border border-amber-400 bg-amber-100 text-center text-[9px] font-bold leading-4 text-amber-900"
-              title={row.clearance.message ?? "Financial clearance required"}
+              // Odoo's allowlisted sentence. A fixed string with no figure and
+              // no payer name -- see DOCTOR_CLEARANCE_REASONS.
+              title={row.clearance.reason ?? "Financial clearance required"}
             >
               $
             </span>
@@ -138,7 +145,6 @@ export default function DoctorQueue({
   loading,
   error,
   truncated,
-  stagePending,
   onSelect,
 }: {
   rows: DoctorQueueRow[];
@@ -146,7 +152,6 @@ export default function DoctorQueue({
   loading: boolean;
   error: string | null;
   truncated: boolean;
-  stagePending: boolean;
   onSelect: (appointmentId: number) => void;
 }) {
   const listRef = useRef<HTMLUListElement>(null);
@@ -188,7 +193,6 @@ export default function DoctorQueue({
           Patient Queue ({rows.length})
         </h2>
         <span className="flex items-center gap-2">
-          {stagePending ? <PendingFieldChip label="Stage" /> : null}
           {loading ? (
             <span className="text-[10px] tabular-nums text-slate-500">Updating…</span>
           ) : null}

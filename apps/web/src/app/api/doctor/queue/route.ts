@@ -3,16 +3,26 @@
  *
  * The doctor's working queue for one hospital day.
  *
- * SCOPE IS NOT SET HERE. This forwards to /clinical/evaluation-queue, which
- * applies services/clinical_scope.build_appointment_scope_domain -- restricting
- * a doctor to `doctor_id.user_id = <caller>` -- on top of the ORM record rules
- * yoya_reception_bridge ships for hospital.appointment. This route adds no
- * domain of its own and can only ever narrow what Odoo already returned.
+ * SCOPE IS NOT SET HERE. This forwards to /yoya-emr/api/v1/doctor/worklist,
+ * which applies services/clinical_scope.build_appointment_scope_domain --
+ * restricting a doctor to `doctor_id.user_id = <caller>` -- on top of the ORM
+ * record rules yoya_reception_bridge ships for hospital.appointment. This route
+ * adds no domain of its own and cannot widen what Odoo returned.
+ *
+ * The query string is forwarded verbatim. The upstream endpoint parses and
+ * rejects its own parameters, and its error message is better than one invented
+ * here would be. There is deliberately no doctor_id parameter upstream, so
+ * passing one changes nothing.
  */
-import { fetchEvaluationQueue } from "@/lib/odoo-client";
+import type { DoctorQueueResponse } from "@/types/doctor";
 
-import { adaptQueue } from "@/lib/doctor-adapt";
-import { forwardAdapted, handleRouteError, requireOdooSession } from "../_utils";
+import {
+  DOCTOR_API,
+  callOdooApi,
+  forwardOdooResult,
+  handleRouteError,
+  requireOdooSession,
+} from "../_utils";
 
 export async function GET(request: Request) {
   const session = await requireOdooSession();
@@ -20,20 +30,16 @@ export async function GET(request: Request) {
     return session.response;
   }
 
-  const params = new URL(request.url).searchParams;
+  const url = new URL(request.url);
 
   try {
-    const result = await fetchEvaluationQueue(session.sessionId, {
-      // Passed through unvalidated on purpose: the upstream endpoint parses and
-      // rejects these itself, and its error message is better than one invented
-      // here would be.
-      date: params.get("date") ?? undefined,
-      state: params.get("state") ?? undefined,
-      department_id: params.get("department_id") ?? undefined,
-      doctor_id: params.get("doctor_id") ?? undefined,
-    });
-
-    return forwardAdapted(result, adaptQueue);
+    return await forwardOdooResult(
+      await callOdooApi<DoctorQueueResponse>(
+        session.sessionId,
+        `${DOCTOR_API}/worklist${url.search}`,
+        "GET",
+      ),
+    );
   } catch (error) {
     return handleRouteError(
       error,

@@ -1,17 +1,21 @@
 /**
  * GET /api/doctor/visits/[appointmentId]
  *
- * The operational panel for one selected visit: identity, triage, vitals,
- * medical alerts and the clearance verdict, in one read.
+ * The operational panel for one selected visit: identity, visit, triage,
+ * vitals, medical alerts, the sponsorship category and the clearance verdict,
+ * in one read.
  *
- * A visit outside this doctor's scope comes back 403 `out_of_scope` from Odoo,
- * and one that does not exist comes back 404. Neither answer is computed here.
+ * A visit outside this doctor's scope comes back 404 `visit_not_found` from
+ * Odoo -- the same answer an id that does not exist produces, so the desk
+ * cannot be used to confirm a colleague's visit exists. Neither answer is
+ * computed here.
  */
-import { fetchEvaluationDetail } from "@/lib/odoo-client";
+import type { DoctorVisitResponse } from "@/types/doctor";
 
-import { adaptVisit } from "@/lib/doctor-adapt";
 import {
-  forwardAdapted,
+  DOCTOR_API,
+  callOdooApi,
+  forwardOdooResult,
   handleRouteError,
   parseAppointmentId,
   requireOdooSession,
@@ -33,8 +37,13 @@ export async function GET(
   }
 
   try {
-    const result = await fetchEvaluationDetail(session.sessionId, parsed.value);
-    return forwardAdapted(result, adaptVisit);
+    return await forwardOdooResult(
+      await callOdooApi<DoctorVisitResponse>(
+        session.sessionId,
+        `${DOCTOR_API}/visits/${parsed.value}`,
+        "GET",
+      ),
+    );
   } catch (error) {
     return handleRouteError(
       error,
