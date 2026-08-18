@@ -183,8 +183,12 @@ export default function DoctorWorkstation() {
     detail && detail.visit.appointment_id === activeId ? detail : null;
 
   return (
-    /* 100vh minus the shell chrome: 44px header + 1px border + 24px padding. */
-    <div className="flex min-h-[640px] flex-col gap-2 min-[1100px]:h-[calc(100vh-69px)] min-[1100px]:min-h-[560px]">
+    /*
+      The shell now owns the viewport height (h-screen + overflow-hidden on the
+      layout), so this fills its parent rather than recomputing 100vh minus a
+      chrome offset that had to be kept in sync with the header by hand.
+    */
+    <div className="flex min-h-[640px] flex-col gap-2 min-[1100px]:h-full min-[1100px]:min-h-0">
       <DoctorBucketBar counts={counts} active={bucket} onChange={setBucket} />
       <DoctorFilters
         date={date}
@@ -195,7 +199,7 @@ export default function DoctorWorkstation() {
         onRefresh={refresh}
       />
 
-      <div className="grid min-h-0 flex-1 gap-2 min-[1100px]:grid-cols-[minmax(340px,30%)_minmax(0,1fr)_minmax(180px,200px)]">
+      <div className="grid min-h-0 flex-1 gap-2 min-[1100px]:grid-cols-[minmax(320px,26%)_minmax(0,1fr)_minmax(196px,216px)]">
         <DoctorQueue
           rows={visibleRows}
           selectedId={activeId}

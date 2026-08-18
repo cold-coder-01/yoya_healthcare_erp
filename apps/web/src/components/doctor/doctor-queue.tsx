@@ -6,33 +6,34 @@ import { formatHospitalTime } from "@/lib/clinical-format";
 import { compactGender, doctorLabel, statLabel } from "@/lib/doctor-format";
 import type { DoctorQueueRow } from "@/types/doctor";
 
+import { stageTone } from "./doctor-badges";
+
 /**
  * ONE grid template for the header and every row, so the two cannot drift.
  *
  * The column order follows the vendor OPD worklist a doctor already reads
- * left-to-right -- Chart No, Name, Age, Sex, Stat, Remark -- because that
- * scanning order is muscle memory and re-ordering it would cost more than any
- * layout improvement could return. Time is added ahead of the chart number
- * (the vendor screen carries it inside Remark) since arrival order is how a
- * queue is actually worked, and the two flag columns at the end replace the
- * vendor's nine single-letter ones with the two a doctor acts on.
+ * left-to-right, but the WIDTHS were rebalanced around what is actually
+ * scanned: the patient's name now owns the free space, and the chart number
+ * sits beneath it as a secondary line rather than competing for a column of
+ * its own. Age/Sex collapsed into one narrow cell for the same reason -- they
+ * were two columns carrying about six characters between them.
+ *
+ * The result is four columns instead of seven, which is what lets each row
+ * breathe at 52px without the panel needing more width.
  */
-const GRID =
-  "grid grid-cols-[46px_minmax(0,1fr)_46px_74px] gap-x-2 " +
-  "lg:grid-cols-[46px_72px_minmax(0,1fr)_62px_46px_minmax(0,1.1fr)_74px]";
+const GRID = "grid grid-cols-[52px_minmax(0,1fr)_46px_58px] items-center gap-x-2";
 
 /**
  * Stat tones. Emerald is reserved for Rev -- the ONE cell that means the
  * patient may be called through -- so a doctor scanning the column can find
- * their workable set without reading a word. Cash is amber (money is owed),
- * Wait neutral, Cons indigo, Done spent.
+ * their workable set without reading a word.
  */
 const STAT_TONE: Record<string, string> = {
-  Wait: "bg-slate-100 text-slate-700 border-slate-300",
-  Cash: "bg-amber-100 text-amber-900 border-amber-300",
-  Rev: "bg-emerald-100 text-emerald-900 border-emerald-400",
-  Cons: "bg-indigo-100 text-indigo-900 border-indigo-300",
-  Done: "bg-slate-100 text-slate-600 border-slate-300",
+  Wait: "border-slate-300 bg-slate-100 text-slate-600",
+  Cash: "border-amber-400 bg-amber-100 text-amber-900",
+  Rev: "border-emerald-500 bg-emerald-100 text-emerald-900",
+  Cons: "border-indigo-300 bg-indigo-100 text-indigo-900",
+  Done: "border-slate-200 bg-white text-slate-500",
 };
 
 function QueueRow({
@@ -46,6 +47,9 @@ function QueueRow({
 }) {
   const ref = useRef<HTMLButtonElement>(null);
   const stat = statLabel(row);
+  const tone = stageTone(row.queue_stage);
+  // The second line: complaint when triage recorded one, department otherwise.
+  const remark = row.chief_complaint ?? row.department?.name ?? null;
 
   // Keyboard selection moves the row off-screen otherwise: arrow-key paging
   // through a 40-patient queue is unusable if the viewport does not follow.
@@ -66,68 +70,71 @@ function QueueRow({
         // arrow keys move within it, which is the roving-tabindex pattern a
         // dense worklist needs. Tabbing through 40 buttons is not navigation.
         tabIndex={selected ? 0 : -1}
-        className={`${GRID} min-h-[46px] w-full items-center border-b border-slate-200 px-2 py-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-600 ${
-          selected
-            ? "bg-slate-100 shadow-[inset_3px_0_0_#047857] hover:bg-slate-100"
-            : "bg-white hover:bg-slate-50"
+        className={`${GRID} relative min-h-[52px] w-full border-b border-slate-100 py-1.5 pl-3 pr-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-600 ${
+          selected ? "bg-emerald-50/60" : "bg-white hover:bg-slate-50"
         }`}
       >
-        <span className="text-[11px] font-bold leading-tight tabular-nums text-slate-700">
+        {/*
+          Selection is a solid emerald rail plus a tint. It is deliberately the
+          only place emerald appears outside a status, and it reads as
+          "you are here" rather than as a state the patient is in.
+        */}
+        <span
+          aria-hidden
+          className={`absolute inset-y-0 left-0 w-[3px] ${
+            selected ? "bg-emerald-600" : "bg-transparent"
+          }`}
+        />
+
+        <span className="text-[11px] font-bold leading-tight tabular-nums text-slate-500">
           {formatHospitalTime(row.appointment_date)}
         </span>
 
-        {/* Chart number: the identifier the vendor screen leads with. */}
-        <span className="hidden truncate font-mono text-[11px] font-bold leading-tight text-slate-800 lg:block">
-          {row.patient.mrn ?? "—"}
-        </span>
-
-        <span className="min-w-0 self-start">
+        {/* Identity: name on top at full weight, chart number and remark
+            beneath in a quieter register. This is the scan target. */}
+        <span className="flex min-w-0 flex-col gap-0.5">
           <span className="flex min-w-0 items-center gap-1.5">
             {row.urgent ? (
               <span
-                className="h-2 w-2 shrink-0 rounded-full bg-red-600"
+                className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-600"
                 title={`Priority: ${doctorLabel(row.triage_priority)}`}
               />
             ) : null}
-            <span className="truncate text-[13px] font-bold leading-tight text-slate-950">
+            <span className="truncate text-[13px] font-bold leading-tight text-slate-900">
               {row.patient.name}
             </span>
           </span>
-          {/* Folded-in columns for narrow screens. Nothing is dropped. */}
-          <span className="mt-0.5 block truncate font-mono text-[10px] leading-tight text-slate-500 lg:hidden">
-            {row.patient.mrn ?? "—"}
-            <span className="text-slate-300"> · </span>
-            {row.patient.age ?? "-"}/{compactGender(row.patient.gender)}
+          <span className="flex min-w-0 items-center gap-1 text-[10px] leading-tight text-slate-500">
+            <span className="shrink-0 font-mono font-semibold text-slate-600">
+              {row.patient.mrn ?? "—"}
+            </span>
+            {remark ? (
+              <>
+                <span aria-hidden className="shrink-0 text-slate-300">
+                  ·
+                </span>
+                <span className="truncate">{remark}</span>
+              </>
+            ) : null}
           </span>
         </span>
 
-        <span className="hidden text-[11px] leading-tight tabular-nums text-slate-700 lg:block">
+        <span className="text-[11px] leading-tight tabular-nums text-slate-600">
           {row.patient.age ?? "-"}
-        </span>
-
-        <span className="text-[11px] font-semibold leading-tight text-slate-700">
+          <span className="text-slate-300">/</span>
           {compactGender(row.patient.gender)}
         </span>
 
-        {/* Remark: the operational sentence. Chief complaint when the payload
-            carries one, otherwise the department the visit is booked into. */}
-        <span className="hidden min-w-0 truncate text-[11px] leading-tight text-slate-600 lg:block">
-          {row.chief_complaint ?? row.department?.name ?? "—"}
-        </span>
-
-        <span className="flex items-center justify-end gap-1">
-          {row.clearance.blocked ? (
-            <span
-              className="h-4 w-4 shrink-0 rounded-sm border border-amber-400 bg-amber-100 text-center text-[9px] font-bold leading-4 text-amber-900"
-              // Odoo's allowlisted sentence. A fixed string with no figure and
-              // no payer name -- see DOCTOR_CLEARANCE_REASONS.
-              title={row.clearance.reason ?? "Financial clearance required"}
-            >
-              $
-            </span>
-          ) : null}
+        {/* Status: the stage dot plus the short stat code. Two encodings of the
+            same fact -- colour for peripheral vision, text for certainty. */}
+        <span className="flex items-center justify-end gap-1.5">
           <span
-            className={`inline-flex h-5 w-[38px] items-center justify-center rounded border text-[10px] font-bold ${
+            aria-hidden
+            className={`h-2 w-2 shrink-0 rounded-full ${tone.dot}`}
+          />
+          <span
+            title={tone.label}
+            className={`inline-flex h-[19px] w-[40px] items-center justify-center rounded border text-[10px] font-bold ${
               STAT_TONE[stat] ?? STAT_TONE.Wait
             }`}
           >
@@ -187,27 +194,25 @@ export default function DoctorQueue({
   }
 
   return (
-    <section className="flex min-h-[340px] min-w-0 flex-col overflow-hidden rounded border border-slate-200 bg-white shadow-sm min-[1100px]:min-h-0">
-      <header className="flex h-8 shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50 px-2.5">
-        <h2 className="text-[11px] font-bold uppercase tracking-wide text-slate-700">
-          Patient Queue ({rows.length})
+    <section className="flex min-h-[340px] min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm min-[1100px]:min-h-0">
+      <header className="flex h-9 shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50 px-3">
+        <h2 className="flex items-baseline gap-1.5 text-[11px] font-bold uppercase tracking-[0.08em] text-slate-700">
+          Patient Queue
+          <span className="rounded bg-slate-200 px-1.5 py-px text-[10px] tabular-nums text-slate-700">
+            {rows.length}
+          </span>
         </h2>
-        <span className="flex items-center gap-2">
-          {loading ? (
-            <span className="text-[10px] tabular-nums text-slate-500">Updating…</span>
-          ) : null}
-        </span>
+        {loading ? (
+          <span className="text-[10px] tabular-nums text-slate-500">Updating…</span>
+        ) : null}
       </header>
 
       <div
-        className={`${GRID} shrink-0 border-b border-slate-200 bg-slate-50 px-2 py-1 text-[9px] font-bold uppercase tracking-wide text-slate-500`}
+        className={`${GRID} shrink-0 border-b border-slate-200 bg-slate-50 py-1 pl-3 pr-2 text-[9px] font-bold uppercase tracking-[0.06em] text-slate-400`}
       >
         <span>Time</span>
-        <span className="hidden lg:block">Chart No</span>
-        <span>Name</span>
-        <span className="hidden lg:block">Age</span>
-        <span>Sex</span>
-        <span className="hidden lg:block">Remark</span>
+        <span>Patient · Chart no.</span>
+        <span>Age/Sex</span>
         <span className="text-right">Stat</span>
       </div>
 
@@ -228,14 +233,22 @@ export default function DoctorQueue({
             {Array.from({ length: 10 }, (_, index) => (
               <div
                 key={index}
-                className="h-[46px] animate-pulse border-b border-slate-100 bg-slate-50"
-              />
+                className="flex min-h-[52px] items-center gap-2 border-b border-slate-100 px-3"
+              >
+                <div className="h-2.5 w-9 animate-pulse rounded bg-slate-100" />
+                <div className="flex flex-1 flex-col gap-1.5">
+                  <div className="h-2.5 w-2/5 animate-pulse rounded bg-slate-200" />
+                  <div className="h-2 w-3/5 animate-pulse rounded bg-slate-100" />
+                </div>
+                <div className="h-4 w-10 animate-pulse rounded bg-slate-100" />
+              </div>
             ))}
           </div>
         ) : rows.length === 0 ? (
-          <div className="flex h-full min-h-32 items-center justify-center px-6 text-center">
-            <p className="text-xs text-slate-500">
-              No patients match the current filters.
+          <div className="flex h-full min-h-32 flex-col items-center justify-center gap-1 px-6 text-center">
+            <p className="text-xs font-semibold text-slate-600">No patients here</p>
+            <p className="text-[11px] text-slate-500">
+              Nothing matches the current filters.
             </p>
           </div>
         ) : (
@@ -256,12 +269,19 @@ export default function DoctorQueue({
         )}
       </div>
 
-      <footer className="flex h-6 shrink-0 items-center gap-2 border-t border-slate-200 bg-slate-50 px-2.5 text-[10px] text-slate-500">
-        <span>
+      <footer className="flex h-7 shrink-0 items-center gap-2 border-t border-slate-200 bg-slate-50 px-3 text-[10px] text-slate-500">
+        <span className="tabular-nums">
           {rows.length} {rows.length === 1 ? "patient" : "patients"}
         </span>
-        <span className="text-slate-300">·</span>
-        <span>↑↓ to move</span>
+        <span aria-hidden className="text-slate-300">
+          ·
+        </span>
+        <span className="flex items-center gap-1">
+          <kbd className="rounded border border-slate-200 bg-white px-1 font-mono text-[9px] text-slate-500">
+            ↑↓
+          </kbd>
+          to move
+        </span>
       </footer>
     </section>
   );

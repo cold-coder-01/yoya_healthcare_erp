@@ -15,24 +15,48 @@ import { doctorLabel } from "@/lib/doctor-format";
  * honest placeholder, especially in a clinical tool where a doctor may believe
  * an order was placed.
  *
- * The rail dims until the consultation is actually in progress, which mirrors
- * the real rule: nothing may be ordered against a visit that has not started.
+ * LOCKED MUST READ AS "NOT YET", NOT AS "BROKEN".
+ * The rail previously dimmed the whole column to 45% opacity, which made a
+ * third of the screen look like a rendering failure and left the reason
+ * buried in a paragraph at the bottom. The state is now stated FIRST, in a
+ * banner that says what unlocks it, and the items below keep legible contrast
+ * -- they are a preview of the workspace, and a preview nobody can read is
+ * not worth reserving the column for.
  */
 
-const ORDER_GROUPS: Array<{ title: string; items: string[] }> = [
+const ORDER_GROUPS: Array<{ title: string; hint: string; items: string[] }> = [
   {
     title: "Diagnostics",
+    hint: "Investigations",
     items: ["Laboratory", "Radiology", "Pathology", "Endoscopy", "Echocardiography"],
   },
   {
     title: "Treatment",
+    hint: "Therapeutics",
     items: ["Medication", "Injection", "Procedure", "Physiotherapy", "Anesthesia"],
   },
   {
     title: "Documentation",
+    hint: "Clinical record",
     items: ["Progress note", "Diagnosis", "OP note", "Certificate"],
   },
 ];
+
+function LockIcon({ className }: { className: string }) {
+  return (
+    <svg
+      aria-hidden
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      className={className}
+    >
+      <rect x="3.25" y="7" width="9.5" height="6.75" rx="1.5" />
+      <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" strokeLinecap="round" />
+    </svg>
+  );
+}
 
 export default function DoctorOrderRail({
   visitState,
@@ -44,32 +68,91 @@ export default function DoctorOrderRail({
   const active = visitState === "in_consultation";
 
   return (
-    <section className="flex min-h-0 flex-col overflow-hidden rounded border border-slate-200 bg-white shadow-sm">
-      <header className="flex h-8 shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50 px-2.5">
-        <h2 className="text-[11px] font-bold uppercase tracking-wide text-slate-700">
+    <section className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+      <header className="flex h-9 shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50 px-3">
+        <h2 className="text-[11px] font-bold uppercase tracking-[0.08em] text-slate-700">
           Order Key
         </h2>
         <span
-          className={`text-[10px] font-bold uppercase tracking-wide ${
-            active ? "text-emerald-700" : "text-slate-400"
+          className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${
+            active
+              ? "bg-indigo-100 text-indigo-800"
+              : "bg-slate-200 text-slate-600"
           }`}
         >
-          {active ? "Consultation open" : "Locked"}
+          {active ? (
+            <>
+              <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
+              Open
+            </>
+          ) : (
+            <>
+              <LockIcon className="h-2.5 w-2.5" />
+              Locked
+            </>
+          )}
         </span>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-2">
-        <div className={`flex flex-col gap-2.5 ${active ? "" : "opacity-45"}`}>
+      {/* The state, stated first. A doctor should never have to scroll to the
+          bottom of a dimmed column to learn why it is dimmed. */}
+      <div
+        className={`shrink-0 border-b px-2.5 py-2 ${
+          active
+            ? "border-indigo-100 bg-indigo-50/60"
+            : "border-slate-200 bg-slate-50"
+        }`}
+      >
+        {active ? (
+          <p className="text-[10px] leading-snug text-indigo-900">
+            Consultation open on{" "}
+            <span className="font-mono font-semibold">
+              {encounterName ?? "this encounter"}
+            </span>
+            . Ordering arrives in the next phase.
+          </p>
+        ) : (
+          <div className="flex gap-2">
+            <LockIcon className="mt-px h-3.5 w-3.5 shrink-0 text-slate-400" />
+            <p className="text-[10px] leading-snug text-slate-600">
+              <span className="font-semibold text-slate-800">
+                Start the consultation to unlock ordering.
+              </span>{" "}
+              This visit is{" "}
+              <span className="font-semibold text-slate-700">
+                {doctorLabel(visitState)}
+              </span>
+              .
+            </p>
+          </div>
+        )}
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
+        <div className="flex flex-col gap-3">
           {ORDER_GROUPS.map((group) => (
-            <div key={group.title} className="flex flex-col gap-1">
-              <h3 className="text-[9px] font-bold uppercase tracking-wide text-slate-500">
-                {group.title}
-              </h3>
+            <div key={group.title} className="flex flex-col gap-1.5">
+              <div className="flex items-baseline justify-between gap-2">
+                <h3
+                  className={`text-[9px] font-bold uppercase tracking-[0.08em] ${
+                    active ? "text-slate-600" : "text-slate-500"
+                  }`}
+                >
+                  {group.title}
+                </h3>
+                <span className="truncate text-[9px] text-slate-400">
+                  {group.hint}
+                </span>
+              </div>
               <ul className="grid grid-cols-2 gap-1">
                 {group.items.map((item) => (
                   <li
                     key={item}
-                    className="truncate rounded border border-dashed border-slate-300 bg-slate-50 px-1.5 py-1 text-[10px] font-semibold text-slate-500"
+                    className={`truncate rounded border px-1.5 py-1 text-[10px] font-semibold transition-colors ${
+                      active
+                        ? "border-slate-200 bg-white text-slate-700"
+                        : "border-dashed border-slate-200 bg-slate-50 text-slate-500"
+                    }`}
                   >
                     {item}
                   </li>
@@ -79,26 +162,9 @@ export default function DoctorOrderRail({
           ))}
         </div>
 
-        <p className="mt-3 border-t border-slate-200 pt-2 text-[10px] leading-snug text-slate-500">
-          {active ? (
-            <>
-              Consultation is open on{" "}
-              <span className="font-mono font-semibold text-slate-700">
-                {encounterName ?? "this encounter"}
-              </span>
-              . Ordering and clinical notes arrive in the next phase; this column is
-              reserved for them.
-            </>
-          ) : (
-            <>
-              Ordering unlocks once the consultation has been started through the
-              hospital workflow. Current visit state:{" "}
-              <span className="font-semibold text-slate-700">
-                {doctorLabel(visitState)}
-              </span>
-              .
-            </>
-          )}
+        <p className="mt-3 border-t border-slate-200 pt-2 text-[9px] leading-snug text-slate-400">
+          Ordering and clinical notes arrive in a later phase. This column is
+          reserved so they land where doctors already look.
         </p>
       </div>
     </section>
