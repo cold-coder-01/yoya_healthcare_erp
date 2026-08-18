@@ -140,6 +140,15 @@ class TestPayerResponsibilityAllocation(TransactionCase):
 
     def _visit(self, eligibility=None, price=1500.0):
         """An encounter with one prepaid 1500 charge, ready to split."""
+        # ONE ACTIVE EPISODE PER PATIENT. These tests reuse a single patient
+        # across visits, so the previous episode is closed first -- which is
+        # what happens between real attendances.
+        self.env["hospital.encounter"].sudo().search(
+            [
+                ("patient_id", "=", self.patient.id),
+                ("state", "not in", ["completed", "closed", "cancelled"]),
+            ]
+        ).write({"state": "closed"})
         encounter = self.env["hospital.encounter"].sudo().create(
             {
                 "patient_id": self.patient.id,

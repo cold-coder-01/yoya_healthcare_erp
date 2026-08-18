@@ -145,7 +145,24 @@
                                 invisible="coverage_type != 'patient_copay'"/>
                             <field name="authorization_required"/>
                             <field name="currency_id" column_invisible="True"/>
-                            <field name="active" widget="boolean_toggle"/>
+                            <!--
+                                readonly on the FIELD as well as the parent o2m.
+
+                                UAT reported this toggle appearing to switch off
+                                on a live agreement. The database proved it never
+                                persisted: every rule row stayed active=true and
+                                the flag returned on refresh. boolean_toggle
+                                renders its optimistic state immediately even
+                                inside a readonly One2many, so the click looked
+                                like it worked and the server never saw it.
+
+                                parent.state makes the control genuinely inert,
+                                so the officer is not misled. The refusal itself
+                                lives in the model: see
+                                hospital.payer.benefit.rule.write().
+                            -->
+                            <field name="active" widget="boolean_toggle"
+                                readonly="parent.state != 'draft'"/>
                         </list>
                     </field>
                     <p class="text-muted">

@@ -3,10 +3,12 @@ import { test } from "node:test";
 
 import {
   CASHIER_ROUTE,
+  INSURANCE_CREDIT_ROUTE,
   CLINICAL_ROUTE,
   FRONT_DESK_ROUTE,
   RECEPTION_ROUTE,
   canUseCashier,
+  canUseInsuranceCredit,
   landingRouteForRoles,
   parseReceptionRoles,
   type ReceptionRoles,
@@ -35,6 +37,7 @@ function roles(overrides: Partial<ReceptionRoles> = {}): ReceptionRoles {
     system_administrator: false,
     emergency_authorizer: false,
     front_desk_nurse: false,
+    insurance_officer: false,
     ...overrides,
   };
 }
@@ -114,4 +117,51 @@ test("parseReceptionRoles surfaces the cashier flag", () => {
   assert.equal(parsed?.cashier, true);
   // Strict === true: a payload from an un-upgraded Odoo never grants a role.
   assert.equal(parseReceptionRoles({ cashier: "yes" })?.cashier, false);
+});
+
+test("a pure insurance officer lands on the insurance/credit desk", () => {
+  assert.equal(
+    landingRouteForRoles(roles({ insurance_officer: true })),
+    INSURANCE_CREDIT_ROUTE,
+  );
+});
+
+test("an officer who is also a cashier keeps the cashier desk", () => {
+  // No-regression: that user lands on /cashier today, and the insurance branch
+  // sits BELOW cashier precisely so adding it moves nobody.
+  assert.equal(
+    landingRouteForRoles(roles({ insurance_officer: true, cashier: true })),
+    CASHIER_ROUTE,
+  );
+});
+
+test("manager and admin landing does not regress when they hold the officer group", () => {
+  assert.equal(
+    landingRouteForRoles(roles({ manager: true, insurance_officer: true })),
+    RECEPTION_ROUTE,
+  );
+  assert.equal(
+    landingRouteForRoles(
+      roles({ system_administrator: true, insurance_officer: true }),
+    ),
+    RECEPTION_ROUTE,
+  );
+});
+
+test("front desk keeps precedence over the officer branch", () => {
+  assert.equal(
+    landingRouteForRoles(roles({ front_desk_nurse: true, insurance_officer: true })),
+    FRONT_DESK_ROUTE,
+  );
+});
+
+test("canUseInsuranceCredit mirrors the server's INSURANCE_CREDIT_GROUPS", () => {
+  assert.equal(canUseInsuranceCredit(roles({ insurance_officer: true })), true);
+  assert.equal(canUseInsuranceCredit(roles({ manager: true })), true);
+  assert.equal(canUseInsuranceCredit(roles({ system_administrator: true })), true);
+  // Absent from the server tuple, so absent here: the party who books the
+  // receivable does not decide it.
+  assert.equal(canUseInsuranceCredit(roles({ accountant: true })), false);
+  assert.equal(canUseInsuranceCredit(roles({ cashier: true })), false);
+  assert.equal(canUseInsuranceCredit(null), false);
 });

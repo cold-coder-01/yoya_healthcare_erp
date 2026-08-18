@@ -29,6 +29,7 @@ GROUP_EMERGENCY_AUTHORIZER = (
 GROUP_FRONT_DESK_NURSE = (
     "yoya_reception_bridge.group_hospital_front_desk_nurse"
 )
+GROUP_INSURANCE_OFFICER = "hospital_billing.group_hospital_insurance_officer"
 
 # Who may run the guided registration workflow at all.
 #
@@ -112,6 +113,11 @@ def role_flags(env):
         "system_administrator": user.has_group(GROUP_SYSADMIN),
         "emergency_authorizer": user.has_group(GROUP_EMERGENCY_AUTHORIZER),
         "front_desk_nurse": user.has_group(GROUP_FRONT_DESK_NURSE),
+        # NARROW, like front_desk_nurse: direct membership of the officer group,
+        # not "may open the desk" (which also admits manager and admin). The
+        # front end routes a PURE officer to their own workspace with it; a
+        # manager who also holds it keeps their existing landing page.
+        "insurance_officer": user.has_group(GROUP_INSURANCE_OFFICER),
     }
 
 
@@ -210,6 +216,37 @@ CASHIER_DESK_GROUPS = OPERATIONAL_INTAKE_GROUPS
 def may_cashier_desk(env):
     """May this user open the Cashier Desk and read its worklist?"""
     return _in_any(env, CASHIER_DESK_GROUPS)
+
+
+# Who may OPEN the Insurance/Credit Desk (a read gate). Mirrors
+# hospital_billing.charge_responsibility.RESPONSIBILITY_AUTHORITY, which is the
+# WRITE gate the model enforces on every authorize/cancel -- restated here so a
+# request is refused before it touches a record, never instead of that check.
+#
+# The ACCOUNTANT IS DELIBERATELY ABSENT, exactly as they are from
+# RESPONSIBILITY_AUTHORITY: they read sponsor responsibility for finance work,
+# but the party who books the receivable does not decide it.
+INSURANCE_CREDIT_GROUPS = (
+    GROUP_INSURANCE_OFFICER,
+    GROUP_MANAGER,
+    GROUP_SYSADMIN,
+)
+
+
+def may_insurance_credit(env):
+    """May this user open the Insurance/Credit Desk and authorize a sponsor?"""
+    return _in_any(env, INSURANCE_CREDIT_GROUPS)
+
+
+def insurance_credit_capability_flags(env):
+    """What the desk may do. Every flag mirrors a server-side guard."""
+    return {
+        "insurance_credit_desk": may_insurance_credit(env),
+        "authorize_sponsor": may_insurance_credit(env),
+        # An officer is not a cashier. Reported so the desk can say who takes
+        # the residual without offering to take it.
+        "record_payment": may_record_payment(env),
+    }
 
 
 def cashier_capability_flags(env):

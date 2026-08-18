@@ -158,6 +158,18 @@ class TestPayerBenefitRules(TransactionCase):
             payer_identity_capability,
         )
 
+        # ONE ACTIVE EPISODE PER PATIENT. hospital.encounter now refuses a
+        # second live episode for the same patient, so a fixture that models a
+        # member attending repeatedly must close the previous visit first --
+        # which is what actually happens between real attendances. Without this
+        # the fixture would be asserting a state the hospital forbids.
+        self.env["hospital.encounter"].sudo().search(
+            [
+                ("patient_id", "=", eligibility.patient_id.id),
+                ("state", "not in", ["completed", "closed", "cancelled"]),
+            ]
+        ).write({"state": "closed"})
+
         encounter = self.env["hospital.encounter"].sudo().create(
             {
                 "patient_id": eligibility.patient_id.id,
@@ -951,6 +963,100 @@ class TestPayerBenefitRules(TransactionCase):
         self._rule(amendment, service_id=self.lab.id, coverage_percent=40.0)
         copied.sudo().unlink()
         self.assertEqual(len(amendment.sudo().benefit_rule_ids), 1)
+
+    def test_116_every_archive_path_hits_the_same_boundary(self):
+        """UAT saw the inline Active toggle appear to switch a rule off.
+
+        The database disagreed: every rule row stayed active=true, and the flag
+        came back on refresh. The toggle was optimistic client state that never
+        reached PostgreSQL.
+
+        These assertions pin the SERVER side of that, because the reason it
+        never persisted must be a guard rather than luck. Odoo routes all three
+        archive entry points through the same place:
+
+            action_archive()   -> toggle_active()
+            action_unarchive() -> toggle_active()
+            toggle_active()    -> recordset[field] = value
+                               -> Field.__set__ -> write()
+
+        so write() is the single choke point, and _assert_agreement_amendable()
+        sits on it. If a future Odoo version stops routing archive through
+        write(), this test fails rather than the invariant silently opening.
+        """
+        agreement, rule = self._active_with_rule()
+
+        with self.assertRaises(UserError):
+            rule.sudo().write({"active": False})
+        with self.assertRaises(UserError):
+            rule.sudo().toggle_active()
+        with self.assertRaises(UserError):
+            rule.sudo().action_archive()
+
+        rule.invalidate_recordset()
+        self.assertTrue(
+            rule.sudo().active,
+            "No archive path may leave the rule disabled on a live agreement.",
+        )
+
+        # action_unarchive on an ALREADY-ACTIVE rule is a genuine no-op: Odoo
+        # filters to the inactive records first, which is an empty recordset
+        # here, so nothing is written and nothing should raise. Asserting a
+        # refusal there would be testing Odoo's filter, not our boundary.
+        rule.sudo().action_unarchive()
+        self.assertTrue(rule.sudo().active)
+
+        # The case that DOES reach write(): a rule disabled while the agreement
+        # was still a draft, then re-enabled after activation. Re-enabling
+        # changes which rule governs a charge, so it is as frozen as disabling.
+        second = self._agreement(activate=False)
+        dormant = self._rule(
+            second, service_id=self.consultation.id, coverage_percent=80.0,
+        )
+        dormant.sudo().action_archive()
+        self.assertFalse(dormant.sudo().active)
+        second.with_user(self.manager).action_activate()
+
+        with self.assertRaises(UserError):
+            dormant.sudo().action_unarchive()
+        dormant.invalidate_recordset()
+        self.assertFalse(
+            dormant.sudo().active,
+            "Re-enabling a dormant rule on a live agreement must be refused.",
+        )
+
+    def test_117_a_multi_record_write_cannot_bypass_the_freeze(self):
+        """One draft rule and one live rule in a single recordset write.
+
+        The guard iterates the recordset, so the live one refuses and the whole
+        write is rolled back -- a mixed batch must not become a partial bypass.
+        """
+        draft_agreement = self._agreement(activate=False)
+        draft_rule = self._rule(
+            draft_agreement, service_id=self.consultation.id, coverage_percent=50.0,
+        )
+        _live_agreement, live_rule = self._active_with_rule()
+
+        both = draft_rule | live_rule
+        with self.assertRaises(UserError):
+            both.sudo().write({"active": False})
+
+        both.invalidate_recordset()
+        self.assertTrue(draft_rule.sudo().active)
+        self.assertTrue(live_rule.sudo().active)
+
+    def test_118_draft_agreement_still_allows_every_archive_path(self):
+        """The freeze must not have cost the draft workflow anything."""
+        agreement = self._agreement(activate=False)
+        rule = self._rule(
+            agreement, service_id=self.consultation.id, coverage_percent=80.0,
+        )
+        rule.sudo().action_archive()
+        self.assertFalse(rule.sudo().active)
+        rule.sudo().action_unarchive()
+        self.assertTrue(rule.sudo().active)
+        rule.sudo().toggle_active()
+        self.assertFalse(rule.sudo().active)
 
     def test_96_agreement_pool_scope_remains_blocked(self):
         """Organisation-wide pools are still out of scope, and still refused."""

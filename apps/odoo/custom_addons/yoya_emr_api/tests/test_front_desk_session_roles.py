@@ -33,6 +33,12 @@ EXPECTED_ROLE_KEYS = {
     "system_administrator",
     "emergency_authorizer",
     "front_desk_nurse",
+    # Added with the Insurance/Credit Desk. Like front_desk_nurse it is DIRECT
+    # membership rather than "may open the desk", because the front end uses it
+    # to pick a landing workspace and a manager must not be mistaken for an
+    # officer. ReceptionRoles in apps/web/src/lib/reception-roles.ts carries the
+    # matching field; this test is what stops the two drifting apart.
+    "insurance_officer",
 }
 
 

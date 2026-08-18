@@ -427,24 +427,34 @@ class TestFrontDeskPayerCapture(TransactionCase):
             set(REGISTRATION_GROUPS) | set(PAYER_IDENTITY_AUTHORITY),
         )
 
-    def test_officer_has_no_ambient_access_to_the_visit_records(self):
-        """WHY set_visit_payer elevates. Pinned so it is not "tidied away".
+    def test_officer_has_read_but_never_write_on_the_visit_records(self):
+        """WHY set_visit_payer elevates, restated after Slice B.
 
-        group_hospital_insurance_officer implies no other role and carries ACL
-        rows for hospital.payer, hospital.payer.agreement and
-        hospital.patient.payer only. Widening the guard without elevating inside
-        the method would move the AccessError from the guard to the ORM two
-        lines later, and the correction path would still not work.
+        THIS TEST DELIBERATELY CHANGED. It used to assert the officer could not
+        READ an appointment or encounter at all, which was true while
+        group_hospital_insurance_officer was purely a policy-configuration role.
 
-        This is also the boundary the elevation must NOT cross: the officer
-        gains no standing access to clinical records, only the ability to
-        complete set_visit_payer.
+        The Insurance/Credit Desk made it an OPERATIONAL role: an officer cannot
+        decide a sponsor share for a charge they are not allowed to look at. So
+        hospital_billing now grants five read-only rows (patient, appointment,
+        encounter, billing account, charge line) and the officer can read.
+
+        The boundary that MATTERS is unchanged and is what this now pins: read,
+        never write. set_visit_payer still elevates because writing the payer
+        identity is not something the officer's own rights permit, and the
+        elevation must not become a general licence.
         """
         appointment, encounter = self._register()
+
+        # Reading is now legitimate: it is how the review desk works.
+        appointment.with_user(self.officer).read(["state"])
+        encounter.with_user(self.officer).read(["state"])
+
+        # Writing is not, and that is the line the elevation must not cross.
         with self.assertRaises(AccessError):
-            appointment.with_user(self.officer).read(["state"])
+            appointment.with_user(self.officer).write({"state": "cancelled"})
         with self.assertRaises(AccessError):
-            encounter.with_user(self.officer).read(["state"])
+            encounter.with_user(self.officer).write({"notes": "officer edit"})
 
     def test_officer_without_registration_rights_may_correct_after_freeze(self):
         """A. THE repair. Previously an AccessError from the group guard.

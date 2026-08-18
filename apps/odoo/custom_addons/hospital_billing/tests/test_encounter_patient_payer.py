@@ -227,11 +227,20 @@ class TestEncounterPatientPayer(TransactionCase):
         self.assertEqual(after["state"], before["state"])
         self.assertEqual(after["cleared"], before["cleared"])
 
-    def test_payer_responsibility_mode_remains_off(self):
-        self.assertEqual(self.company.payer_responsibility_mode, "off")
+    def test_payer_responsibility_mode_ships_off(self):
+        # The CODE default, not the live company's current value. A UAT or
+        # production database may legitimately be switched to shadow or
+        # enforce by an operator; what must not drift is that the feature
+        # SHIPS off, so an upgrade never turns it on for anyone.
+        field = self.env["res.company"]._fields["payer_responsibility_mode"]
+        self.assertEqual(field.default(self.env["res.company"]), "off")
+
+        # And attaching an eligibility does not change the company's mode,
+        # whatever that mode currently is -- which is the real claim here.
+        before = self.company.payer_responsibility_mode
         self._attach(self._encounter(), self.eligibility)
         self.env.invalidate_all()
-        self.assertEqual(self.company.payer_responsibility_mode, "off")
+        self.assertEqual(self.company.payer_responsibility_mode, before)
 
     def test_allocate_payer_is_still_unimplemented(self):
         """Phase 2B must not have started the responsibility engine."""
