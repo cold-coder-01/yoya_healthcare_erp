@@ -1,12 +1,35 @@
 """Doctor Desk API: the clinician's worklist and the consultation gate.
 
-Reads: the doctor's bounded working day and the selected-patient panel.
+Reads: the doctor's bounded working day, the selected-patient panel, and the
+active consultation note.
 
-Writes: exactly one, and it decides nothing --
+Writes: two, and NEITHER decides anything. Each loads the appointment through
+the caller's own scope, then calls one authoritative model method:
 
     POST .../visits/<id>/start-consultation
+        -> hospital.appointment.action_start_consultation()
+           which ALSO opens the hospital.consultation, in the same transaction
+    POST .../visits/<id>/consultation/save
+        -> hospital.consultation.save_narrative()
 
-which loads the appointment through the caller's own scope and calls
+    GET  .../visits/<id>/consultation     PURE READ. Creates nothing.
+
+THE CONSULTATION IS OPENED BY THE TRANSITION, NOT BY THE READ.
+An earlier version of this module opened it lazily from the GET, which made a
+clinical record appear as a side effect of a browser fetch. It is now created by
+hospital.appointment.action_start_consultation() -- the act that justifies it --
+so the invariant "in_consultation implies a consultation exists" holds for the
+Odoo backend button and RPC callers too, not just for this API. The GET
+therefore has no mutation and needs no savepoint, and a missing consultation is
+reported as an integrity fault rather than quietly conjured.
+
+The consultation routes hold no clinical rule of their own. The precondition
+that a visit must be in_consultation, the copy-once presenting-complaint
+seeding, the one-per-encounter invariant, the optimistic-concurrency check and
+the post-completion freeze all live in hospital.consultation, so the Odoo form
+and any RPC caller obey exactly the same rules this API does.
+
+start-consultation loads the appointment through the caller's own scope and calls
 hospital.appointment.action_start_consultation(). That single call runs four
 independent model-layer gates, in this order:
 
@@ -42,17 +65,28 @@ from odoo.exceptions import AccessError, UserError, ValidationError
 from odoo.http import request
 from odoo.osv import expression
 
+from odoo.addons.yoya_clinical_bridge.models.consultation import (
+    CONSULTATION_APPOINTMENT_STATE,
+    ConsultationConflict,
+)
+
 from ..services.api_response import (
     ApiError,
     api_error_response,
+    coerce_text,
     error_response,
     parse_date,
     parse_int_param,
+    read_json_body,
     success_response,
 )
 from ..services.clinical_scope import (
     find_appointment_in_scope,
     scoped_appointment_domain,
+)
+from ..services.consultation_serializers import (
+    CONSULTATION_NARRATIVE_FIELDS,
+    serialize_consultation_envelope,
 )
 from ..services.doctor_serializers import (
     STAGE_KEYS,
@@ -90,6 +124,36 @@ MAX_LIMIT = 500
 # doctor can work, and a cancelled row in a clinical queue is noise.
 WORKLIST_STATES = ("confirmed", "in_consultation", "done")
 
+# Field names the consultation save endpoint refuses BY NAME rather than
+# ignoring. Every one of them is authoritative ownership or workflow state
+# derived server-side, and a client that sends one has misunderstood the
+# contract badly enough to be worth telling -- silently dropping them would let
+# a frontend believe it had reassigned a consultation.
+CONSULTATION_PROTECTED_FIELDS = frozenset(
+    {
+        "id",
+        "name",
+        "state",
+        "started_at",
+        "completed_at",
+        "encounter_id",
+        "appointment_id",
+        "patient_id",
+        "doctor_id",
+        "company_id",
+        "active",
+        "editable",
+    }
+)
+
+# Said to a doctor who opens a visit that has not started yet. A fixed string
+# written here, never a model message, matching the closed-set discipline
+# doctor_serializers applies to clearance wording.
+CONSULTATION_NOT_STARTED_REASON = (
+    "The consultation has not been started for this visit yet. Start the "
+    "consultation to open the clinical note."
+)
+
 
 class ConsultationResponseError(Exception):
     """The consultation started, but its success response could not be built.
@@ -107,13 +171,38 @@ class ConsultationResponseError(Exception):
     """
 
 
+class ConsultationNoteResponseError(Exception):
+    """The consultation note was saved, but its response could not be built.
+
+    Separate from ConsultationResponseError above for the same reason that one
+    is separate from AccessError: the two failures need DIFFERENT sentences.
+    "The consultation was not started" told to a doctor whose note failed to
+    serialize would send them back to press Start Consultation on a visit that
+    is already in consultation.
+
+    Like its sibling, by the time this reaches the handler the savepoint has
+    already rolled the write back, so "your note was not saved" is a statement
+    of fact.
+    """
+
+
 def doctor_endpoint(func):
     """Stable error envelope. Never leaks a traceback.
 
-    Ordering matters twice over. ConsultationResponseError is caught FIRST so a
-    post-write serialization failure cannot be reported as an authorization
-    denial. And in Odoo AccessError and ValidationError both subclass
-    UserError, so the broad handler has to come last.
+    Ordering matters three times over.
+
+    The two response-failure types are caught FIRST so a post-write
+    serialization failure cannot be reported as an authorization denial.
+
+    ConsultationConflict comes next. It subclasses UserError -- so that any
+    caller which does not know about it still sees a clean refusal -- which
+    means the broad UserError handler would otherwise swallow it and answer 422
+    invalid_workflow_state. A stale write is neither an invalid transition nor
+    an authorization failure: it is a recoverable concurrency outcome, and 409
+    is the only status that tells the client to re-read and retry.
+
+    And in Odoo AccessError and ValidationError both subclass UserError too, so
+    the broad handler has to come last.
     """
 
     @functools.wraps(func)
@@ -135,6 +224,19 @@ def doctor_endpoint(func):
                 "could not be produced. Nothing was changed. Please retry.",
                 500,
             )
+        except ConsultationNoteResponseError:
+            # Same contract as above: logged at the raise site, and the
+            # savepoint has already rolled the write back.
+            return error_response(
+                "consultation_note_response_failed",
+                "Your consultation note was not saved because the confirmation "
+                "could not be produced. Nothing was changed. Please retry.",
+                500,
+            )
+        except ConsultationConflict as error:
+            # The model's own sentence: it tells the doctor to reload rather
+            # than retry blindly, which is the only safe recovery for free text.
+            return error_response("consultation_conflict", str(error), 409)
         except AccessError as error:
             # Reaching here means the AUTHORIZATION path denied the caller --
             # scope, the desk gate, or _assert_may_start_consultation.
@@ -199,6 +301,60 @@ def _load_visit(env, appointment_id):
     return appointment
 
 
+def _load_consultation(env, appointment):
+    """The consultation for a STARTED visit. Reads only; never opens one.
+
+    THE INVARIANT THIS RELIES ON, AND WHY IT DOES NOT SELF-HEAL.
+    hospital.appointment.action_start_consultation() opens the consultation as
+    part of the transition, inside whatever transaction moved the visit, so a
+    visit in consultation always has one. If that is not true here, something
+    has gone wrong that a clinician cannot fix by retrying and that this layer
+    must not disguise: a record removed underneath the workflow, or a visit that
+    predates the invariant and was never backfilled.
+
+    Creating one on the spot would produce an EMPTY note for a consultation that
+    may already have been conducted -- the doctor would see a blank screen where
+    their examination findings used to be and have no way to tell that anything
+    was lost. A 500 with a reference they can quote is the honest answer.
+
+    Deliberately NOT 404: the visit exists and the caller may reach it. This is
+    a server-side integrity fault, and reporting it as "not found" would send
+    support looking for a missing appointment.
+    """
+    if not appointment.encounter_id:
+        # NOT an integrity fault. hospital.consultation.encounter_id is
+        # required, so a visit that never had an encounter -- a legacy row
+        # predating encounter tracking -- can never carry a note. Reporting it
+        # as a server error would send support hunting a bug that is really a
+        # property of the data, so it is a 409 with the reason stated.
+        raise ApiError(
+            "consultation_unavailable",
+            "This visit has no encounter, so there is no episode of care to "
+            "document. It predates encounter tracking and cannot carry a "
+            "consultation note.",
+            409,
+        )
+
+    consultation = env["hospital.consultation"].find_for_appointment(appointment)
+    if not consultation:
+        _logger.error(
+            "INTEGRITY: appointment=%s is %s but has no hospital.consultation "
+            "(encounter=%s). It was not opened by action_start_consultation, or "
+            "it predates that invariant and was not backfilled.",
+            appointment.id,
+            appointment.state,
+            appointment.encounter_id.id or None,
+        )
+        raise ApiError(
+            "consultation_missing",
+            "This visit is in consultation but its clinical note is missing. "
+            "Nothing has been changed. Please report visit %s to support."
+            % (appointment.appointment_code or appointment.id),
+            500,
+        )
+    return consultation
+
+
 def _limit_param(raw):
     if raw in (None, "", False):
         return DEFAULT_LIMIT
@@ -243,6 +399,56 @@ def _worklist_domain(env, day, department_id, search):
             ]
         )
     return domain
+
+
+def _build_consultation_values(body):
+    """The narrative, and the version. NOTHING else crosses this boundary.
+
+    THE ALLOWLIST IS THE POINT. Ownership -- which patient, which encounter,
+    which visit, which physician -- is derived server-side from a record the
+    caller already resolved through their own scope. Accepting any of it here
+    would make the client a participant in deciding whose note this is, which
+    is exactly the class of bug that produces a consultation filed against the
+    wrong patient.
+
+    Unknown and protected keys are REJECTED rather than dropped, matching
+    clinical.py._build_save_values: a client sending doctor_id has a real
+    misunderstanding, and silently ignoring it lets that misunderstanding ship.
+    """
+    provided = set(body)
+
+    version = body.get("version")
+    if not isinstance(version, str) or not version:
+        raise ApiError(
+            "missing_version",
+            "'version' is required and must be the token returned by the last "
+            "consultation read.",
+            400,
+        )
+    provided.discard("version")
+
+    protected = provided & CONSULTATION_PROTECTED_FIELDS
+    if protected:
+        raise ApiError(
+            "protected_field",
+            "These fields cannot be written directly: %s."
+            % ", ".join(sorted(protected)),
+            400,
+        )
+
+    unknown = provided - set(CONSULTATION_NARRATIVE_FIELDS)
+    if unknown:
+        raise ApiError(
+            "unknown_field",
+            "Unrecognised fields: %s." % ", ".join(sorted(unknown)),
+            400,
+        )
+
+    # coerce_text maps null/false to False, which CLEARS the field. That is a
+    # legitimate edit -- a doctor deleting a paragraph they wrote in error --
+    # and is distinct from omitting the key, which leaves the field untouched.
+    values = {name: coerce_text(name, body[name]) for name in provided}
+    return version, values
 
 
 class YoyaEmrDoctorController(http.Controller):
@@ -378,13 +584,22 @@ class YoyaEmrDoctorController(http.Controller):
     )
     @doctor_endpoint
     def start_consultation(self, appointment_id, **params):
-        """THE ONLY WRITE ON THIS SURFACE, AND IT DECIDES NOTHING.
+        """THE consultation-opening write, AND IT DECIDES NOTHING.
 
         Loads the appointment through the caller's legitimate scope and calls
         action_start_consultation(). It does NOT write appointment.state, does
         NOT write encounter.state, does NOT re-check triage, does NOT re-check
-        financial clearance and does NOT sudo the mutation. Every one of those
-        belongs to the model, which enforces them whatever this route allows.
+        financial clearance, does NOT create the consultation record itself and
+        does NOT sudo the mutation. Every one of those belongs to the model,
+        which enforces them whatever this route allows.
+
+        THE CONSULTATION RECORD IS OPENED BY THAT SAME CALL.
+        yoya_clinical_bridge extends action_start_consultation() to open the
+        hospital.consultation once the transition has actually happened. It runs
+        inside the savepoint below with no extra plumbing, so the transition and
+        the record it justifies commit together or not at all -- and no nested
+        savepoint exists that could let the record outlive a rolled-back
+        transition.
 
         Odoo's refusal is forwarded, not swallowed. AccessError and UserError
         both propagate to doctor_endpoint, which maps them to 403 and 422 with
@@ -461,5 +676,123 @@ class YoyaEmrDoctorController(http.Controller):
                     env.uid,
                 )
                 raise ConsultationResponseError(str(error)) from error
+
+        return response
+
+    # ------------------------------------------------------------------
+    # 5. Consultation note -- read
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>/consultation",
+        type="http", auth="user", methods=["GET"], csrf=False,
+    )
+    @doctor_endpoint
+    def consultation_detail(self, appointment_id, **params):
+        """The active consultation for one visit. A PURE READ.
+
+        WHY THIS IS A SEPARATE ENDPOINT FROM /visits/<id>
+        The visit-detail read fires on EVERY queue selection, including for
+        visits that have not started and never will. Folding the consultation
+        into it would pay for a second read on every selection and would dilute
+        a serializer whose confidentiality reasoning is auditable precisely
+        because it is small.
+
+        THIS ENDPOINT CREATES NOTHING, AND THAT IS THE POINT.
+        It previously called get_or_create_for_appointment, which made opening
+        a clinical record a side effect of a GET -- something a browser prefetch,
+        a double render or a link preview could trigger. The consultation is now
+        opened exactly once, by hospital.appointment.action_start_consultation(),
+        which is the act that justifies it. There is therefore no mutation here,
+        no savepoint, and nothing for a rollback to undo.
+
+        A MISSING CONSULTATION IS REPORTED, NOT REPAIRED.
+        Given the model-layer invariant, in_consultation with no consultation is
+        a genuine integrity fault -- a record deleted underneath the workflow, or
+        a visit that predates the invariant and was not backfilled. Silently
+        creating one here would paper over it and reintroduce exactly the
+        creating-GET this change removes, so it is surfaced as a server error.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+
+        appointment = _load_visit(env, appointment_id)
+
+        if appointment.state != CONSULTATION_APPOINTMENT_STATE:
+            return success_response(
+                serialize_consultation_envelope(
+                    env["hospital.consultation"].browse(),
+                    available=False,
+                    reason=CONSULTATION_NOT_STARTED_REASON,
+                )
+            )
+
+        consultation = _load_consultation(env, appointment)
+        return success_response(
+            serialize_consultation_envelope(consultation, available=True)
+        )
+
+    # ------------------------------------------------------------------
+    # 6. Consultation note -- save
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>/consultation/save",
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @doctor_endpoint
+    def consultation_save(self, appointment_id, **params):
+        """Save the narrative. Version-checked, and it decides nothing else.
+
+        The controller validates the SHAPE of the request and calls one model
+        method. It does not check the freeze, does not compare versions, does
+        not stamp ownership and does not sudo(): every one of those belongs to
+        hospital.consultation.save_narrative(), which enforces them for the
+        Odoo form and any RPC caller as well as for this route.
+
+        ATOMICITY. The mutation, the reload and the response are one unit,
+        for the reason spelled out at length in start_consultation: Odoo's
+        dispatcher commits on a normal return, and doctor_endpoint's job is to
+        turn exceptions into normal returns. Without the savepoint a failure
+        while serializing would commit the doctor's note and tell them it had
+        not saved -- and their retry would then be refused as a stale version,
+        because the write they were told had failed had actually bumped
+        write_date.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+
+        appointment = _load_visit(env, appointment_id)
+        version, values = _build_consultation_values(read_json_body())
+
+        if appointment.state != CONSULTATION_APPOINTMENT_STATE:
+            raise ApiError(
+                "consultation_not_available",
+                CONSULTATION_NOT_STARTED_REASON,
+                409,
+            )
+
+        consultation = _load_consultation(env, appointment)
+
+        with env.cr.savepoint():
+            # Raises ConsultationConflict on a stale version, which propagates
+            # out of the savepoint -- so a refused save leaves the stored note
+            # byte-for-byte as it was.
+            consultation.save_narrative(values, version)
+
+            try:
+                # Re-serialized from the record as it now stands, so the client
+                # renders the stored note and the NEW version token rather than
+                # the values it optimistically sent.
+                consultation.invalidate_recordset()
+                response = success_response(
+                    serialize_consultation_envelope(consultation, available=True)
+                )
+            except Exception as error:
+                _logger.exception(
+                    "Doctor consultation save response failed for "
+                    "appointment=%s uid=%s; rolling the write back",
+                    appointment_id,
+                    env.uid,
+                )
+                raise ConsultationNoteResponseError(str(error)) from error
 
         return response

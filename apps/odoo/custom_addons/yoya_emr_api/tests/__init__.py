@@ -6,3 +6,4 @@ from . import test_front_desk_payer_api
 from . import test_front_desk_triage_api
 from . import test_front_desk_worklist
 from . import test_doctor_desk_api
+from . import test_doctor_consultation_api

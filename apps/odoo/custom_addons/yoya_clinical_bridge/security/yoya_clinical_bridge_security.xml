@@ -155,5 +155,145 @@
             <field name="perm_unlink" eval="True"/>
         </record>
 
+        <!-- ============================================================
+             hospital.consultation
+             ============================================================
+
+             THE PHYSICIAN'S NOTE, and the most confidential record this
+             module owns. The same OR semantics described at the top of this
+             file apply, so restriction lives in the ACL rows
+             (security/ir.model.access.csv) and these rules narrow WHICH rows
+             each already-permitted role can reach.
+
+             Only FOUR groups hold an ACL row at all: doctor, manager, system
+             administrator and DPO. Everyone else holds none, so they have no
+             access to consultation notes whatever their access to the
+             appointment or the encounter.
+
+             WHY HOSPITAL NURSE IS NOT ONE OF THEM
+             =====================================
+             An earlier version of this slice granted Hospital Nurse read,
+             scoped by yoya_permitted_department_ids, on a continuity-of-care
+             argument. That was withdrawn because the exclusion it depended on
+             was accidental rather than structural.
+
+             group_hospital_front_desk_nurse IMPLIES group_hospital_nurse
+             (yoya_reception_bridge/security/yoya_reception_groups.xml), and
+             Odoo ORs record rules across a user's groups, so ANY grant to
+             Hospital Nurse reaches the front desk. The only thing keeping the
+             entrance out was that a front desk nurse happens to have no
+             permitted departments today. That is a configuration accident: the
+             field is also consulted by the nurse rules on
+             hospital.patient.evaluation and hospital.appointment, so assigning
+             a department for an unrelated workflow would have silently handed
+             the entrance every physician note in that department. A deny rule
+             cannot repair this either: an empty group rule ORs with the
+             permissive one and loses.
+
+             There is no ward-nurse group to grant instead. The repository
+             defines thirteen groups and the only nurse-shaped ones are
+             Hospital Nurse and Hospital Front Desk Nurse; hospital_nursing
+             declares no res.groups of its own. So the honest options were to
+             grant nothing or to invent a group, and inventing security
+             architecture is not this slice's business.
+
+             ABSENCE OF AN ACL ROW IS THE CONTROL, and it is the one control
+             that cannot be widened by OR: no rule anywhere can grant a row on
+             a model the group may not touch at all. When ward nursing becomes
+             real, the grant should hang off a group the front desk does not
+             imply, not off Hospital Nurse.
+        -->
+
+        <record id="rule_consultation_doctor" model="ir.rule">
+            <field name="name">Consultation: my patients (doctor)</field>
+            <field name="model_id" ref="model_hospital_consultation"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!--
+                Exactly the shape of rule_encounter_doctor and
+                rule_patient_evaluation_doctor, so a doctor's consultation
+                scope cannot be wider than the visits and encounters it
+                documents. A PURE doctor therefore never reaches a colleague's
+                consultation, which is the property test_doctor_consultation_api
+                pins.
+
+                appointment_id is a STORED related column, so this branch is a
+                real index lookup rather than a traversal of a computed field.
+            -->
+            <field name="domain_force">
+                ['|',
+                    ('doctor_id.user_id', '=', user.id),
+                    ('appointment_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_consultation_manager" model="ir.rule">
+            <field name="name">Consultation: all (manager / system administrator)</field>
+            <field name="model_id" ref="model_hospital_consultation"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_consultation_dpo" model="ir.rule">
+            <field name="name">Consultation: full read for oversight (data protection officer)</field>
+            <field name="model_id" ref="model_hospital_consultation"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_data_protection_officer'))]"/>
+            <!-- Deliberately unrestricted, not unrestricted by omission: the
+                 DPO audits clinical record handling. The ACL (1,0,0,0) keeps
+                 this strictly read-only. -->
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_consultation_no_clinical_access" model="ir.rule">
+            <field name="name">Consultation: no access (nursing / front office / finance / pharmacy / laboratory)</field>
+            <field name="model_id" ref="model_hospital_consultation"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_nurse')), (4, ref('hospital_management.group_hospital_receptionist')), (4, ref('hospital_management.group_hospital_pharmacist')), (4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_accountant')), (4, ref('hospital_billing.group_hospital_cashier')), (4, ref('hospital_billing.group_hospital_insurance_officer'))]"/>
+            <!--
+                A STANDING DEFAULT, NOT TODAY'S ENFORCEMENT, and the difference
+                matters: none of these groups holds an ACL row for
+                hospital.consultation, so none has any access right now and this
+                rule grants nothing. THE ACL IS THE CONTROL. This rule cannot be
+                one, because Odoo ORs group rules and a [(0,'=',1)] domain loses
+                to any permissive rule the same user picks up elsewhere.
+
+                It is declared so that if a future module ever adds a read ACL
+                for one of them (the obvious accident, since they all already
+                read hospital.appointment or hospital.encounter), the
+                consultation set is clamped to empty for anyone holding ONLY
+                these groups, rather than silently opening the whole hospital's
+                physician notes.
+
+                Hospital Nurse is named here for exactly that reason: it is the
+                group most likely to be granted a read ACL by a well-meaning
+                later change. Hospital Front Desk Nurse is NOT named, and does
+                not need to be: it IMPLIES Hospital Nurse, so every front desk
+                nurse already matches the nurse clamp. It also could not be
+                named here even if we wanted to, because it is declared in
+                yoya_reception_bridge, which DEPENDS on this module and
+                therefore loads after it.
+
+                Safe for multi-role users: because group rules OR, a manager
+                (who implies receptionist and nurse) still gets the unrestricted
+                manager rule above.
+            -->
+            <field name="domain_force">[(0, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
     </data>
 </odoo>

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { messageFromPayload } from "@/lib/api-error";
 import { hospitalToday } from "@/lib/clinical-format";
+import { isConsultationMode } from "@/lib/consultation-format";
 import { bucketCounts, bucketOf, type DoctorBucket } from "@/lib/doctor-format";
 import type {
   ApiEnvelope,
@@ -12,6 +13,7 @@ import type {
   DoctorVisitResponse,
 } from "@/types/doctor";
 
+import ConsultationWorkspace from "./consultation/consultation-workspace";
 import DoctorBucketBar from "./doctor-bucket-bar";
 import DoctorFilters from "./doctor-filters";
 import DoctorOrderRail from "./doctor-order-rail";
@@ -182,6 +184,19 @@ export default function DoctorWorkstation() {
   const detailForSelection =
     detail && detail.visit.appointment_id === activeId ? detail : null;
 
+  /*
+    THE MODE, DERIVED FROM THE AUTHORITATIVE VISIT STATE.
+
+    `in_consultation` is written by hospital.appointment.action_start_consultation
+    after four independent model-layer gates, and it arrives here on the visit
+    payload. Deriving the mode from it rather than from a local "I clicked
+    Start" flag is what stops the two disagreeing: a visit started in another
+    tab, in Odoo, or by a manager opens the workspace here on the next refresh,
+    and a consultation this browser thinks it started but the model refused
+    never does.
+  */
+  const consultationOpen = isConsultationMode(detailForSelection?.visit.state);
+
   return (
     /*
       The shell now owns the viewport height (h-screen + overflow-hidden on the
@@ -208,14 +223,31 @@ export default function DoctorWorkstation() {
           truncated={truncated}
           onSelect={setSelectedId}
         />
-        <DoctorPatientPanel
-          detail={detailForSelection}
-          loading={detailLoading}
-          error={activeId ? detailError : null}
-          // One token bump refetches BOTH the queue and the open patient, so
-          // the two can never disagree about the visit's state after a start.
-          onStarted={refresh}
-        />
+        {consultationOpen && detailForSelection ? (
+          /*
+            key={appointment_id} is LOAD-BEARING, not a lint appeasement. It
+            forces a fresh mount per patient, so the previous patient's draft,
+            version token and status can never survive a selection change into
+            the next patient's editor -- the single most dangerous thing this
+            screen could do. It also means a late in-flight save resolves onto
+            an unmounted component and is discarded.
+          */
+          <ConsultationWorkspace
+            key={detailForSelection.visit.appointment_id}
+            detail={detailForSelection}
+            loading={detailLoading}
+          />
+        ) : (
+          <DoctorPatientPanel
+            detail={detailForSelection}
+            loading={detailLoading}
+            error={activeId ? detailError : null}
+            // One token bump refetches BOTH the queue and the open patient, so
+            // the two can never disagree about the visit's state after a start.
+            // That refetch is also what swaps this panel for the workspace.
+            onStarted={refresh}
+          />
+        )}
         <div className="hidden min-h-0 min-[1100px]:flex min-[1100px]:flex-col">
           <DoctorOrderRail
             visitState={detailForSelection?.visit.state ?? null}

@@ -18,6 +18,7 @@ import {
   errorResponse,
   forwardOdooResult,
   handleRouteError,
+  readJsonObject,
   requireOdooSession,
 } from "@/app/api/reception/_utils";
 
@@ -26,6 +27,10 @@ export {
   errorResponse,
   forwardOdooResult,
   handleRouteError,
+  // Used by the consultation save route. It only checks that the body IS a
+  // JSON object; WHICH fields are writable is Odoo's decision and is not
+  // duplicated here.
+  readJsonObject,
   requireOdooSession,
 };
 
