@@ -1,45 +1,50 @@
 import { doctorLabel } from "@/lib/doctor-format";
 
 /**
- * The Order Key rail: the workspace prepared for clinical ordering.
+ * The Clinical Actions rail: the workspace prepared for ordering.
  *
- * The vendor OPD screen keeps a permanent right-hand grid of order types, and
+ * The vendor OPD screen keeps a permanent right-hand column of order types, and
  * a doctor's hand goes to it the moment a consultation opens. Reserving that
  * column now means ordering lands into a layout doctors already read, instead
  * of forcing a re-teach later.
  *
  * NOTHING HERE IS INTERACTIVE, AND IT DOES NOT PRETEND TO BE.
  * No ordering endpoint exists on the doctor surface yet, so these are rendered
- * as inert labels -- not buttons, not disabled buttons that invite a click and
+ * as inert rows -- not buttons, not disabled buttons that invite a click and
  * swallow it. A control that looks pressable and does nothing is worse than an
  * honest placeholder, especially in a clinical tool where a doctor may believe
  * an order was placed.
  *
+ * WHY THEY ARE ROWS AND NOT GREYED-OUT TILES.
+ * The previous rail rendered dashed, washed-out chips that read as a broken or
+ * disabled control panel -- the doctor's first question was "why is this
+ * greyed out?", not "what is coming?". These are full-contrast, legible rows
+ * with a leading rule, which read as a roadmap of the workstation rather than
+ * as functionality that has failed to load. Nothing is dimmed; what changes
+ * between the two states is the WORDING, not the opacity.
+ *
  * THE BADGE IS ABOUT ORDERING, NOT ABOUT THE CONSULTATION.
- * It used to read "Open" once a visit reached in_consultation, which was
- * harmless while nothing else on the screen was open -- and became a lie the
- * moment the consultation note itself started working in the centre column. A
- * doctor reading "Open" beside Laboratory would reasonably conclude they could
- * order a test. Ordering is not available in ANY state in this slice, so the
- * badge says so in every state, and the banner underneath carries the part
- * that genuinely does change: whether the note is open for writing yet.
+ * It used to read "Open" once a visit reached in_consultation, which became a
+ * lie the moment the consultation note itself started working in the centre
+ * column: a doctor reading "Open" beside Laboratory would reasonably conclude
+ * they could order a test. Ordering is unavailable in EVERY state in this
+ * slice, so the badge says so in every state.
  */
 
-const ORDER_GROUPS: Array<{ title: string; hint: string; items: string[] }> = [
-  {
-    title: "Diagnostics",
-    hint: "Investigations",
-    items: ["Laboratory", "Radiology", "Pathology", "Endoscopy", "Echocardiography"],
-  },
-  {
-    title: "Treatment",
-    hint: "Therapeutics",
-    items: ["Medication", "Injection", "Procedure", "Physiotherapy", "Anesthesia"],
-  },
+type ActionGroup = {
+  title: string;
+  /** Marked on the single item that is genuinely next in the plan. */
+  next?: string;
+  items: string[];
+};
+
+const ACTION_GROUPS: ActionGroup[] = [
+  { title: "Diagnosis", next: "Diagnosis", items: ["Diagnosis"] },
+  { title: "Investigations", items: ["Laboratory", "Radiology", "Pathology"] },
+  { title: "Treatment", items: ["Medication", "Procedure", "Injection"] },
   {
     title: "Documentation",
-    hint: "Clinical record",
-    items: ["Progress note", "Diagnosis", "OP note", "Certificate"],
+    items: ["Certificate", "Referral", "Progress note"],
   },
 ];
 
@@ -69,23 +74,21 @@ export default function DoctorOrderRail({
   const active = visitState === "in_consultation";
 
   return (
-    <section className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-      <header className="flex h-9 shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50 px-3">
-        <h2 className="text-[11px] font-bold uppercase tracking-[0.08em] text-slate-700">
-          Order Key
+    <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+      <header className="flex h-9 shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50 px-2.5">
+        <h2 className="text-[10.5px] font-bold uppercase tracking-[0.08em] text-slate-700">
+          Clinical Actions
         </h2>
-        {/* Ordering is unavailable in EVERY state in this slice, so the badge
-            never claims otherwise. */}
         <span className="inline-flex items-center gap-1 rounded bg-slate-200 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-600">
           <LockIcon className="h-2.5 w-2.5" />
           Not yet
         </span>
       </header>
 
-      {/* The state, stated first. A doctor should never have to scroll to the
-          bottom of a dimmed column to learn why it is dimmed. */}
+      {/* The state, stated first. A doctor should never have to scan the whole
+          column to learn why none of it does anything. */}
       <div
-        className={`shrink-0 border-b px-2.5 py-2 ${
+        className={`shrink-0 border-b px-2.5 py-1.5 ${
           active
             ? "border-emerald-100 bg-emerald-50/60"
             : "border-slate-200 bg-slate-50"
@@ -93,59 +96,51 @@ export default function DoctorOrderRail({
       >
         {active ? (
           <p className="text-[10px] leading-snug text-emerald-900">
-            <span className="font-semibold">
-              Consultation note is open for writing
-            </span>{" "}
-            on{" "}
+            <span className="font-semibold">Note open for writing</span> on{" "}
             <span className="font-mono font-semibold">
               {encounterName ?? "this encounter"}
             </span>
-            . Ordering and diagnosis arrive in the next clinical slice.
+            . Ordering arrives in the next clinical slice.
           </p>
         ) : (
-          <div className="flex gap-2">
-            <LockIcon className="mt-px h-3.5 w-3.5 shrink-0 text-slate-400" />
-            <p className="text-[10px] leading-snug text-slate-600">
-              <span className="font-semibold text-slate-800">
-                Start the consultation to open the clinical note.
-              </span>{" "}
-              This visit is{" "}
-              <span className="font-semibold text-slate-700">
-                {doctorLabel(visitState)}
-              </span>
-              . Ordering arrives in a later slice.
-            </p>
-          </div>
+          <p className="text-[10px] leading-snug text-slate-600">
+            <span className="font-semibold text-slate-800">
+              Start the consultation to open the clinical note.
+            </span>{" "}
+            This visit is{" "}
+            <span className="font-semibold text-slate-700">
+              {doctorLabel(visitState)}
+            </span>
+            .
+          </p>
         )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
-        <div className="flex flex-col gap-3">
-          {ORDER_GROUPS.map((group) => (
-            <div key={group.title} className="flex flex-col gap-1.5">
-              <div className="flex items-baseline justify-between gap-2">
-                <h3
-                  className={`text-[9px] font-bold uppercase tracking-[0.08em] ${
-                    active ? "text-slate-600" : "text-slate-500"
-                  }`}
-                >
-                  {group.title}
-                </h3>
-                <span className="truncate text-[9px] text-slate-400">
-                  {group.hint}
-                </span>
-              </div>
-              <ul className="grid grid-cols-2 gap-1">
+      <div className="min-h-0 flex-1 overflow-y-auto px-2.5 py-2">
+        <div className="flex flex-col gap-2.5">
+          {ACTION_GROUPS.map((group) => (
+            <div key={group.title} className="flex flex-col gap-1">
+              <h3 className="text-[9px] font-bold uppercase tracking-[0.08em] text-slate-500">
+                {group.title}
+              </h3>
+              <ul className="flex flex-col gap-px border-l border-slate-200 pl-2">
                 {group.items.map((item) => (
                   <li
                     key={item}
-                    className={`truncate rounded border px-1.5 py-1 text-[10px] font-semibold transition-colors ${
-                      active
-                        ? "border-slate-200 bg-white text-slate-700"
-                        : "border-dashed border-slate-200 bg-slate-50 text-slate-500"
-                    }`}
+                    className="flex items-center justify-between gap-1.5 py-[3px]"
                   >
-                    {item}
+                    <span className="truncate text-[11px] font-semibold text-slate-700">
+                      {item}
+                    </span>
+                    {group.next === item ? (
+                      <span className="shrink-0 rounded bg-emerald-50 px-1 py-px text-[8.5px] font-bold uppercase tracking-wide text-emerald-700 ring-1 ring-inset ring-emerald-200">
+                        Next
+                      </span>
+                    ) : (
+                      <span className="shrink-0 text-[8.5px] font-semibold uppercase tracking-wide text-slate-400">
+                        Soon
+                      </span>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -153,10 +148,9 @@ export default function DoctorOrderRail({
           ))}
         </div>
 
-        <p className="mt-3 border-t border-slate-200 pt-2 text-[9px] leading-snug text-slate-400">
-          Ordering arrives in a later clinical slice. This column is reserved so
-          it lands where doctors already look. The consultation note itself is
-          written in the centre panel.
+        <p className="mt-2.5 border-t border-slate-200 pt-1.5 text-[9px] leading-snug text-slate-400">
+          This column is reserved so ordering lands where doctors already look.
+          The consultation note itself is written in the centre panel.
         </p>
       </div>
     </section>
