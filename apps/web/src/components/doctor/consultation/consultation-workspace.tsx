@@ -10,6 +10,8 @@ import {
   hasUnsavedChanges,
   isEmptySave,
 } from "@/lib/consultation-format";
+import { CONSULTATION_SECTIONS } from "@/lib/diagnosis-format";
+import type { ConsultationSection } from "@/lib/diagnosis-format";
 import {
   bloodPressureText,
   compactGender,
@@ -29,6 +31,7 @@ import { CONSULTATION_CONFLICT_CODE } from "@/types/doctor-consultation";
 
 import { PriorityBadge, StageBadge } from "../doctor-badges";
 import DoctorVitalsGrid from "../doctor-vitals-grid";
+import DiagnosisWorkspace from "./diagnosis-workspace";
 import ConsultationNoteEditor from "./note-editor";
 
 /**
@@ -52,17 +55,6 @@ import ConsultationNoteEditor from "./note-editor";
  * panel scrolled, which pushed vitals and the complaint off screen while
  * writing and buried the save bar below the fold.
  */
-
-/**
- * The workstation's future section architecture, declared now so ordering and
- * results land where doctors have already learned to look.
- *
- * RENDERED AS TEXT, NOT AS BUTTONS. Only NOTE exists in this slice. The others
- * are <span>s with no handler, no tab stop and no hover affordance, because a
- * control that looks pressable and does nothing is worse than an honest label
- * in a clinical tool.
- */
-const SECTIONS = ["Note", "Diagnosis", "Orders", "Results", "History"] as const;
 
 /** One reading in the dense strip. Value leads, unit and label recede. */
 function Stat({ label, value }: { label: string; value: string }) {
@@ -107,9 +99,24 @@ function VitalsStrip({ vitals }: { vitals: DoctorVitals }) {
 export default function ConsultationWorkspace({
   detail,
   loading,
+  section,
+  onSectionChange,
 }: {
   detail: DoctorVisitDetail;
   loading: boolean;
+  /*
+    WHICH SECTION IS ON SCREEN. Presentation only, and OWNED BY THE PARENT so
+    the Clinical Actions rail can focus a section too.
+
+    This is NOT a workflow state machine and mirrors nothing on the server: the
+    visit state and the consultation state still come from Odoo and still decide
+    what may be written. Switching sections does not unmount the note draft, so
+    a doctor can check the diagnosis list mid-sentence and come back to unsaved
+    text exactly as they left it -- which is also why the command bar stays
+    visible in every section.
+  */
+  section: ConsultationSection;
+  onSectionChange: (section: ConsultationSection) => void;
 }) {
   const appointmentId = detail.visit.appointment_id;
 
@@ -394,29 +401,35 @@ export default function ConsultationWorkspace({
 
       {/* ---- Section bar ---- */}
       <div className="flex shrink-0 items-center gap-1 border-b border-slate-200 bg-white px-3">
-        {SECTIONS.map((section, index) =>
-          index === 0 ? (
-            <span
-              key={section}
-              aria-current="page"
-              className="-mb-px border-b-2 border-emerald-600 px-1.5 py-1.5 text-[10.5px] font-bold uppercase tracking-[0.07em] text-slate-900"
+        {CONSULTATION_SECTIONS.map((entry) =>
+          entry.live ? (
+            <button
+              key={entry.key}
+              type="button"
+              aria-current={section === entry.key ? "page" : undefined}
+              onClick={() => onSectionChange(entry.key)}
+              className={`-mb-px border-b-2 px-1.5 py-1.5 text-[10.5px] font-bold uppercase tracking-[0.07em] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-emerald-600 ${
+                section === entry.key
+                  ? "border-emerald-600 text-slate-900"
+                  : "border-transparent text-slate-500 hover:text-slate-800"
+              }`}
             >
-              {section}
-            </span>
+              {entry.label}
+            </button>
           ) : (
+            // Still text, not a button: no handler, no tab stop, no hover
+            // affordance. A control that looks pressable and does nothing is
+            // worse than an honest label in a clinical tool.
             <span
-              key={section}
+              key={entry.key}
               title="Arrives in a later clinical slice"
               className="cursor-default border-b-2 border-transparent px-1.5 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-slate-400"
             >
-              {section}
+              {entry.label}
             </span>
           ),
         )}
         <span aria-hidden className="flex-1" />
-        <span className="hidden py-1.5 text-[9px] font-semibold uppercase tracking-wide text-slate-400 sm:inline">
-          Slice 1 · Note only
-        </span>
       </div>
 
       {/* ---- Triage context: collapsed by default, bounded when open ---- */}
@@ -466,9 +479,16 @@ export default function ConsultationWorkspace({
         ) : null}
       </div>
 
-      {/* ---- The note: THE only scrolling region ---- */}
+      {/* ---- Section body: THE only scrolling region ---- */}
       <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50/40 p-3">
-        {noteLoading && !consultation ? (
+        {section === "diagnosis" ? (
+          /*
+            Keyed on the visit so a patient change cannot carry one patient's
+            diagnosis list into another's screen, exactly as the parent keys
+            this whole workspace.
+          */
+          <DiagnosisWorkspace key={appointmentId} appointmentId={appointmentId} />
+        ) : noteLoading && !consultation ? (
           <p className="py-8 text-center text-xs text-slate-500">
             Loading consultation note…
           </p>
@@ -564,7 +584,11 @@ export default function ConsultationWorkspace({
                 ) : null}
               </>
             ) : editable ? (
-              <span className="text-slate-500">Note open for editing</span>
+              <span className="text-slate-500">
+                {section === "diagnosis"
+                  ? "Diagnoses save as you record them"
+                  : "Note open for editing"}
+              </span>
             ) : (
               <span className="text-slate-500">Read-only</span>
             )}

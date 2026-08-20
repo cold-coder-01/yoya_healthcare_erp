@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { messageFromPayload } from "@/lib/api-error";
 import { hospitalToday } from "@/lib/clinical-format";
 import { isConsultationMode } from "@/lib/consultation-format";
+import type { ConsultationSection } from "@/lib/diagnosis-format";
 import { bucketCounts, bucketOf, type DoctorBucket } from "@/lib/doctor-format";
 import type {
   ApiEnvelope,
@@ -197,6 +198,31 @@ export default function DoctorWorkstation() {
   */
   const consultationOpen = isConsultationMode(detailForSelection?.visit.state);
 
+  /*
+    THE OPEN SECTION, tagged with the visit it belongs to.
+
+    Storing the id alongside the section is what resets it to Note when the
+    doctor selects a different patient, WITHOUT an effect that writes state
+    during render. Same pattern doctor-patient-panel.tsx uses for its start
+    error, and for the same reason: a value that belongs to one visit must
+    never be read while a different one is on screen.
+
+    It lives here rather than inside the workspace so the Clinical Actions rail
+    can focus a section as well as the section bar.
+  */
+  const [sectionState, setSectionState] = useState<{
+    appointmentId: number | null;
+    section: ConsultationSection;
+  }>({ appointmentId: null, section: "note" });
+
+  const section =
+    sectionState.appointmentId === activeId ? sectionState.section : "note";
+  const openSection = useCallback(
+    (next: ConsultationSection) =>
+      setSectionState({ appointmentId: activeId, section: next }),
+    [activeId],
+  );
+
   return (
     /*
       The shell now owns the viewport height (h-screen + overflow-hidden on the
@@ -236,6 +262,8 @@ export default function DoctorWorkstation() {
             key={detailForSelection.visit.appointment_id}
             detail={detailForSelection}
             loading={detailLoading}
+            section={section}
+            onSectionChange={openSection}
           />
         ) : (
           <DoctorPatientPanel
@@ -252,6 +280,10 @@ export default function DoctorWorkstation() {
           <DoctorOrderRail
             visitState={detailForSelection?.visit.state ?? null}
             encounterName={detailForSelection?.encounter?.name ?? null}
+            diagnosisActive={consultationOpen && section === "diagnosis"}
+            onOpenDiagnosis={
+              consultationOpen ? () => openSection("diagnosis") : null
+            }
           />
         </div>
       </div>

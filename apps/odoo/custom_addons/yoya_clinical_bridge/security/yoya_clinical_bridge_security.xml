@@ -295,5 +295,127 @@
             <field name="perm_unlink" eval="True"/>
         </record>
 
+        <!-- ============================================================
+             hospital.patient.diagnosis
+             ============================================================
+
+             THE STATE THIS INHERITS. hospital_management ships ACL rows for
+             this model and NO record rules whatsoever, so before this module
+             every role holding a read ACL saw every diagnosis in the hospital,
+             and Hospital Nurse held perm_create. The rules below give each
+             role a deliberate scope; the ACL override underneath corrects a
+             permission that was simply wrong.
+
+             THIS NARROWS EXISTING ACCESS. A doctor previously saw the whole
+             hospital's diagnoses in the Odoo backend and now sees their own.
+             That is the intended correction, not a side effect.
+        -->
+
+        <record id="rule_patient_diagnosis_doctor" model="ir.rule">
+            <field name="name">Patient Diagnosis: my patients (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_patient_diagnosis"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!--
+                Three ways a diagnosis is legitimately this doctor's: they
+                recorded it, it belongs to a visit assigned to them, or it
+                belongs to a consultation they are conducting. The third branch
+                is what makes a diagnosis reachable in the same request that
+                creates it, before physician_id has been read back.
+
+                DELIBERATELY NOT A PATIENT-WIDE READ. Showing a doctor every
+                past diagnosis for any patient they are treating is a HISTORY
+                feature with its own consent and confidentiality questions, and
+                it is a later slice. Scoping tightly now is the conservative
+                direction: widening later is a decision, narrowing later is a
+                regression someone has already relied on.
+            -->
+            <field name="domain_force">
+                ['|', '|',
+                    ('physician_id.user_id', '=', user.id),
+                    ('appointment_id.doctor_id.user_id', '=', user.id),
+                    ('consultation_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_patient_diagnosis_manager" model="ir.rule">
+            <field name="name">Patient Diagnosis: all (manager / system administrator)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_patient_diagnosis"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_patient_diagnosis_dpo" model="ir.rule">
+            <field name="name">Patient Diagnosis: full read for oversight (data protection officer)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_patient_diagnosis"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_data_protection_officer'))]"/>
+            <!-- Same mandate, and the same read-only ACL, the DPO already has
+                 on evaluations and consultations. -->
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_patient_diagnosis_no_clinical_access" model="ir.rule">
+            <field name="name">Patient Diagnosis: no access (nursing / front office / finance / pharmacy / laboratory)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_patient_diagnosis"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_nurse')), (4, ref('hospital_management.group_hospital_receptionist')), (4, ref('hospital_management.group_hospital_pharmacist')), (4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_accountant')), (4, ref('hospital_billing.group_hospital_cashier')), (4, ref('hospital_billing.group_hospital_insurance_officer'))]"/>
+            <!--
+                UNLIKE the consultation clamp, this one is doing real work
+                today: hospital_management grants Hospital Nurse and Hospital
+                Receptionist a read ACL on this model, so without this rule they
+                would read every diagnosis in the hospital.
+
+                THE DOMAIN IS STRUCTURALLY EMPTY, not configuration-dependent.
+                Slice 1's nurse rule kept the front desk out only because a
+                front desk nurse happened to have no permitted departments,
+                which any unrelated workflow change could have undone.
+                [(0,'=',1)] cannot be undone by configuration.
+
+                Front Desk Nurse is covered without being named: it IMPLIES
+                Hospital Nurse. It also could not be named here, because it is
+                declared in yoya_reception_bridge, which depends on this module.
+
+                Safe for multi-role users: rules OR, so a manager (who implies
+                receptionist and nurse) still gets the unrestricted manager rule
+                above, and a doctor still gets the doctor rule.
+            -->
+            <field name="domain_force">[(0, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <!-- ============================================================
+             ACL corrections on hospital_management's diagnosis rows
+             ============================================================
+
+             Referenced by their full external id so this module amends the
+             existing row rather than adding a competing one, because ACLs UNION
+             across rows, so a second row could only ever widen access. Same
+             technique hospital_billing_accounting uses to amend groups it does
+             not own.
+        -->
+
+        <record id="hospital_management.access_hospital_patient_diagnosis_nurse" model="ir.model.access">
+            <!-- Hospital Nurse shipped with perm_create=1 on diagnoses. Making
+                 a diagnosis is a physician's act; nursing observations belong
+                 on hospital.patient.evaluation, which nurses own outright. The
+                 read bit is left in place so no existing screen hard-errors,
+                 and the clamp rule above reduces what it returns to nothing. -->
+            <field name="perm_create" eval="False"/>
+        </record>
+
     </data>
 </odoo>

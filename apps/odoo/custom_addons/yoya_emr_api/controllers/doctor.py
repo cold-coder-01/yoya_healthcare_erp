@@ -69,10 +69,15 @@ from odoo.addons.yoya_clinical_bridge.models.consultation import (
     CONSULTATION_APPOINTMENT_STATE,
     ConsultationConflict,
 )
+from odoo.addons.yoya_clinical_bridge.models.patient_diagnosis import (
+    DIAGNOSIS_EDITABLE_FIELDS,
+    DiagnosisPrimaryConflict,
+)
 
 from ..services.api_response import (
     ApiError,
     api_error_response,
+    coerce_optional_id,
     coerce_text,
     error_response,
     parse_date,
@@ -87,6 +92,12 @@ from ..services.clinical_scope import (
 from ..services.consultation_serializers import (
     CONSULTATION_NARRATIVE_FIELDS,
     serialize_consultation_envelope,
+)
+from ..services.diagnosis_serializers import (
+    CATALOGUE_DEFAULT_LIMIT,
+    CATALOGUE_MAX_LIMIT,
+    serialize_diagnosis_list,
+    serialize_disease,
 )
 from ..services.doctor_serializers import (
     STAGE_KEYS,
@@ -154,6 +165,25 @@ CONSULTATION_NOT_STARTED_REASON = (
     "consultation to open the clinical note."
 )
 
+# Ownership and derived columns on hospital.patient.diagnosis. Every one of
+# these is resolved from the consultation server-side, so a client sending one
+# has misunderstood the contract badly enough to be worth telling.
+DIAGNOSIS_PROTECTED_FIELDS = frozenset(
+    {
+        "id",
+        "patient_id",
+        "encounter_id",
+        "consultation_id",
+        "appointment_id",
+        "physician_id",
+        "active",
+        "editable",
+        "disease_code",
+        "category_id",
+        "diagnosis_date",
+    }
+)
+
 
 class ConsultationResponseError(Exception):
     """The consultation started, but its success response could not be built.
@@ -183,6 +213,19 @@ class ConsultationNoteResponseError(Exception):
     Like its sibling, by the time this reaches the handler the savepoint has
     already rolled the write back, so "your note was not saved" is a statement
     of fact.
+    """
+
+
+class DiagnosisResponseError(Exception):
+    """The diagnosis was written, but its response could not be built.
+
+    A third response-failure type for the same reason the second exists: the
+    sentence has to match the act. Telling a doctor their consultation note
+    failed to save, when what actually failed was the confirmation of a
+    diagnosis they added, would send them to the wrong screen to recover.
+
+    By the time this reaches the handler the savepoint has already rolled the
+    write back, so "nothing was recorded" is a statement of fact.
     """
 
 
@@ -233,10 +276,24 @@ def doctor_endpoint(func):
                 "could not be produced. Nothing was changed. Please retry.",
                 500,
             )
+        except DiagnosisResponseError:
+            return error_response(
+                "diagnosis_response_failed",
+                "The diagnosis was not recorded because the confirmation could "
+                "not be produced. Nothing was changed. Please retry.",
+                500,
+            )
         except ConsultationConflict as error:
             # The model's own sentence: it tells the doctor to reload rather
             # than retry blindly, which is the only safe recovery for free text.
             return error_response("consultation_conflict", str(error), 409)
+        except DiagnosisPrimaryConflict as error:
+            # Also a UserError subclass, so it needs its own branch above the
+            # broad handler for the same reason ConsultationConflict does. 409
+            # rather than 422 because the doctor CAN resolve it -- by demoting
+            # the existing primary -- and the message names which one holds the
+            # slot.
+            return error_response("diagnosis_primary_exists", str(error), 409)
         except AccessError as error:
             # Reaching here means the AUTHORIZATION path denied the caller --
             # scope, the desk gate, or _assert_may_start_consultation.
@@ -353,6 +410,104 @@ def _load_consultation(env, appointment):
             500,
         )
     return consultation
+
+
+def _load_open_consultation(env, appointment):
+    """The consultation a diagnosis may be written into.
+
+    Every diagnosis mutation needs the SAME three answers -- the visit has
+    started, its consultation exists, and it is still open -- so they are
+    resolved once here rather than restated at four call sites where they could
+    drift apart.
+
+    The freeze is checked again inside the model for every channel; this only
+    decides the status code the desk sees.
+    """
+    if appointment.state != CONSULTATION_APPOINTMENT_STATE:
+        raise ApiError(
+            "consultation_not_available", CONSULTATION_NOT_STARTED_REASON, 409
+        )
+    consultation = _load_consultation(env, appointment)
+    if consultation.state != "draft":
+        raise ApiError(
+            "consultation_completed",
+            "This consultation is completed and its diagnoses are locked.",
+            409,
+        )
+    return consultation
+
+
+def _load_diagnosis(env, consultation, diagnosis_id):
+    """One diagnosis, resolved through the caller's own rules AND this visit.
+
+    THE CONSULTATION CHECK IS NOT REDUNDANT with the record rule. The doctor
+    rule admits every diagnosis this doctor authored, across all their
+    patients; without the consultation filter, a diagnosis id from one visit
+    could be edited through another visit's URL. That would still be the
+    doctor's own record, so no rule would object -- but it would be filed and
+    displayed against the wrong consultation.
+
+    A diagnosis outside this consultation reads as not found rather than
+    forbidden, so the endpoint cannot be used to probe which ids exist.
+    """
+    diagnosis = env["hospital.patient.diagnosis"].browse(diagnosis_id).exists()
+    if not diagnosis or diagnosis.consultation_id != consultation:
+        raise ApiError(
+            "diagnosis_not_found",
+            "Diagnosis not found for this consultation.",
+            404,
+        )
+    return diagnosis
+
+
+def _diagnosis_payload(env, consultation):
+    """The whole diagnosis list, re-read from the database.
+
+    Every mutation answers with the full list rather than the row it touched:
+    adding a primary changes what the OTHER rows may become, and removing one
+    frees the primary slot, so a single-row response would leave the desk
+    holding a stale picture of the rest.
+    """
+    consultation.invalidate_recordset()
+    diagnoses = env["hospital.patient.diagnosis"].for_consultation(consultation)
+    return serialize_diagnosis_list(diagnoses, consultation.state == "draft")
+
+
+def _build_diagnosis_values(body, require_type):
+    """The clinical fields, and nothing that decides ownership.
+
+    Patient, encounter, appointment, consultation and physician are derived
+    server-side from the consultation record. A client that sends one of them
+    is told so by name rather than having it silently dropped, which is what
+    stops a frontend believing it had reassigned a diagnosis.
+    """
+    provided = set(body)
+    provided.discard("disease_id")
+    provided.discard("request_token")
+
+    protected = provided & DIAGNOSIS_PROTECTED_FIELDS
+    if protected:
+        raise ApiError(
+            "protected_field",
+            "These fields cannot be written directly: %s."
+            % ", ".join(sorted(protected)),
+            400,
+        )
+
+    unknown = provided - set(DIAGNOSIS_EDITABLE_FIELDS)
+    if unknown:
+        raise ApiError(
+            "unknown_field", "Unrecognised fields: %s." % ", ".join(sorted(unknown)), 400
+        )
+
+    if require_type and not body.get("diagnosis_type"):
+        raise ApiError(
+            "invalid_field",
+            "'diagnosis_type' is required when recording a diagnosis.",
+            400,
+        )
+
+    return {key: body[key] for key in provided}
 
 
 def _limit_param(raw):
@@ -794,5 +949,235 @@ class YoyaEmrDoctorController(http.Controller):
                     env.uid,
                 )
                 raise ConsultationNoteResponseError(str(error)) from error
+
+        return response
+
+    # ------------------------------------------------------------------
+    # 7. Disease catalogue -- read
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/catalogue/diseases",
+        type="http", auth="user", methods=["GET"], csrf=False,
+    )
+    @doctor_endpoint
+    def diagnosis_catalogue(self, **params):
+        """Search the disease catalogue. READ ONLY, and bounded in SQL.
+
+        Without a server-side limit the first render of a diagnosis picker
+        would pull every disease row over the wire and leave the trimming to
+        JavaScript -- a table dump with extra steps, which gets slower exactly
+        as the catalogue becomes useful. `limit` is CLAMPED, so a client cannot
+        opt out of the cap.
+
+        This is reference data with no patient in it, so there is nothing to
+        scope: hospital_management already grants Hospital Doctor read on
+        hospital.disease, and nothing here widens that.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+
+        search = (params.get("q") or "").strip()
+        limit = CATALOGUE_DEFAULT_LIMIT
+        if params.get("limit"):
+            limit = max(
+                1,
+                min(parse_int_param("limit", params["limit"]), CATALOGUE_MAX_LIMIT),
+            )
+
+        domain = []
+        if search:
+            domain = ["|", ("name", "ilike", search), ("code", "ilike", search)]
+
+        diseases = env["hospital.disease"].search(domain, limit=limit, order="name")
+        return success_response(
+            {
+                "diseases": [serialize_disease(disease) for disease in diseases],
+                "query": search or None,
+                "limit": limit,
+                # Honest about the cap, so the desk can say "refine your
+                # search" rather than implying these are all the matches.
+                "truncated": len(diseases) == limit,
+            }
+        )
+
+    # ------------------------------------------------------------------
+    # 8. Consultation diagnoses -- read
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>/diagnoses",
+        type="http", auth="user", methods=["GET"], csrf=False,
+    )
+    @doctor_endpoint
+    def diagnosis_list(self, appointment_id, **params):
+        """The diagnoses recorded in this visit's consultation. Pure read.
+
+        KEYED ON THE CONSULTATION, NOT ON THE APPOINTMENT STATE.
+
+        This previously short-circuited to an empty list whenever the visit was
+        not `in_consultation`, which contradicted its own docstring: the moment
+        the consultation was completed and the appointment moved to `done`, the
+        diagnoses recorded during it vanished from the desk. That is precisely
+        when a clinician most often re-reads them.
+
+        The three cases are now distinguished by whether a consultation exists
+        and what state it is in, which is the only thing that actually governs
+        the answer:
+
+          no consultation (pre-start)   -> empty, editable false
+          consultation, state draft     -> diagnoses, editable true
+          consultation, state completed -> diagnoses, editable FALSE
+
+        find_for_appointment() is the pure lookup and never opens anything, so
+        a visit that has not started still creates no clinical record by being
+        read. The MUTATION gates are untouched and still demand an open draft
+        consultation -- `editable` is an affordance, and the model refuses a
+        frozen write regardless of what it says.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+
+        appointment = _load_visit(env, appointment_id)
+        consultation = env["hospital.consultation"].find_for_appointment(appointment)
+        if not consultation:
+            return success_response(
+                {"diagnoses": [], "editable": False, "has_primary": False}
+            )
+
+        diagnoses = env["hospital.patient.diagnosis"].for_consultation(consultation)
+        return success_response(
+            serialize_diagnosis_list(diagnoses, consultation.state == "draft")
+        )
+
+    # ------------------------------------------------------------------
+    # 9. Consultation diagnoses -- record
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>/diagnoses",
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @doctor_endpoint
+    def diagnosis_add(self, appointment_id, **params):
+        """Record a diagnosis. Ownership is derived, never supplied.
+
+        The controller resolves the visit, the consultation and the disease
+        through the CALLER's own record rules and hands three records to one
+        model method. It does not stamp the patient, does not resolve the
+        encounter, does not check the primary invariant, does not check the
+        freeze and does not sudo(): all of those belong to
+        add_to_consultation(), which enforces them for the Odoo form and any
+        RPC caller too.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+
+        appointment = _load_visit(env, appointment_id)
+        body = read_json_body()
+        values = _build_diagnosis_values(body, require_type=True)
+
+        disease_id = coerce_optional_id("disease_id", body.get("disease_id"))
+        if not disease_id:
+            raise ApiError("invalid_field", "'disease_id' is required.", 400)
+        request_token = coerce_text("request_token", body.get("request_token"))
+
+        consultation = _load_open_consultation(env, appointment)
+
+        disease = env["hospital.disease"].browse(disease_id).exists()
+        if not disease:
+            raise ApiError(
+                "disease_not_found", "Diagnosis not found in the catalogue.", 404
+            )
+
+        with env.cr.savepoint():
+            env["hospital.patient.diagnosis"].add_to_consultation(
+                consultation, disease, values, request_token=request_token or None
+            )
+            try:
+                response = success_response(_diagnosis_payload(env, consultation))
+            except Exception as error:
+                _logger.exception(
+                    "Doctor diagnosis add response failed for appointment=%s "
+                    "uid=%s; rolling the write back",
+                    appointment_id,
+                    env.uid,
+                )
+                raise DiagnosisResponseError(str(error)) from error
+
+        return response
+
+    # ------------------------------------------------------------------
+    # 10. Consultation diagnoses -- update
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>"
+        "/diagnoses/<int:diagnosis_id>/update",
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @doctor_endpoint
+    def diagnosis_update(self, appointment_id, diagnosis_id, **params):
+        """Edit a diagnosis while its consultation is open.
+
+        A POST action rather than PATCH, matching start-consultation and
+        consultation/save: this API is consistently action-shaped, and one REST
+        verb in a controller full of POST actions is a surprise, not a purity
+        win.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+
+        appointment = _load_visit(env, appointment_id)
+        values = _build_diagnosis_values(read_json_body(), require_type=False)
+        consultation = _load_open_consultation(env, appointment)
+        diagnosis = _load_diagnosis(env, consultation, diagnosis_id)
+
+        with env.cr.savepoint():
+            diagnosis.update_from_consultation(values)
+            try:
+                response = success_response(_diagnosis_payload(env, consultation))
+            except Exception as error:
+                _logger.exception(
+                    "Doctor diagnosis update response failed for diagnosis=%s "
+                    "uid=%s; rolling the write back",
+                    diagnosis_id,
+                    env.uid,
+                )
+                raise DiagnosisResponseError(str(error)) from error
+
+        return response
+
+    # ------------------------------------------------------------------
+    # 11. Consultation diagnoses -- remove
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>"
+        "/diagnoses/<int:diagnosis_id>/remove",
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @doctor_endpoint
+    def diagnosis_remove(self, appointment_id, diagnosis_id, **params):
+        """Remove a diagnosis from an open consultation.
+
+        The model ARCHIVES rather than deletes -- see remove_from_consultation().
+        The doctor sees the entry leave the consultation; the patient's
+        longitudinal record and the audit trail keep it.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+
+        appointment = _load_visit(env, appointment_id)
+        consultation = _load_open_consultation(env, appointment)
+        diagnosis = _load_diagnosis(env, consultation, diagnosis_id)
+
+        with env.cr.savepoint():
+            diagnosis.remove_from_consultation()
+            try:
+                response = success_response(_diagnosis_payload(env, consultation))
+            except Exception as error:
+                _logger.exception(
+                    "Doctor diagnosis remove response failed for diagnosis=%s "
+                    "uid=%s; rolling the write back",
+                    diagnosis_id,
+                    env.uid,
+                )
+                raise DiagnosisResponseError(str(error)) from error
 
         return response

@@ -20,6 +20,7 @@ import {
   handleRouteError,
   readJsonObject,
   requireOdooSession,
+  withQuery,
 } from "@/app/api/reception/_utils";
 
 export {
@@ -32,6 +33,10 @@ export {
   // duplicated here.
   readJsonObject,
   requireOdooSession,
+  // Used by the disease catalogue route to forward q/limit. It drops empty
+  // values rather than sending `q=`, which Odoo would otherwise treat as a
+  // search for the empty string.
+  withQuery,
 };
 
 /** Every Doctor Desk route hangs off this one Odoo prefix. */

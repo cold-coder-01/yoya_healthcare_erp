@@ -19,9 +19,14 @@ per encounter, opened only for a visit that has already reached
 completed nursing triage, an optimistic-concurrency token on every save and a
 post-completion clinical freeze.
 
+Extends ``hospital.patient.diagnosis`` with the encounter and consultation
+anchors it lacks, a diagnostic certainty axis independent of clinical status,
+a one-primary-per-consultation invariant enforced by a partial unique index,
+and the record rules that model shipped without.
+
 This module never modifies ``hospital_management`` or ``hospital_billing``.
 """,
-    "version": "18.0.1.1.0",
+    "version": "18.0.1.2.0",
     "category": "Healthcare",
     "author": "YOYA Healthcare",
     "license": "LGPL-3",

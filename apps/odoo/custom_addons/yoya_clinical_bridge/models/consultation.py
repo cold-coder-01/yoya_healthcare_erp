@@ -192,6 +192,24 @@ class HospitalConsultation(models.Model):
 
     active = fields.Boolean(default=True)
 
+    # Inverse of hospital.patient.diagnosis.consultation_id, added by this
+    # module. ondelete="restrict" on that side means a consultation carrying
+    # diagnoses cannot be deleted out from under them.
+    diagnosis_ids = fields.One2many(
+        "hospital.patient.diagnosis",
+        "consultation_id",
+        string="Diagnoses",
+    )
+    diagnosis_count = fields.Integer(
+        compute="_compute_diagnosis_count",
+        string="Diagnoses",
+    )
+
+    @api.depends("diagnosis_ids")
+    def _compute_diagnosis_count(self):
+        for consultation in self:
+            consultation.diagnosis_count = len(consultation.diagnosis_ids)
+
     # ------------------------------------------------------------------
     # THE cardinality invariant.
     #
