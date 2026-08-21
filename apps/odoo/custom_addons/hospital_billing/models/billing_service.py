@@ -61,7 +61,36 @@ class HospitalBillingService(models.Model):
         "At most one per company.",
     )
     fixed_fee = fields.Boolean(help="Quantity is always 1 and the price cannot be overridden per charge.")
-    prepayment_required = fields.Boolean()
+    prepayment_required = fields.Boolean(
+        default=True,
+        required=True,
+        help="Payment is required BEFORE this service is delivered. Charges "
+        "snapshot this as billing_basis='prepaid' and are gated by "
+        "check_financial_clearance().",
+        # DEFAULT True, AND REQUIRED, BECAUSE THE UNSAFE VALUE MUST NOT BE THE
+        # ONE YOU GET BY FORGETTING.
+        #
+        # This field was nullable with no default, and NULL is falsy. A service
+        # nobody had configured therefore snapshotted billing_basis='delivery',
+        # which contributes 0.00 to amount_due_for_clearance, which makes
+        # check_financial_clearance() return cleared -- so the test was
+        # performable with nothing paid.
+        #
+        # That is not hypothetical. Service 9 (Blood Glucose) reached UAT with
+        # prepayment_required NULL, and LABREQ0211 read READY FOR COLLECTION
+        # with its 150.00 charge unpaid: action_mark_sample_collected() gates on
+        # the same predicate and would not have raised.
+        #
+        # In a hospital that charges before service, the direction of a wrong
+        # default decides whether the failure is "an administrator is asked a
+        # question" or "the patient walks out without paying". Required removes
+        # the third state entirely; True makes the remaining accident safe.
+        #
+        # Deliberately NOT applied retroactively at runtime: the charge snapshot
+        # is immutable by design (see billing_engine.create_or_update_charge and
+        # the CHRG000063 note). Existing rows are reconciled once, by the
+        # 18.0.1.13.0 migration, under a strict not-yet-settled predicate.
+    )
     coverage_auth_required = fields.Boolean(
         string="Authorization Required",
         help="Charges for this service start in Pending authorization.",
