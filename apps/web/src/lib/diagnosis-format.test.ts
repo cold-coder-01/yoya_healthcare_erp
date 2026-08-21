@@ -68,8 +68,10 @@ test("note and diagnosis are the live sections after slice 2", () => {
   assert.equal(isLiveSection("diagnosis"), true);
 });
 
-test("orders, results and history remain inert", () => {
-  for (const key of ["orders", "results", "history"]) {
+test("results and history remain inert", () => {
+  // `orders` left this list in slice 3, when laboratory ordering shipped. The
+  // remaining two are the sections that still have no endpoint behind them.
+  for (const key of ["results", "history"]) {
     assert.equal(isLiveSection(key), false, key);
   }
 });

@@ -41,7 +41,10 @@ type ActionGroup = { title: string; items: string[] };
  * here as "Soon" would be the same kind of lie the "Open" badge used to be.
  */
 const ACTION_GROUPS: ActionGroup[] = [
-  { title: "Investigations", items: ["Laboratory", "Radiology", "Pathology"] },
+  // Laboratory is NOT here any more: it ships in this slice and is rendered
+  // above as a real control, so listing it as "Soon" would be the same kind of
+  // lie the old "Open" badge was.
+  { title: "Investigations", items: ["Radiology", "Pathology"] },
   { title: "Treatment", items: ["Medication", "Procedure", "Injection"] },
   {
     title: "Documentation",
@@ -70,11 +73,20 @@ export default function DoctorOrderRail({
   encounterName,
   diagnosisActive = false,
   onOpenDiagnosis = null,
+  laboratoryActive = false,
+  onOpenLaboratory = null,
 }: {
   visitState: string | null;
   encounterName: string | null;
   /** The centre panel is currently showing the Diagnosis section. */
   diagnosisActive?: boolean;
+  /** The centre panel is currently showing Orders. */
+  laboratoryActive?: boolean;
+  /**
+   * Focuses Orders > Laboratory. Null when there is no open consultation, so
+   * the control is absent rather than present and inert.
+   */
+  onOpenLaboratory?: (() => void) | null;
   /**
    * Focuses the Diagnosis section. Null when there is no open consultation to
    * focus, which is what keeps the control from existing at all rather than
@@ -111,7 +123,7 @@ export default function DoctorOrderRail({
             <span className="font-mono font-semibold">
               {encounterName ?? "this encounter"}
             </span>
-            . Diagnosis is available; ordering arrives in a later slice.
+            . Diagnosis and laboratory ordering are available.
           </p>
         ) : (
           <p className="text-[10px] leading-snug text-slate-600">
@@ -150,6 +162,23 @@ export default function DoctorOrderRail({
                 {diagnosisActive ? "Open" : "Record"}
               </span>
             </button>
+            {onOpenLaboratory ? (
+              <button
+                type="button"
+                onClick={onOpenLaboratory}
+                aria-current={laboratoryActive ? "true" : undefined}
+                className={`flex items-center justify-between gap-1.5 rounded border px-2 py-1.5 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-emerald-600 ${
+                  laboratoryActive
+                    ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                    : "border-slate-200 bg-white text-slate-700 hover:border-emerald-300 hover:bg-emerald-50/60"
+                }`}
+              >
+                <span className="truncate text-[11px] font-bold">Laboratory</span>
+                <span className="shrink-0 text-[8.5px] font-bold uppercase tracking-wide text-emerald-700">
+                  {laboratoryActive ? "Open" : "Order"}
+                </span>
+              </button>
+            ) : null}
           </div>
         ) : null}
 

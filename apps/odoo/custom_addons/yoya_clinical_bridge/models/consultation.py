@@ -205,10 +205,30 @@ class HospitalConsultation(models.Model):
         string="Diagnoses",
     )
 
+    # Inverse of hospital.laboratory.request.consultation_id, added by this
+    # module. ondelete="restrict" on that side means a consultation carrying
+    # laboratory orders cannot be deleted out from under them.
+    laboratory_request_ids = fields.One2many(
+        "hospital.laboratory.request",
+        "consultation_id",
+        string="Laboratory Orders",
+    )
+    laboratory_request_count = fields.Integer(
+        compute="_compute_laboratory_request_count",
+        string="Laboratory Orders",
+    )
+
     @api.depends("diagnosis_ids")
     def _compute_diagnosis_count(self):
         for consultation in self:
             consultation.diagnosis_count = len(consultation.diagnosis_ids)
+
+    @api.depends("laboratory_request_ids")
+    def _compute_laboratory_request_count(self):
+        for consultation in self:
+            consultation.laboratory_request_count = len(
+                consultation.laboratory_request_ids
+            )
 
     # ------------------------------------------------------------------
     # THE cardinality invariant.

@@ -19,7 +19,7 @@ import type {
 export const CONSULTATION_SECTIONS = [
   { key: "note", label: "Note", live: true },
   { key: "diagnosis", label: "Diagnosis", live: true },
-  { key: "orders", label: "Orders", live: false },
+  { key: "orders", label: "Orders", live: true },
   { key: "results", label: "Results", live: false },
   { key: "history", label: "History", live: false },
 ] as const;

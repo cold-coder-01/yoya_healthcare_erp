@@ -284,6 +284,10 @@ export default function DoctorWorkstation() {
             onOpenDiagnosis={
               consultationOpen ? () => openSection("diagnosis") : null
             }
+            laboratoryActive={consultationOpen && section === "orders"}
+            onOpenLaboratory={
+              consultationOpen ? () => openSection("orders") : null
+            }
           />
         </div>
       </div>

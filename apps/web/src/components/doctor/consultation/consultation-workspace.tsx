@@ -32,6 +32,7 @@ import { CONSULTATION_CONFLICT_CODE } from "@/types/doctor-consultation";
 import { PriorityBadge, StageBadge } from "../doctor-badges";
 import DoctorVitalsGrid from "../doctor-vitals-grid";
 import DiagnosisWorkspace from "./diagnosis-workspace";
+import OrdersWorkspace from "./orders-workspace";
 import ConsultationNoteEditor from "./note-editor";
 
 /**
@@ -481,7 +482,12 @@ export default function ConsultationWorkspace({
 
       {/* ---- Section body: THE only scrolling region ---- */}
       <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50/40 p-3">
-        {section === "diagnosis" ? (
+        {section === "orders" ? (
+          /* Keyed on the visit for the same reason the diagnosis list is: a
+             patient change must not carry one patient's orders onto another's
+             screen. */
+          <OrdersWorkspace key={appointmentId} appointmentId={appointmentId} />
+        ) : section === "diagnosis" ? (
           /*
             Keyed on the visit so a patient change cannot carry one patient's
             diagnosis list into another's screen, exactly as the parent keys
@@ -587,7 +593,9 @@ export default function ConsultationWorkspace({
               <span className="text-slate-500">
                 {section === "diagnosis"
                   ? "Diagnoses save as you record them"
-                  : "Note open for editing"}
+                  : section === "orders"
+                    ? "Orders are placed one at a time"
+                    : "Note open for editing"}
               </span>
             ) : (
               <span className="text-slate-500">Read-only</span>

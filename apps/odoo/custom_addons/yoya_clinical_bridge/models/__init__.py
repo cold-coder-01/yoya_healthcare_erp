@@ -4,3 +4,4 @@ from . import consultation
 # After consultation: both of these reference hospital.consultation.
 from . import hospital_appointment
 from . import patient_diagnosis
+from . import laboratory_request

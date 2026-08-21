@@ -417,5 +417,98 @@
             <field name="perm_create" eval="False"/>
         </record>
 
+        <!-- ============================================================
+             hospital.laboratory.request
+             ============================================================
+
+             THE STATE THIS INHERITS. hospital_management ships ACL rows for
+             the laboratory models and NO record rules, so before this module
+             every doctor could read and write every laboratory request in the
+             hospital. The rules below give the DOCTOR a deliberate scope.
+
+             WHAT IS DELIBERATELY LEFT ALONE. Laboratory Technician, Nurse,
+             Receptionist and the DPO get no rule here, so their access is
+             exactly what it was. That is not an oversight: a rule for a group
+             only ever narrows it, the bench's cross-patient worklist is the
+             point of the laboratory role, and narrowing the front office is a
+             separate decision that belongs with whoever owns those screens.
+             This slice tightens the one role it is adding a feature for.
+
+             Laboratory Technician IS given an explicit unrestricted rule even
+             though omitting it would have the same effect today, because the
+             consequence of getting this wrong is a bench that cannot see the
+             work it has been asked to do. Stating it means a future global
+             rule cannot quietly take it away.
+        -->
+
+        <record id="rule_laboratory_request_doctor" model="ir.rule">
+            <field name="name">Laboratory Request: my orders and my visits (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_laboratory_request"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!--
+                Three ways a request is legitimately this doctor's: they ordered
+                it, it belongs to a visit assigned to them, or it came from a
+                consultation they are conducting. The third branch is what makes
+                a request readable in the same transaction that creates it.
+            -->
+            <field name="domain_force">
+                ['|', '|',
+                    ('physician_id.user_id', '=', user.id),
+                    ('appointment_id.doctor_id.user_id', '=', user.id),
+                    ('consultation_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_laboratory_request_line_doctor" model="ir.rule">
+            <field name="name">Laboratory Request Line: follows the request (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_laboratory_request_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!-- Lines carry no patient of their own, so they inherit the
+                 request's scope rather than defining a second one that could
+                 drift away from it. -->
+            <field name="domain_force">
+                ['|', '|',
+                    ('request_id.physician_id.user_id', '=', user.id),
+                    ('request_id.appointment_id.doctor_id.user_id', '=', user.id),
+                    ('request_id.consultation_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_laboratory_request_operations" model="ir.rule">
+            <field name="name">Laboratory Request: all (laboratory technician / manager / system administrator)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_laboratory_request"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <!-- The bench works a cross-patient queue; scoping it would break
+                 the laboratory. Manager and administrator are named here for the
+                 usual reason: Manager IMPLIES Doctor, so without this rule the
+                 doctor scope above would silently become a manager's ceiling. -->
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_laboratory_request_line_operations" model="ir.rule">
+            <field name="name">Laboratory Request Line: all (laboratory technician / manager / system administrator)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_laboratory_request_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
     </data>
 </odoo>

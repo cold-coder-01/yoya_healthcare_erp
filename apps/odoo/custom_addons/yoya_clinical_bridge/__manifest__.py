@@ -24,9 +24,14 @@ anchors it lacks, a diagnostic certainty axis independent of clinical status,
 a one-primary-per-consultation invariant enforced by a partial unique index,
 and the record rules that model shipped without.
 
+Extends ``hospital.laboratory.request`` with a consultation anchor and a
+per-consultation idempotency token, so the Doctor Desk can place a laboratory
+order that runs the EXISTING ``action_confirm_request()`` workflow -- billing,
+coverage and clearance all stay where they already are.
+
 This module never modifies ``hospital_management`` or ``hospital_billing``.
 """,
-    "version": "18.0.1.2.0",
+    "version": "18.0.1.3.0",
     "category": "Healthcare",
     "author": "YOYA Healthcare",
     "license": "LGPL-3",

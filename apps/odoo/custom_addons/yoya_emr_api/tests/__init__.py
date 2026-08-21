@@ -8,3 +8,4 @@ from . import test_front_desk_worklist
 from . import test_doctor_desk_api
 from . import test_doctor_consultation_api
 from . import test_doctor_diagnosis_api
+from . import test_doctor_laboratory_api

@@ -73,6 +73,9 @@ from odoo.addons.yoya_clinical_bridge.models.patient_diagnosis import (
     DIAGNOSIS_EDITABLE_FIELDS,
     DiagnosisPrimaryConflict,
 )
+from odoo.addons.yoya_clinical_bridge.models.laboratory_request import (
+    LAB_ORDER_EDITABLE_FIELDS,
+)
 
 from ..services.api_response import (
     ApiError,
@@ -92,6 +95,12 @@ from ..services.clinical_scope import (
 from ..services.consultation_serializers import (
     CONSULTATION_NARRATIVE_FIELDS,
     serialize_consultation_envelope,
+)
+from ..services.laboratory_serializers import (
+    CATALOGUE_DEFAULT_LIMIT as LAB_CATALOGUE_DEFAULT_LIMIT,
+    CATALOGUE_MAX_LIMIT as LAB_CATALOGUE_MAX_LIMIT,
+    serialize_laboratory_orders,
+    serialize_laboratory_test,
 )
 from ..services.diagnosis_serializers import (
     CATALOGUE_DEFAULT_LIMIT,
@@ -185,6 +194,41 @@ DIAGNOSIS_PROTECTED_FIELDS = frozenset(
 )
 
 
+# Ownership and billing columns on hospital.laboratory.request. All are
+# derived server-side from the consultation, or owned entirely by
+# hospital_billing. A client sending one has misunderstood the contract badly
+# enough to be worth telling.
+LAB_ORDER_PROTECTED_FIELDS = frozenset(
+    {
+        "id",
+        "name",
+        "state",
+        "patient_id",
+        "physician_id",
+        "encounter_id",
+        "appointment_id",
+        "consultation_id",
+        "evaluation_id",
+        "treatment_plan_id",
+        "active",
+        "request_date",
+        "charge_line_ids",
+        "billing_blocked",
+    }
+)
+
+
+class LaboratoryResponseError(Exception):
+    """The laboratory order was placed, but its response could not be built.
+
+    Its own type, like every other response-failure on this surface, because
+    the sentences differ and a doctor told "the note was not saved" for a
+    failed lab order would go looking in the wrong place. By the time this
+    reaches the handler the savepoint has already rolled back the request, its
+    lines AND the charges hospital_billing raised at confirmation.
+    """
+
+
 class ConsultationResponseError(Exception):
     """The consultation started, but its success response could not be built.
 
@@ -273,6 +317,13 @@ def doctor_endpoint(func):
             return error_response(
                 "consultation_note_response_failed",
                 "Your consultation note was not saved because the confirmation "
+                "could not be produced. Nothing was changed. Please retry.",
+                500,
+            )
+        except LaboratoryResponseError:
+            return error_response(
+                "laboratory_response_failed",
+                "The laboratory order was not placed because the confirmation "
                 "could not be produced. Nothing was changed. Please retry.",
                 500,
             )
@@ -471,6 +522,55 @@ def _diagnosis_payload(env, consultation):
     consultation.invalidate_recordset()
     diagnoses = env["hospital.patient.diagnosis"].for_consultation(consultation)
     return serialize_diagnosis_list(diagnoses, consultation.state == "draft")
+
+
+def _load_laboratory_order(env, consultation, order_id):
+    """One laboratory order, through the caller's rules AND this consultation.
+
+    The consultation filter is not redundant with the record rule: the doctor
+    rule admits every request they ordered, across all their patients, so
+    without it an order id from one visit could be cancelled through another
+    visit's URL. An order outside this consultation reads as not found rather
+    than forbidden, so the endpoint cannot be used to probe which ids exist.
+    """
+    order = env["hospital.laboratory.request"].browse(order_id).exists()
+    if not order or order.consultation_id != consultation:
+        raise ApiError(
+            "laboratory_order_not_found",
+            "Laboratory order not found for this consultation.",
+            404,
+        )
+    return order
+
+
+def _laboratory_payload(env, consultation):
+    """The whole order list, re-read from the database after any mutation."""
+    consultation.invalidate_recordset()
+    orders = env["hospital.laboratory.request"].for_consultation(consultation)
+    return serialize_laboratory_orders(orders, consultation.state == "draft")
+
+
+def _build_laboratory_values(body):
+    """The doctor's clinical intent. Ownership and billing never cross here."""
+    provided = set(body)
+    for key in ("tests", "test_ids", "diagnosis_id", "request_token"):
+        provided.discard(key)
+
+    protected = provided & LAB_ORDER_PROTECTED_FIELDS
+    if protected:
+        raise ApiError(
+            "protected_field",
+            "These fields cannot be written directly: %s."
+            % ", ".join(sorted(protected)),
+            400,
+        )
+
+    unknown = provided - set(LAB_ORDER_EDITABLE_FIELDS)
+    if unknown:
+        raise ApiError(
+            "unknown_field", "Unrecognised fields: %s." % ", ".join(sorted(unknown)), 400
+        )
+    return {key: body[key] for key in provided}
 
 
 def _build_diagnosis_values(body, require_type):
@@ -1179,5 +1279,234 @@ class YoyaEmrDoctorController(http.Controller):
                     env.uid,
                 )
                 raise DiagnosisResponseError(str(error)) from error
+
+        return response
+
+    # ------------------------------------------------------------------
+    # 12. Laboratory test catalogue -- read
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/catalogue/laboratory-tests",
+        type="http", auth="user", methods=["GET"], csrf=False,
+    )
+    @doctor_endpoint
+    def laboratory_catalogue(self, **params):
+        """Search the laboratory test catalogue. READ ONLY, bounded in SQL.
+
+        Clinical and reference fields only. hospital.laboratory.test carries
+        billing_service_id once hospital_billing is installed -- the mapping
+        that decides what a test costs -- and it is never serialized.
+
+        Reference data with no patient in it, so there is nothing to scope:
+        hospital_management already grants Hospital Doctor read on
+        hospital.laboratory.test, and nothing here widens that.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+
+        search = (params.get("q") or "").strip()
+        limit = LAB_CATALOGUE_DEFAULT_LIMIT
+        if params.get("limit"):
+            limit = max(
+                1,
+                min(
+                    parse_int_param("limit", params["limit"]),
+                    LAB_CATALOGUE_MAX_LIMIT,
+                ),
+            )
+
+        model = env["hospital.laboratory.test"]
+        # ORDERABLE ONLY. The desk confirms on submission, and confirmation
+        # refuses the whole order if any test is unmapped or misconfigured --
+        # so offering one would offer an action this workflow deterministically
+        # refuses. The predicate is the model's, mirroring _assert_billable;
+        # this controller does not know what makes a test billable and does not
+        # decide it. Archived tests are excluded by the ORM's own active_test.
+        domain = model.doctor_orderable_domain()
+        if search:
+            domain = expression.AND(
+                [
+                    domain,
+                    ["|", ("name", "ilike", search), ("code", "ilike", search)],
+                ]
+            )
+
+        tests = model.search(domain, limit=limit, order="name")
+        return success_response(
+            {
+                "tests": [serialize_laboratory_test(test) for test in tests],
+                "query": search or None,
+                "limit": limit,
+                "truncated": len(tests) == limit,
+            }
+        )
+
+    # ------------------------------------------------------------------
+    # 13. Consultation laboratory orders -- read
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>/orders/laboratory",
+        type="http", auth="user", methods=["GET"], csrf=False,
+    )
+    @doctor_endpoint
+    def laboratory_order_list(self, appointment_id, **params):
+        """The laboratory orders placed in this visit's consultation.
+
+        Keyed on the CONSULTATION, not the appointment state, so orders stay
+        readable after the visit finishes -- which is exactly when a doctor
+        chases a pending result. `can_order` reports whether new orders may
+        still be placed.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+
+        appointment = _load_visit(env, appointment_id)
+        consultation = env["hospital.consultation"].find_for_appointment(appointment)
+        if not consultation:
+            return success_response({"orders": [], "can_order": False})
+
+        orders = env["hospital.laboratory.request"].for_consultation(consultation)
+        return success_response(
+            serialize_laboratory_orders(orders, consultation.state == "draft")
+        )
+
+    # ------------------------------------------------------------------
+    # 14. Consultation laboratory orders -- place
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>/orders/laboratory",
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @doctor_endpoint
+    def laboratory_order_create(self, appointment_id, **params):
+        """Place a laboratory order. THE CONTROLLER CREATES NO CHARGE.
+
+        It resolves the visit, the consultation, the tests and the optional
+        diagnosis through the CALLER's own record rules, then hands records to
+        one model method. Everything financial belongs to hospital_billing's
+        action_confirm_request() override, which create_from_consultation()
+        invokes: validating every test's billing configuration before raising
+        any charge, resolving the encounter, asserting patient/appointment/
+        encounter agreement, and creating one charge per ordered test
+        all-or-nothing.
+
+        ATOMICITY. The create, the confirmation, the charges it raises, the
+        reload and the response are ONE savepoint. A failure while serializing
+        must not leave a confirmed request with live charges behind a message
+        saying the order was not placed -- the doctor would re-order and the
+        patient would be billed twice.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+
+        appointment = _load_visit(env, appointment_id)
+        body = read_json_body()
+        values = _build_laboratory_values(body)
+
+        raw_tests = body.get("tests") or body.get("test_ids") or []
+        if not isinstance(raw_tests, list) or not raw_tests:
+            raise ApiError(
+                "invalid_field",
+                "'tests' must be a non-empty list of laboratory test ids.",
+                400,
+            )
+        test_ids = []
+        for entry in raw_tests:
+            # Accept either a bare id or {"test_id": n}, so the client may send
+            # the shape it already holds without reshaping it.
+            candidate = entry.get("test_id") if isinstance(entry, dict) else entry
+            test_id = coerce_optional_id("test_id", candidate)
+            if not test_id:
+                raise ApiError(
+                    "invalid_field", "Each entry in 'tests' needs a test id.", 400
+                )
+            test_ids.append(test_id)
+
+        diagnosis_id = coerce_optional_id("diagnosis_id", body.get("diagnosis_id"))
+        request_token = coerce_text("request_token", body.get("request_token"))
+
+        consultation = _load_open_consultation(env, appointment)
+
+        # DE-DUPLICATED BEFORE THE EXISTENCE CHECK. recordset.exists() preserves
+        # duplicate ids, so browsing [7, 7, 9] returns three records and a naive
+        # length comparison would report a perfectly valid test as missing. The
+        # model de-duplicates again when building the lines; this is about
+        # answering "does every id you sent exist", not about the ordered set.
+        unique_test_ids = list(dict.fromkeys(test_ids))
+        tests = env["hospital.laboratory.test"].browse(unique_test_ids).exists()
+        if len(tests) != len(unique_test_ids):
+            raise ApiError(
+                "laboratory_test_not_found",
+                "One or more laboratory tests were not found in the catalogue.",
+                404,
+            )
+
+        diagnosis = env["hospital.patient.diagnosis"].browse(diagnosis_id).exists()
+        if diagnosis_id and not diagnosis:
+            raise ApiError(
+                "diagnosis_not_found",
+                "Diagnosis not found for this consultation.",
+                404,
+            )
+
+        with env.cr.savepoint():
+            env["hospital.laboratory.request"].create_from_consultation(
+                consultation,
+                tests,
+                values,
+                diagnosis=diagnosis or None,
+                request_token=request_token or None,
+            )
+            try:
+                response = success_response(_laboratory_payload(env, consultation))
+            except Exception as error:
+                _logger.exception(
+                    "Doctor laboratory order response failed for appointment=%s "
+                    "uid=%s; rolling the request and its charges back",
+                    appointment_id,
+                    env.uid,
+                )
+                raise LaboratoryResponseError(str(error)) from error
+
+        return response
+
+    # ------------------------------------------------------------------
+    # 15. Consultation laboratory orders -- cancel
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>"
+        "/orders/laboratory/<int:order_id>/cancel",
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @doctor_endpoint
+    def laboratory_order_cancel(self, appointment_id, order_id, **params):
+        """Cancel a laboratory order through the model's own workflow.
+
+        The base transition guard permits cancellation only from draft or
+        requested and refuses a request carrying a validated or released
+        result; hospital_billing's override then cancels the operational
+        charges and refuses outright if any has been delivered. None of that is
+        reimplemented, and the refusal reaches the doctor with its own wording,
+        because that sentence is the only thing that says WHY.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+
+        appointment = _load_visit(env, appointment_id)
+        consultation = _load_open_consultation(env, appointment)
+        order = _load_laboratory_order(env, consultation, order_id)
+
+        with env.cr.savepoint():
+            order.cancel_from_consultation()
+            try:
+                response = success_response(_laboratory_payload(env, consultation))
+            except Exception as error:
+                _logger.exception(
+                    "Doctor laboratory cancel response failed for order=%s "
+                    "uid=%s; rolling the cancellation back",
+                    order_id,
+                    env.uid,
+                )
+                raise LaboratoryResponseError(str(error)) from error
 
         return response
