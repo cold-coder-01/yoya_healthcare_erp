@@ -7,6 +7,7 @@ import { hospitalToday } from "@/lib/clinical-format";
 import { newIdempotencyKey } from "@/lib/cashier-format";
 import type {
   ApiEnvelope,
+  CashierActiveServiceRow,
   CashierCapabilities,
   CashierPaymentMethod,
   CashierPaymentResult,
@@ -44,11 +45,16 @@ export default function CashierWorkstation() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
 
   const [rows, setRows] = useState<CashierWorklistRow[]>([]);
+  const [activeServiceRows, setActiveServiceRows] = useState<
+    CashierActiveServiceRow[]
+  >([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
+  const [activeCounts, setActiveCounts] = useState<Record<string, number>>({});
   const [capabilities, setCapabilities] = useState<CashierCapabilities | null>(
     null,
   );
   const [truncated, setTruncated] = useState(false);
+  const [activeTruncated, setActiveTruncated] = useState(false);
   const [queueLoading, setQueueLoading] = useState(true);
   const [queueError, setQueueError] = useState<string | null>(null);
 
@@ -91,16 +97,22 @@ export default function CashierWorkstation() {
 
         if (!response.ok || !payload.success || !payload.data) {
           setRows([]);
+          setActiveServiceRows([]);
           setQueueError(
             messageFromPayload(payload, "Unable to load the cashier queue."),
           );
           return;
         }
 
-        setRows(payload.data.rows);
+        // `initial_clearance` is the named lane; `rows` is its server-supplied
+        // alias, read only so an older gateway build still renders.
+        setRows(payload.data.initial_clearance ?? payload.data.rows ?? []);
+        setActiveServiceRows(payload.data.active_service_clearance ?? []);
         setCounts(payload.data.lane_counts ?? {});
+        setActiveCounts(payload.data.active_service_lane_counts ?? {});
         setCapabilities(payload.data.capabilities);
         setTruncated(payload.data.truncated);
+        setActiveTruncated(payload.data.active_service_truncated ?? false);
         setQueueError(null);
       } catch (error) {
         if (controller.signal.aborted) return;
@@ -232,9 +244,20 @@ export default function CashierWorkstation() {
     [selectedId],
   );
 
+  // The lane chips filter BOTH sections. `lane` here is the operational lane
+  // (collect / partial / blocked), which the server resolves identically for
+  // both queues -- it is not the initial/active distinction, which is
+  // structural and always visible.
   const laneRows = useMemo(
     () => (lane ? rows.filter((row) => row.lane === lane) : rows),
     [rows, lane],
+  );
+  const laneActiveRows = useMemo(
+    () =>
+      lane
+        ? activeServiceRows.filter((row) => row.lane === lane)
+        : activeServiceRows,
+    [activeServiceRows, lane],
   );
 
   const deniedDesk = capabilities !== null && !capabilities.cashier_desk;
@@ -264,7 +287,11 @@ export default function CashierWorkstation() {
           <div className="mt-1.5 flex flex-wrap gap-1">
             {LANES.map((entry) => {
               const active = lane === entry.key;
-              const count = entry.key ? (counts[entry.key] ?? 0) : rows.length;
+              // Both lanes, so the chip counts describe what the panel below
+              // actually contains.
+              const count = entry.key
+                ? (counts[entry.key] ?? 0) + (activeCounts[entry.key] ?? 0)
+                : rows.length + activeServiceRows.length;
               return (
                 <button
                   key={entry.key || "all"}
@@ -285,10 +312,12 @@ export default function CashierWorkstation() {
 
         <CashierQueue
           rows={laneRows}
+          activeServiceRows={laneActiveRows}
           selectedId={selectedId}
           loading={queueLoading}
           error={queueError}
           truncated={truncated}
+          activeServiceTruncated={activeTruncated}
           onSelect={handleSelect}
         />
       </section>

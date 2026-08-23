@@ -8,6 +8,8 @@ below closes that at model level, not in the API.
 from odoo import api, fields, models
 from odoo.exceptions import AccessError, UserError
 
+from odoo.addons.hospital_billing.models.charge_line import AMOUNT_TOLERANCE
+
 from .reception_capability import has_reception_workflow_capability
 
 G_MANAGER = "hospital_management.group_hospital_manager"
@@ -58,6 +60,40 @@ LEGACY_STAGE_BY_FRONT_DESK = {
     "completed": "completed",
     "cancelled": "cancelled",
 }
+
+# ----------------------------------------------------------------------
+# THE SECOND CASHIER LANE: ACTIVE SERVICE CLEARANCE.
+#
+# front_desk_stage answers ONE question -- where is this patient in the
+# pre-consultation handoff -- and it answers 'in_consultation' the moment care
+# starts, deliberately and correctly. Its 'awaiting_cashier' arm is not even
+# reached once the doctor has begun, because _resolve_front_desk_stage returns
+# on the appointment state first.
+#
+# That is why a charge raised DURING a consultation was invisible to the cashier
+# queue: laboratory today, and radiology, medication and procedures on exactly
+# the same billing path. The lab request rendered AWAITING CLEARANCE to the
+# doctor while the patient existed in no cashier queue at all.
+#
+# The fix is a SECOND LANE, not a wider stage. front_desk_stage keeps its
+# meaning, its vocabulary and its early return; the appointment stays
+# state='in_consultation' throughout; and no combined
+# 'in_consultation_awaiting_cashier' state is invented. Clinical state and
+# financial state are separate facts, and merging them is what would make one of
+# them a lie.
+#
+# Membership is derived from BILLING TRUTH ONLY -- no queue flag is written and
+# none is cleared, so a visit leaves this lane the instant the money it was
+# waiting on is received.
+# ----------------------------------------------------------------------
+ACTIVE_SERVICE_CLEARANCE_STATES = ("in_consultation",)
+
+# The charge states a live obligation can be in. Identical to the scope
+# hospital.billing.engine.check_financial_clearance sums over, so a charge this
+# lane names as blocking is a charge that engine really is blocking on.
+# Cancelled and reversed charges are absent here for that reason, not as a
+# separate policy.
+LIVE_CHARGE_STATES = ("draft", "active")
 
 
 class HospitalAppointment(models.Model):
@@ -246,6 +282,64 @@ class HospitalAppointment(models.Model):
         # No encounter yet (never confirmed): fall back to the appointment's own
         # signal, which is all that exists at that point.
         return bool(self.billing_blocked)
+
+    # ------------------------------------------------------------------
+    # Active service clearance
+    # ------------------------------------------------------------------
+    def _is_active_service_clearance_pending(self):
+        """Care is already under way AND money blocks the next service.
+
+        THE DISCOVERY PREDICATE FOR THE SECOND CASHIER LANE. It answers a
+        different question from front_desk_stage and does not touch it: the
+        appointment is and stays state='in_consultation', and nothing here is
+        written, mirrored or cached.
+
+        GENERIC BY CONSTRUCTION. It names no clinical model. The blocking
+        judgement is _is_payment_blocking(), which is encounter-wide live
+        clearance from hospital.billing.engine -- so a radiology, medication or
+        procedure charge raised mid-consultation surfaces here on the day it is
+        first raised, with no code added to this method or to the cashier API.
+
+        Emergency bypass and fully-authorized sponsorship both resolve to False
+        through _is_payment_blocking(), exactly as they do for
+        'awaiting_cashier'. One predicate, two lanes.
+
+        Scoped to in_consultation deliberately. A visit that has moved on to
+        'done' is no longer waiting on a service, and settling its residual is
+        the discharge/final-bill conversation rather than a service gate --
+        a different lane, which this one does not pre-empt.
+        """
+        self.ensure_one()
+        if self.state not in ACTIVE_SERVICE_CLEARANCE_STATES:
+            return False
+        if not self.encounter_id:
+            return False
+        return self._is_payment_blocking()
+
+    def _active_service_blocking_charges(self):
+        """The live charges whose unpaid patient side is holding this visit.
+
+        THE SAME SET the engine's cash arm sums, filtered by the SAME
+        per-charge figure: amount_due_for_clearance is already mode-aware
+        (patient residual under 'enforce', legacy gross otherwise) and already
+        zero for a delivery-basis charge, so no formula is restated here.
+
+        Used for presentation only -- which generic service categories the
+        cashier is collecting for, and how recently they were ordered.
+        _is_active_service_clearance_pending() remains the membership test; an
+        empty result here never removes a visit from the lane, because the
+        engine can block on grounds no single charge figure expresses (an
+        unauthorized sponsor share, for one).
+        """
+        self.ensure_one()
+        encounter = self.encounter_id
+        account = encounter.billing_account_id if encounter else None
+        if not account:
+            return self.env["hospital.charge.line"]
+        return account.charge_line_ids.filtered(
+            lambda line: line.charge_state in LIVE_CHARGE_STATES
+            and line.amount_due_for_clearance > AMOUNT_TOLERANCE
+        )
 
     # ------------------------------------------------------------------
     # Reception-workflow-only creation

@@ -116,6 +116,50 @@ export type CashierWorklistRow = {
   financially_cleared: boolean;
 };
 
+/**
+ * A generic billable category, from hospital.billing.service.service_type.
+ *
+ * Deliberately NOT a laboratory-specific field. The same key set covers
+ * radiology, medication and procedure charges, so the desk needs no new code
+ * when those order paths land.
+ */
+export type CashierServiceCategory = {
+  key: string;
+  label: string;
+};
+
+/**
+ * A row in the ACTIVE SERVICE CLEARANCE lane: a visit whose consultation is
+ * already under way and whose next service is held up by patient money.
+ *
+ * `visit_state` is the appointment's workflow state and stays "in_consultation"
+ * for as long as the row exists -- paying does not change it, and this desk
+ * never writes it. Nothing clinical is carried: no diagnosis, no indication, no
+ * note, no test name. `service_categories` is as specific as it gets, and it
+ * comes from the billing catalogue rather than from any clinical record.
+ */
+export type CashierActiveServiceRow = {
+  appointment_id: number;
+  appointment_code: string | null;
+  appointment_date: string | null;
+  visit_state: string;
+  lane: CashierLane;
+  patient: {
+    id: number;
+    name: string;
+    identification_code: string | null;
+  };
+  encounter_name: string | null;
+  patient_outstanding: number;
+  patient_paid: number;
+  responsibility_state: string | null;
+  blocking_reason: string;
+  blocking_reason_code: string;
+  service_categories: CashierServiceCategory[];
+  /** When the blocking charge was raised -- not when the visit opened. */
+  requested_at: string | null;
+};
+
 export type CashierCapabilities = {
   cashier_desk: boolean;
   record_payment: boolean;
@@ -124,13 +168,33 @@ export type CashierCapabilities = {
   authorize_sponsor: boolean;
 };
 
+/**
+ * The queue, in TWO lanes.
+ *
+ * `initial_clearance` is the pre-consultation handoff (front_desk_stage ==
+ * awaiting_cashier). `active_service_clearance` is money ordered DURING a
+ * consultation -- a lane that has to exist separately because front_desk_stage
+ * resolves to "in_consultation" on the appointment state before it ever
+ * consults money, which is what made those charges undiscoverable here.
+ *
+ * They are never concatenated. Clinical state and financial state are separate
+ * facts and the desk shows them as such.
+ *
+ * `rows` is a server-supplied ALIAS of `initial_clearance`, kept for older
+ * clients. Prefer the named lane.
+ */
 export type CashierWorklist = {
   date: string;
   stages: string[];
+  /** @deprecated Alias of `initial_clearance`. */
   rows: CashierWorklistRow[];
+  initial_clearance: CashierWorklistRow[];
+  active_service_clearance: CashierActiveServiceRow[];
   counts: Record<string, number>;
   lane_counts: Record<string, number>;
+  active_service_lane_counts: Record<string, number>;
   truncated: boolean;
+  active_service_truncated: boolean;
   capabilities: CashierCapabilities;
 };
 
