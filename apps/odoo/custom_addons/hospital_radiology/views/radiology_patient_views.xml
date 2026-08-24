@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_patient_form_inherit_radiology" model="ir.ui.view">
+        <field name="name">hospital.patient.form.inherit.radiology</field>
+        <field name="model">hospital.patient</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_patient_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button
+                    name="action_view_radiology_requests"
+                    type="object"
+                    class="oe_stat_button"
+                    icon="fa-file-image-o"
+                    invisible="not id"
+                >
+                    <field name="radiology_request_count" widget="statinfo" string="Radiology Requests"/>
+                </button>
+                <button
+                    name="action_view_radiology_results"
+                    type="object"
+                    class="oe_stat_button"
+                    icon="fa-check-square-o"
+                    invisible="not id"
+                >
+                    <field name="radiology_result_count" widget="statinfo" string="Radiology Results"/>
+                </button>
+            </xpath>
+
+            <xpath expr="//field[@name='laboratory_result_ids']/ancestor::page[1]" position="after">
+                <page string="Radiology Requests">
+                    <field name="radiology_request_ids" nolabel="1">
+                        <list string="Radiology Requests" editable="bottom">
+                            <field name="name" readonly="1"/>
+                            <field name="request_date"/>
+                            <field name="physician_id"/>
+                            <field name="diagnosis_id"/>
+                            <field name="priority"/>
+                            <field name="state" readonly="1"/>
+                            <field name="clinical_indication"/>
+                        </list>
+                    </field>
+                </page>
+                <page string="Radiology Results">
+                    <field name="radiology_result_ids" nolabel="1">
+                        <list string="Radiology Results" editable="bottom">
+                            <field name="name" readonly="1"/>
+                            <field name="result_date"/>
+                            <field name="request_id"/>
+                            <field name="physician_id"/>
+                            <field name="radiologist_id"/>
+                            <field name="state" readonly="1"/>
+                            <field name="impression"/>
+                        </list>
+                    </field>
+                </page>
+            </xpath>
+        </field>
+    </record>
+</odoo>

@@ -1,0 +1,23 @@
+{
+    "name": "Hospital Radiology",
+    "summary": "Radiology request and result workflow for Ethiopian Hospital ERP",
+    "version": "18.0.1.0.0",
+    "category": "Healthcare",
+    "author": "Ethiopian Hospital ERP",
+    "license": "LGPL-3",
+    "depends": ["hospital_management"],
+    "data": [
+        "security/ir.model.access.csv",
+        "data/radiology_sequence.xml",
+        "views/radiology_request_views.xml",
+        "views/radiology_result_views.xml",
+        "views/radiology_patient_views.xml",
+        "views/radiology_menus.xml",
+        "reports/radiology_request_template.xml",
+        "reports/radiology_request_report.xml",
+        "reports/radiology_result_template.xml",
+        "reports/radiology_result_report.xml",
+    ],
+    "application": True,
+    "installable": True,
+}

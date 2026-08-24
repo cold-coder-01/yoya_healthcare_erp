@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo noupdate="1">
+    <record id="seq_hospital_radiology_request" model="ir.sequence">
+        <field name="name">Radiology Request Sequence</field>
+        <field name="code">hospital.radiology.request.sequence</field>
+        <field name="prefix">RADREQ</field>
+        <field name="padding">4</field>
+        <field name="number_next">1</field>
+        <field name="number_increment">1</field>
+    </record>
+
+    <record id="seq_hospital_radiology_result" model="ir.sequence">
+        <field name="name">Radiology Result Sequence</field>
+        <field name="code">hospital.radiology.result.sequence</field>
+        <field name="prefix">RADRES</field>
+        <field name="padding">4</field>
+        <field name="number_next">1</field>
+        <field name="number_increment">1</field>
+    </record>
+</odoo>
