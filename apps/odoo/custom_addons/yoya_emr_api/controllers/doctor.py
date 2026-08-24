@@ -77,6 +77,9 @@ from odoo.addons.yoya_clinical_bridge.models.patient_diagnosis import (
 from odoo.addons.yoya_clinical_bridge.models.laboratory_request import (
     LAB_ORDER_EDITABLE_FIELDS,
 )
+from odoo.addons.yoya_clinical_bridge.models.radiology_request import (
+    RAD_ORDER_EDITABLE_FIELDS,
+)
 
 from ..services.api_response import (
     ApiError,
@@ -102,6 +105,12 @@ from ..services.laboratory_serializers import (
     CATALOGUE_MAX_LIMIT as LAB_CATALOGUE_MAX_LIMIT,
     serialize_laboratory_orders,
     serialize_laboratory_test,
+)
+from ..services.radiology_serializers import (
+    CATALOGUE_DEFAULT_LIMIT as RAD_CATALOGUE_DEFAULT_LIMIT,
+    CATALOGUE_MAX_LIMIT as RAD_CATALOGUE_MAX_LIMIT,
+    serialize_radiology_exam,
+    serialize_radiology_orders,
 )
 from ..services.diagnosis_serializers import (
     CATALOGUE_DEFAULT_LIMIT,
@@ -219,6 +228,39 @@ LAB_ORDER_PROTECTED_FIELDS = frozenset(
 )
 
 
+# Ownership and billing columns on hospital.radiology.request. All are derived
+# server-side from the consultation, or owned entirely by hospital_billing. A
+# client sending one has misunderstood the contract badly enough to be worth
+# telling.
+#
+# `evaluation_id` appears here for the same reason it does on the laboratory
+# set: hospital.radiology.request offers it as a second clinical anchor with an
+# onchange that overwrites patient and physician from it, so accepting one from
+# a browser would let a client re-point an order's ownership through the back
+# door.
+RAD_ORDER_PROTECTED_FIELDS = frozenset(
+    {
+        "id",
+        "name",
+        "state",
+        "patient_id",
+        "physician_id",
+        "encounter_id",
+        "appointment_id",
+        "consultation_id",
+        "evaluation_id",
+        "active",
+        "request_date",
+        "completed_at",
+        "completed_by_id",
+        "line_ids",
+        "result_ids",
+        "charge_line_ids",
+        "billing_blocked",
+    }
+)
+
+
 class LaboratoryResponseError(Exception):
     """The laboratory order was placed, but its response could not be built.
 
@@ -227,6 +269,21 @@ class LaboratoryResponseError(Exception):
     failed lab order would go looking in the wrong place. By the time this
     reaches the handler the savepoint has already rolled back the request, its
     lines AND the charges hospital_billing raised at confirmation.
+    """
+
+
+class RadiologyResponseError(Exception):
+    """The radiology order was placed, but its response could not be built.
+
+    Its own type, separate from LaboratoryResponseError, for the reason every
+    other response-failure on this surface has one: the sentences differ. A
+    doctor told "the laboratory order was not placed" after an imaging
+    submission would go looking at the wrong bench for an order that does not
+    exist in either place.
+
+    By the time this reaches the handler the savepoint has already rolled back
+    the request, its lines AND the charges hospital_billing raised at
+    confirmation.
     """
 
 
@@ -343,6 +400,13 @@ def doctor_endpoint(func):
             return error_response(
                 "laboratory_response_failed",
                 "The laboratory order was not placed because the confirmation "
+                "could not be produced. Nothing was changed. Please retry.",
+                500,
+            )
+        except RadiologyResponseError:
+            return error_response(
+                "radiology_response_failed",
+                "The radiology order was not placed because the confirmation "
                 "could not be produced. Nothing was changed. Please retry.",
                 500,
             )
@@ -617,6 +681,110 @@ def _build_laboratory_values(body):
             "unknown_field", "Unrecognised fields: %s." % ", ".join(sorted(unknown)), 400
         )
     return {key: body[key] for key in provided}
+
+
+def _load_radiology_order(env, consultation, order_id):
+    """One radiology order, through the caller's rules AND this consultation.
+
+    The consultation filter is not redundant with the record rule: the doctor
+    rule admits every request they ordered, across all their patients, so
+    without it an order id from one visit could be cancelled through another
+    visit's URL. An order outside this consultation reads as not found rather
+    than forbidden, so the endpoint cannot be used to probe which ids exist.
+    """
+    order = env["hospital.radiology.request"].browse(order_id).exists()
+    if not order or order.consultation_id != consultation:
+        raise ApiError(
+            "radiology_order_not_found",
+            "Radiology order not found for this consultation.",
+            404,
+        )
+    return order
+
+
+def _radiology_payload(env, consultation):
+    """The whole order list, re-read from the database after any mutation."""
+    consultation.invalidate_recordset()
+    orders = env["hospital.radiology.request"].for_consultation(consultation)
+    return serialize_radiology_orders(orders, consultation.state == "draft")
+
+
+def _build_radiology_values(body):
+    """The doctor's clinical intent. Ownership and billing never cross here."""
+    provided = set(body)
+    for key in ("exams", "exam_ids", "diagnosis_id", "request_token"):
+        provided.discard(key)
+
+    protected = provided & RAD_ORDER_PROTECTED_FIELDS
+    if protected:
+        raise ApiError(
+            "protected_field",
+            "These fields cannot be written directly: %s."
+            % ", ".join(sorted(protected)),
+            400,
+        )
+
+    unknown = provided - set(RAD_ORDER_EDITABLE_FIELDS)
+    if unknown:
+        raise ApiError(
+            "unknown_field", "Unrecognised fields: %s." % ", ".join(sorted(unknown)), 400
+        )
+    return {key: body[key] for key in provided}
+
+
+def _require_request_token(body, duplicate_consequence):
+    """The idempotency token is MANDATORY on every Doctor Desk create.
+
+    ONE VALIDATOR FOR ALL THREE MUTATIONS -- diagnoses, laboratory orders and
+    radiology orders. They had three subtly different tolerances before this,
+    which is exactly how a contract rots: the same client mistake was a silent
+    duplicate on one endpoint and a refusal on another, and no reader could tell
+    which without opening all three. The only thing that varies below is the
+    sentence describing what a duplicate would COST, because that is genuinely
+    endpoint-specific and is the half of the message a developer acts on.
+
+    WHY THIS IS A REFUSAL AND NOT A DEFAULT. All three models carry the same
+    shape: an OPTIONAL request_token column and a PARTIAL unique index,
+    `WHERE consultation_id IS NOT NULL AND request_token IS NOT NULL`. A NULL
+    token is therefore deduplicated by nothing -- not by the index, which does
+    not cover it, and not by the model's own lookup, which each of the three
+    service methods skips entirely when no token is supplied. A tokenless
+    submission is a submission with no replay protection at all.
+
+    Minting one server-side would be worse than refusing. A token the SERVER
+    invented is different on every attempt, so it would satisfy the column while
+    protecting nothing -- the retry would still duplicate, and the index would
+    certify that it was fine. The token has to come from the client precisely
+    because the client is the only party that knows two requests are the same
+    submission.
+
+    THIS IS AN API CONTRACT, NOT A MODEL RULE. The columns stay optional and the
+    indexes stay partial, because all three models are legitimately created
+    outside this API: at the laboratory or imaging department, from the Odoo
+    form, by a scheduled job. Those callers have no submission to identify and
+    must not be forced to invent one. Every service method therefore keeps
+    accepting request_token=None; only these endpoints insist.
+
+    NOT NORMALISED, ONLY VALIDATED. The token is an opaque client string and is
+    stored exactly as sent. Trimming it here would silently merge two tokens the
+    client considers distinct, which is the same class of mistake as minting
+    one. Blank-after-strip is refused rather than trimmed, because whitespace is
+    not an identifier.
+
+    A wrong TYPE is reported as invalid_field by coerce_text, not as a missing
+    token: sending 42 is a different client bug from sending nothing, and one
+    error code for both would send the wrong developer to the wrong line.
+    """
+    token = coerce_text("request_token", body.get("request_token"))
+    if not token or not token.strip():
+        raise ApiError(
+            "missing_request_token",
+            "'request_token' is required and must be a non-empty string. It is "
+            "what makes a retried submission return the existing record instead "
+            "of %s." % duplicate_consequence,
+            400,
+        )
+    return token
 
 
 def _build_diagnosis_values(body, require_type):
@@ -1395,6 +1563,10 @@ class YoyaEmrDoctorController(http.Controller):
         freeze and does not sudo(): all of those belong to
         add_to_consultation(), which enforces them for the Odoo form and any
         RPC caller too.
+
+        `request_token` IS REQUIRED. Unlike every other field on this body it is
+        refused when absent rather than defaulted, because it is the only replay
+        protection a diagnosis has: see _require_request_token().
         """
         env = request.env
         _require_doctor_desk(env)
@@ -1406,7 +1578,14 @@ class YoyaEmrDoctorController(http.Controller):
         disease_id = coerce_optional_id("disease_id", body.get("disease_id"))
         if not disease_id:
             raise ApiError("invalid_field", "'disease_id' is required.", 400)
-        request_token = coerce_text("request_token", body.get("request_token"))
+        # REQUIRED, and checked before the consultation is resolved so a
+        # submission with no replay protection is refused having touched
+        # nothing. A retried Add without one would file the same disease twice
+        # -- and, for a primary, be answered with "a primary already exists",
+        # blaming the doctor for the browser's second request.
+        request_token = _require_request_token(
+            body, "filing the same diagnosis twice"
+        )
 
         consultation = _load_open_consultation(env, appointment)
 
@@ -1418,7 +1597,11 @@ class YoyaEmrDoctorController(http.Controller):
 
         with env.cr.savepoint():
             env["hospital.patient.diagnosis"].add_to_consultation(
-                consultation, disease, values, request_token=request_token or None
+                # Passed straight through, with no `or None` fallback: the token
+                # is already guaranteed non-empty above, and a fallback here
+                # would quietly re-open the tokenless path this endpoint exists
+                # to close.
+                consultation, disease, values, request_token=request_token
             )
             try:
                 response = success_response(_diagnosis_payload(env, consultation))
@@ -1624,6 +1807,10 @@ class YoyaEmrDoctorController(http.Controller):
         must not leave a confirmed request with live charges behind a message
         saying the order was not placed -- the doctor would re-order and the
         patient would be billed twice.
+
+        `request_token` IS REQUIRED. Unlike every other field on this body it is
+        refused when absent rather than defaulted, because it is the only replay
+        protection an order has: see _require_request_token().
         """
         env = request.env
         _require_doctor_desk(env)
@@ -1652,7 +1839,12 @@ class YoyaEmrDoctorController(http.Controller):
             test_ids.append(test_id)
 
         diagnosis_id = coerce_optional_id("diagnosis_id", body.get("diagnosis_id"))
-        request_token = coerce_text("request_token", body.get("request_token"))
+        # REQUIRED, and checked here -- before the consultation is resolved and
+        # long before the savepoint -- so a submission with no replay protection
+        # is refused having touched nothing at all.
+        request_token = _require_request_token(
+            body, "ordering the same tests -- and billing them -- twice"
+        )
 
         consultation = _load_open_consultation(env, appointment)
 
@@ -1684,7 +1876,11 @@ class YoyaEmrDoctorController(http.Controller):
                 tests,
                 values,
                 diagnosis=diagnosis or None,
-                request_token=request_token or None,
+                # Passed straight through, with no `or None` fallback: the token
+                # is already guaranteed non-empty above, and a fallback here
+                # would quietly re-open the tokenless path this endpoint exists
+                # to close.
+                request_token=request_token,
             )
             try:
                 response = success_response(_laboratory_payload(env, consultation))
@@ -1737,5 +1933,261 @@ class YoyaEmrDoctorController(http.Controller):
                     env.uid,
                 )
                 raise LaboratoryResponseError(str(error)) from error
+
+        return response
+
+    # ------------------------------------------------------------------
+    # 16. Radiology exam catalogue
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/catalogue/radiology-exams",
+        type="http", auth="user", methods=["GET"], csrf=False,
+    )
+    @doctor_endpoint
+    def radiology_catalogue(self, **params):
+        """Search the radiology exam catalogue. READ ONLY, bounded in SQL.
+
+        Clinical and reference fields only. hospital.radiology.exam carries
+        billing_service_id once hospital_billing is installed -- the mapping
+        that decides what a scan costs -- and it is never serialized.
+
+        Reference data with no patient in it, so there is nothing to scope:
+        hospital_radiology already grants Hospital Doctor read on
+        hospital.radiology.exam, and nothing here widens that.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+
+        search = (params.get("q") or "").strip()
+        limit = RAD_CATALOGUE_DEFAULT_LIMIT
+        if params.get("limit"):
+            limit = max(
+                1,
+                min(
+                    parse_int_param("limit", params["limit"]),
+                    RAD_CATALOGUE_MAX_LIMIT,
+                ),
+            )
+
+        model = env["hospital.radiology.exam"]
+        # ORDERABLE ONLY, AND THIS MATTERS MORE HERE THAN IT DID FOR THE LAB.
+        # The desk confirms on submission, and confirmation refuses the whole
+        # order if any exam is unmapped or misconfigured -- and most of the
+        # shipped radiology catalogue carries no billing service at all. Without
+        # this predicate the picker would be mostly traps. It is the MODEL's,
+        # mirroring _assert_billable; this controller does not know what makes
+        # an exam billable and does not decide it. Archived exams are excluded
+        # by the ORM's own active_test.
+        domain = model.doctor_orderable_domain()
+        if search:
+            domain = expression.AND(
+                [
+                    domain,
+                    [
+                        "|", "|",
+                        ("name", "ilike", search),
+                        ("code", "ilike", search),
+                        ("body_part", "ilike", search),
+                    ],
+                ]
+            )
+
+        exams = model.search(domain, limit=limit, order="name")
+        return success_response(
+            {
+                "exams": [serialize_radiology_exam(exam) for exam in exams],
+                "query": search or None,
+                "limit": limit,
+                "truncated": len(exams) == limit,
+            }
+        )
+
+    # ------------------------------------------------------------------
+    # 17. Consultation radiology orders -- read
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>/orders/radiology",
+        type="http", auth="user", methods=["GET"], csrf=False,
+    )
+    @doctor_endpoint
+    def radiology_order_list(self, appointment_id, **params):
+        """The radiology orders placed in this visit's consultation.
+
+        Keyed on the CONSULTATION, not the appointment state, so orders stay
+        readable after the visit finishes -- which is exactly when a doctor
+        chases a pending study. That is not incidental for radiology: imaging
+        routinely outlives the consultation that ordered it, and Slice 4's
+        completion policy explicitly does not wait for it. `can_order` reports
+        whether new orders may still be placed.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+
+        appointment = _load_visit(env, appointment_id)
+        consultation = env["hospital.consultation"].find_for_appointment(appointment)
+        if not consultation:
+            return success_response({"orders": [], "can_order": False})
+
+        orders = env["hospital.radiology.request"].for_consultation(consultation)
+        return success_response(
+            serialize_radiology_orders(orders, consultation.state == "draft")
+        )
+
+    # ------------------------------------------------------------------
+    # 18. Consultation radiology orders -- place
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>/orders/radiology",
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @doctor_endpoint
+    def radiology_order_create(self, appointment_id, **params):
+        """Place a radiology order. THE CONTROLLER CREATES NO CHARGE.
+
+        It resolves the visit, the consultation, the exams and the optional
+        diagnosis through the CALLER's own record rules, then hands records to
+        one model method. Everything financial belongs to hospital_billing's
+        action_confirm_request() override, which create_from_consultation()
+        invokes: validating every exam's billing configuration before raising
+        any charge, resolving the encounter, asserting patient/appointment/
+        encounter agreement, and creating one charge per ordered study
+        all-or-nothing.
+
+        ATOMICITY. The create, the confirmation, the charges it raises, the
+        reload and the response are ONE savepoint. A failure while serializing
+        must not leave a confirmed request with live charges behind a message
+        saying the order was not placed -- the doctor would re-order and the
+        patient would be billed twice.
+
+        `request_token` IS REQUIRED. Unlike every other field on this body it is
+        refused when absent rather than defaulted, because it is the only replay
+        protection an imaging order has: see
+        _require_radiology_request_token().
+        """
+        env = request.env
+        _require_doctor_desk(env)
+
+        appointment = _load_visit(env, appointment_id)
+        body = read_json_body()
+        values = _build_radiology_values(body)
+
+        raw_exams = body.get("exams") or body.get("exam_ids") or []
+        if not isinstance(raw_exams, list) or not raw_exams:
+            raise ApiError(
+                "invalid_field",
+                "'exams' must be a non-empty list of radiology exam ids.",
+                400,
+            )
+        exam_ids = []
+        for entry in raw_exams:
+            # Accept either a bare id or {"exam_id": n}, so the client may send
+            # the shape it already holds without reshaping it.
+            candidate = entry.get("exam_id") if isinstance(entry, dict) else entry
+            exam_id = coerce_optional_id("exam_id", candidate)
+            if not exam_id:
+                raise ApiError(
+                    "invalid_field", "Each entry in 'exams' needs an exam id.", 400
+                )
+            exam_ids.append(exam_id)
+
+        diagnosis_id = coerce_optional_id("diagnosis_id", body.get("diagnosis_id"))
+        # REQUIRED, and checked here -- before the consultation is resolved and
+        # long before the savepoint -- so a submission with no replay protection
+        # is refused having touched nothing at all.
+        request_token = _require_request_token(
+            body, "ordering the same studies -- and billing them -- twice"
+        )
+
+        consultation = _load_open_consultation(env, appointment)
+
+        # DE-DUPLICATED BEFORE THE EXISTENCE CHECK. recordset.exists() preserves
+        # duplicate ids, so browsing [7, 7, 9] returns three records and a naive
+        # length comparison would report a perfectly valid exam as missing. The
+        # model de-duplicates again when building the lines; this is about
+        # answering "does every id you sent exist", not about the ordered set.
+        unique_exam_ids = list(dict.fromkeys(exam_ids))
+        exams = env["hospital.radiology.exam"].browse(unique_exam_ids).exists()
+        if len(exams) != len(unique_exam_ids):
+            raise ApiError(
+                "radiology_exam_not_found",
+                "One or more radiology exams were not found in the catalogue.",
+                404,
+            )
+
+        diagnosis = env["hospital.patient.diagnosis"].browse(diagnosis_id).exists()
+        if diagnosis_id and not diagnosis:
+            raise ApiError(
+                "diagnosis_not_found",
+                "Diagnosis not found for this consultation.",
+                404,
+            )
+
+        with env.cr.savepoint():
+            env["hospital.radiology.request"].create_from_consultation(
+                consultation,
+                exams,
+                values,
+                diagnosis=diagnosis or None,
+                # Passed straight through, with no `or None` fallback: the token
+                # is already guaranteed non-empty above, and a fallback here
+                # would quietly re-open the tokenless path this endpoint exists
+                # to close.
+                request_token=request_token,
+            )
+            try:
+                response = success_response(_radiology_payload(env, consultation))
+            except Exception as error:
+                _logger.exception(
+                    "Doctor radiology order response failed for appointment=%s "
+                    "uid=%s; rolling the request and its charges back",
+                    appointment_id,
+                    env.uid,
+                )
+                raise RadiologyResponseError(str(error)) from error
+
+        return response
+
+    # ------------------------------------------------------------------
+    # 19. Consultation radiology orders -- cancel
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>"
+        "/orders/radiology/<int:order_id>/cancel",
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @doctor_endpoint
+    def radiology_order_cancel(self, appointment_id, order_id, **params):
+        """Cancel a radiology order through the model's own workflow.
+
+        The base transition guard permits cancellation only from draft,
+        requested or scheduled; hospital_billing's override then cancels the
+        operational charges and refuses outright if any has been delivered.
+        None of that is reimplemented, and the refusal reaches the doctor with
+        its own wording, because that sentence is the only thing that says WHY.
+
+        THE CHARGE CLEANUP IS NOT OPTIONAL HERE. Radiology raises its charges at
+        confirmation, so a cancelled order that left them live would leave the
+        patient owing for a scan nobody will ever perform -- and sitting in the
+        cashier's queue with nothing to collect against.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+
+        appointment = _load_visit(env, appointment_id)
+        consultation = _load_open_consultation(env, appointment)
+        order = _load_radiology_order(env, consultation, order_id)
+
+        with env.cr.savepoint():
+            order.cancel_from_consultation()
+            try:
+                response = success_response(_radiology_payload(env, consultation))
+            except Exception as error:
+                _logger.exception(
+                    "Doctor radiology cancel response failed for order=%s "
+                    "uid=%s; rolling the cancellation back",
+                    order_id,
+                    env.uid,
+                )
+                raise RadiologyResponseError(str(error)) from error
 
         return response

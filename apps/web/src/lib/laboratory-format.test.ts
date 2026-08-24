@@ -16,8 +16,8 @@
  *   3. THE TOKEN IS ALWAYS SENT. Without it a double-clicked Place Order bills
  *      the patient twice.
  *
- *   4. ONLY LABORATORY IS LIVE. Radiology, medication and procedure must stay
- *      inert until they exist.
+ *   4. ONLY THE ORDER KINDS THAT EXIST ARE LIVE. Laboratory and radiology have
+ *      shipped; medication and procedure must stay inert until they do.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -93,9 +93,14 @@ test("the section bar keeps its clinical order", () => {
   );
 });
 
-test("laboratory is the only live order kind", () => {
-  assert.equal(isLiveOrderKind("laboratory"), true);
-  for (const key of ["radiology", "medication", "procedure"]) {
+test("laboratory and radiology are the live order kinds", () => {
+  // Radiology went live in Slice 5. Medication and procedure must stay inert
+  // until they exist: a tab that looks pressable and does nothing is worse than
+  // an honest label in a clinical tool.
+  for (const key of ["laboratory", "radiology"]) {
+    assert.equal(isLiveOrderKind(key), true, key);
+  }
+  for (const key of ["medication", "procedure"]) {
     assert.equal(isLiveOrderKind(key), false, key);
   }
 });

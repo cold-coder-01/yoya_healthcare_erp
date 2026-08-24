@@ -86,9 +86,21 @@ class DiagnosisCase(ConsultationCase):
 
     # ------------------------------------------------------------------
     def _add(self, appointment, disease=None, diagnosis_type="primary", **extra):
+        """Record a diagnosis the way a conforming client does.
+
+        A FRESH request_token IS ALWAYS SENT, because the endpoint now requires
+        one. Each call therefore represents a distinct submission -- which is
+        exactly what a tokenless POST used to mean -- so every test written
+        before the token became mandatory keeps its original meaning.
+
+        `extra` overrides it, so a test that needs a SPECIFIC token (idempotency)
+        or a malformed one (the contract tests) passes request_token= explicitly.
+        A test that needs the key ABSENT builds the body itself with _post_body.
+        """
         body = {
             "disease_id": (disease or self.disease).id,
             "diagnosis_type": diagnosis_type,
+            "request_token": uuid.uuid4().hex,
         }
         body.update(extra)
         return self._post_body(DIAGNOSES % appointment.id, body)
@@ -208,7 +220,11 @@ class TestDiagnosisRecording(DiagnosisCase):
         appointment, _encounter = self._in_consultation_visit()
         response, payload = self._post_body(
             DIAGNOSES % appointment.id,
-            {"disease_id": 99999999, "diagnosis_type": "secondary"},
+            {
+                "disease_id": 99999999,
+                "diagnosis_type": "secondary",
+                "request_token": uuid.uuid4().hex,
+            },
         )
         self.assertEqual(response.status_code, 404)
         self.assertEqual(payload["error"]["code"], "disease_not_found")
@@ -616,6 +632,206 @@ class TestDiagnosisEditAndRemove(DiagnosisCase):
 
 
 @tagged("post_install", "-at_install", "doctor_diagnosis")
+class TestDiagnosisRequestTokenContract(DiagnosisCase):
+    """The token is REQUIRED, and a refusal records nothing.
+
+    WHY THIS IS ITS OWN CLASS. TestDiagnosisIdempotency proves the token WORKS.
+    This proves it cannot be SKIPPED -- a different property, and the one a
+    client actually gets wrong. A tokenless submission is not deduplicated by
+    anything: the partial unique index is `WHERE ... request_token IS NOT NULL`,
+    so NULL tokens never collide, and add_to_consultation() skips its lookup
+    entirely when none is supplied.
+
+    THE DIAGNOSIS FAILURE MODE IS ITS OWN. A retried Add does not merely file
+    the same disease twice -- for a PRIMARY it is answered with "a primary
+    already exists", blaming the doctor for the browser's second request and
+    sending them to demote a diagnosis they only recorded once.
+
+    The same contract, with the same error codes, is asserted for laboratory in
+    test_doctor_laboratory_api and for radiology in test_doctor_radiology_api.
+    All three Doctor mutations now behave identically.
+    """
+
+    def _refused(self, appointment, body):
+        """Assert the shape of a refusal AND that it recorded nothing."""
+        consultation = self._consultation_for(appointment)
+
+        response, payload = self._post_body(DIAGNOSES % appointment.id, body)
+
+        self.assertEqual(response.status_code, 400, json.dumps(payload))
+        self.assertEqual(payload["error"]["code"], "missing_request_token")
+        # active_test=False: an archived row would still be a row this refusal
+        # was not supposed to create.
+        self.assertFalse(
+            self._diagnoses_of(consultation, active_test=False),
+            "a refused submission recorded a diagnosis",
+        )
+        return payload
+
+    # ------------------------------------------------------------------
+    def test_a_missing_request_token_is_refused(self):
+        appointment, _e = self._in_consultation_visit()
+        self._refused(
+            appointment,
+            {"disease_id": self.disease.id, "diagnosis_type": "primary"},
+        )
+
+    def test_a_null_request_token_is_refused(self):
+        appointment, _e = self._in_consultation_visit()
+        self._refused(
+            appointment,
+            {
+                "disease_id": self.disease.id,
+                "diagnosis_type": "primary",
+                "request_token": None,
+            },
+        )
+
+    def test_a_blank_request_token_is_refused(self):
+        appointment, _e = self._in_consultation_visit()
+        self._refused(
+            appointment,
+            {
+                "disease_id": self.disease.id,
+                "diagnosis_type": "primary",
+                "request_token": "",
+            },
+        )
+
+    def test_a_whitespace_only_request_token_is_refused(self):
+        """Whitespace is not an identifier. Refused rather than trimmed:
+        trimming would silently merge tokens the client considers distinct."""
+        appointment, _e = self._in_consultation_visit()
+        self._refused(
+            appointment,
+            {
+                "disease_id": self.disease.id,
+                "diagnosis_type": "primary",
+                "request_token": "   ",
+            },
+        )
+
+    def test_a_non_string_request_token_is_a_type_error_not_a_missing_one(self):
+        """Sending 42 is a different client bug from sending nothing, and one
+        error code for both would send the wrong developer to the wrong line."""
+        appointment, _e = self._in_consultation_visit()
+        consultation = self._consultation_for(appointment)
+
+        response, payload = self._post_body(
+            DIAGNOSES % appointment.id,
+            {
+                "disease_id": self.disease.id,
+                "diagnosis_type": "primary",
+                "request_token": 42,
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(payload["error"]["code"], "invalid_field")
+        self.assertFalse(self._diagnoses_of(consultation, active_test=False))
+
+    def test_a_valid_token_records_the_diagnosis(self):
+        appointment, _e = self._in_consultation_visit()
+        consultation = self._consultation_for(appointment)
+
+        response, payload = self._post_body(
+            DIAGNOSES % appointment.id,
+            {
+                "disease_id": self.disease.id,
+                "diagnosis_type": "primary",
+                "request_token": uuid.uuid4().hex,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(self._rows(payload)), 1)
+        self.assertEqual(len(self._diagnoses_of(consultation)), 1)
+
+    def test_the_stored_token_is_the_one_the_client_sent(self):
+        """Stored verbatim, not normalised. The server does not mint or reshape
+        an opaque client identifier."""
+        appointment, _e = self._in_consultation_visit()
+        consultation = self._consultation_for(appointment)
+        token = "Client-Token_%s" % uuid.uuid4().hex
+
+        self._post_body(
+            DIAGNOSES % appointment.id,
+            {
+                "disease_id": self.disease.id,
+                "diagnosis_type": "primary",
+                "request_token": token,
+            },
+        )
+
+        self.assertEqual(self._diagnoses_of(consultation).request_token, token)
+
+    def test_a_retry_with_the_same_valid_token_reuses_the_same_diagnosis(self):
+        """And, critically, is NOT answered with a primary-slot conflict."""
+        appointment, _e = self._in_consultation_visit()
+        consultation = self._consultation_for(appointment)
+        body = {
+            "disease_id": self.disease.id,
+            "diagnosis_type": "primary",
+            "request_token": uuid.uuid4().hex,
+        }
+
+        first, first_body = self._post_body(DIAGNOSES % appointment.id, body)
+        second, second_body = self._post_body(DIAGNOSES % appointment.id, body)
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(
+            second.status_code, 200,
+            "the retry was refused: %s" % json.dumps(second_body),
+        )
+        self.assertEqual(
+            self._rows(first_body)[0]["id"], self._rows(second_body)[0]["id"]
+        )
+        self.assertEqual(len(self._diagnoses_of(consultation)), 1)
+
+    def test_the_model_still_accepts_a_tokenless_internal_add(self):
+        """THE CONTRACT IS THE API'S, NOT THE MODEL'S.
+
+        hospital.patient.diagnosis is legitimately created outside this API --
+        from the Odoo form, by an internal caller -- and those callers have no
+        submission to identify. add_to_consultation() therefore keeps accepting
+        request_token=None, which is its established internal contract.
+        """
+        appointment, _e = self._in_consultation_visit()
+        consultation = self._consultation_for(appointment)
+
+        stored = self.env["hospital.patient.diagnosis"].sudo().add_to_consultation(
+            consultation, self.disease, {"diagnosis_type": "primary"},
+            request_token=None,
+        )
+
+        self.assertTrue(stored)
+        self.assertFalse(stored.request_token)
+
+    def test_the_column_and_the_index_were_not_tightened(self):
+        """Defence against over-correcting the fix.
+
+        A required column would break every form-entered diagnosis; a global
+        index would let one client's opaque string collide with another's
+        across unrelated episodes of care, handing back ANOTHER PATIENT'S row
+        as though this submission had created it.
+        """
+        field = self.env["hospital.patient.diagnosis"]._fields["request_token"]
+        self.assertFalse(field.required, "the token column was made required")
+
+        self.env.cr.execute(
+            """
+            SELECT indexdef FROM pg_indexes
+            WHERE tablename = 'hospital_patient_diagnosis'
+              AND indexname = 'hospital_patient_diagnosis_consultation_token_uniq'
+            """
+        )
+        row = self.env.cr.fetchone()
+        self.assertTrue(row, "the idempotency index is missing")
+        self.assertIn("consultation_id", row[0])
+        self.assertIn("WHERE", row[0], "the index stopped being partial")
+
+
+@tagged("post_install", "-at_install", "doctor_diagnosis")
 class TestDiagnosisIdempotency(DiagnosisCase):
     """A retried submission must not file the same diagnosis twice."""
 
@@ -893,7 +1109,11 @@ class TestDiagnosisAccess(DiagnosisCase):
         self._auth(self.other_user, self.other_password)
         self._post_body(
             DIAGNOSES % appointment.id,
-            {"disease_id": self.disease.id, "diagnosis_type": "primary"},
+            {
+                "disease_id": self.disease.id,
+                "diagnosis_type": "primary",
+                "request_token": uuid.uuid4().hex,
+            },
             user=self.other_user,
             password=self.other_password,
         )
@@ -971,7 +1191,11 @@ class TestDiagnosisAccess(DiagnosisCase):
 
             response, _payload = self._post_body(
                 DIAGNOSES % appointment.id,
-                {"disease_id": self.disease.id, "diagnosis_type": "primary"},
+                {
+                "disease_id": self.disease.id,
+                "diagnosis_type": "primary",
+                "request_token": uuid.uuid4().hex,
+            },
                 user=user,
                 password=password,
             )

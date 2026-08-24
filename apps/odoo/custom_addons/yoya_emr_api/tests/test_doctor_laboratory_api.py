@@ -123,7 +123,21 @@ class LaboratoryCase(DiagnosisCase):
 
     # ------------------------------------------------------------------
     def _order(self, appointment, tests=None, **extra):
-        body = {"tests": [t.id for t in (tests or [self.cbc])]}
+        """Place an order the way a conforming client does.
+
+        A FRESH request_token IS ALWAYS SENT, because the endpoint now requires
+        one. Each call therefore represents a distinct submission -- which is
+        exactly what a tokenless POST used to mean -- so every test written
+        before the token became mandatory keeps its original meaning.
+
+        `extra` overrides it, so a test that needs a SPECIFIC token (idempotency)
+        or a malformed one (the contract tests) passes request_token= explicitly.
+        A test that needs the key ABSENT builds the body itself with _post_body.
+        """
+        body = {
+            "tests": [t.id for t in (tests or [self.cbc])],
+            "request_token": uuid.uuid4().hex,
+        }
         body.update(extra)
         return self._post_body(ORDERS % appointment.id, body)
 
@@ -347,7 +361,8 @@ class TestLaboratoryOrdering(LaboratoryCase):
     def test_an_unknown_test_is_a_404(self):
         appointment, _e = self._in_consultation_visit()
         response, payload = self._post_body(
-            ORDERS % appointment.id, {"tests": [99999999]}
+            ORDERS % appointment.id,
+            {"tests": [99999999], "request_token": uuid.uuid4().hex},
         )
         self.assertEqual(response.status_code, 404)
         self.assertEqual(payload["error"]["code"], "laboratory_test_not_found")
@@ -535,6 +550,7 @@ class TestLaboratoryDiagnosisLink(LaboratoryCase):
             {
                 "disease_id": (disease or self.disease).id,
                 "diagnosis_type": "primary",
+                "request_token": uuid.uuid4().hex,
             },
         )
         return payload["data"]["diagnoses"][0]["id"]
@@ -587,6 +603,197 @@ class TestLaboratoryDiagnosisLink(LaboratoryCase):
             self.env["hospital.laboratory.request"].sudo().create_from_consultation(
                 consultation, self.cbc, {}, diagnosis=foreign
             )
+
+
+@tagged("post_install", "-at_install", "doctor_laboratory")
+class TestLaboratoryRequestTokenContract(LaboratoryCase):
+    """The token is REQUIRED, and a refusal costs the patient nothing.
+
+    WHY THIS IS ITS OWN CLASS. TestLaboratoryIdempotency proves the token WORKS.
+    This proves it cannot be SKIPPED -- a different property, and the one a
+    client actually gets wrong. A tokenless submission is not deduplicated by
+    anything: the partial unique index is `WHERE ... request_token IS NOT NULL`,
+    so NULL tokens never collide, and create_from_consultation() skips its
+    lookup entirely when none is supplied. Accepting one would mean a
+    double-clicked Place Order raises a second full set of charges with nothing
+    anywhere to stop it.
+
+    The same contract, with the same error codes, is asserted for radiology in
+    test_doctor_radiology_api and for diagnoses in test_doctor_diagnosis_api.
+    All three Doctor mutations now behave identically.
+    """
+
+    def _refused(self, appointment, body):
+        """Assert the shape of a refusal AND that it cost nothing."""
+        consultation = self._consultation_for(appointment)
+        charges_before = self.env["hospital.charge.line"].sudo().search_count(
+            [("encounter_id", "=", consultation.encounter_id.id)]
+        )
+
+        response, payload = self._post_body(ORDERS % appointment.id, body)
+
+        self.assertEqual(response.status_code, 400, json.dumps(payload))
+        self.assertEqual(payload["error"]["code"], "missing_request_token")
+        # NO REQUEST, NO LINES, NO CHARGES. The check runs before the
+        # consultation is resolved and long before the savepoint.
+        self.assertFalse(
+            self._requests_of(consultation),
+            "a refused submission created a laboratory request",
+        )
+        charges_after = self.env["hospital.charge.line"].sudo().search_count(
+            [("encounter_id", "=", consultation.encounter_id.id)]
+        )
+        self.assertEqual(
+            charges_after, charges_before,
+            "a refused submission created a charge",
+        )
+        return payload
+
+    # ------------------------------------------------------------------
+    def test_a_missing_request_token_is_refused(self):
+        appointment, _e = self._in_consultation_visit()
+        self._refused(appointment, {"tests": [self.cbc.id]})
+
+    def test_a_null_request_token_is_refused(self):
+        appointment, _e = self._in_consultation_visit()
+        self._refused(
+            appointment, {"tests": [self.cbc.id], "request_token": None}
+        )
+
+    def test_a_blank_request_token_is_refused(self):
+        appointment, _e = self._in_consultation_visit()
+        self._refused(appointment, {"tests": [self.cbc.id], "request_token": ""})
+
+    def test_a_whitespace_only_request_token_is_refused(self):
+        """Whitespace is not an identifier. Refused rather than trimmed:
+        trimming would silently merge tokens the client considers distinct."""
+        appointment, _e = self._in_consultation_visit()
+        self._refused(
+            appointment, {"tests": [self.cbc.id], "request_token": "   "}
+        )
+
+    def test_a_non_string_request_token_is_a_type_error_not_a_missing_one(self):
+        """Sending 42 is a different client bug from sending nothing, and one
+        error code for both would send the wrong developer to the wrong line."""
+        appointment, _e = self._in_consultation_visit()
+        consultation = self._consultation_for(appointment)
+
+        response, payload = self._post_body(
+            ORDERS % appointment.id,
+            {"tests": [self.cbc.id], "request_token": 42},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(payload["error"]["code"], "invalid_field")
+        self.assertFalse(self._requests_of(consultation))
+
+    def test_a_valid_token_places_the_order(self):
+        appointment, _e = self._in_consultation_visit()
+        consultation = self._consultation_for(appointment)
+
+        response, payload = self._post_body(
+            ORDERS % appointment.id,
+            {"tests": [self.cbc.id], "request_token": uuid.uuid4().hex},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(self._orders(payload)), 1)
+        stored = self._requests_of(consultation)
+        self.assertEqual(len(stored), 1)
+        self.assertEqual(stored.state, "requested")
+        self.assertEqual(len(stored.sudo().charge_line_ids), 1)
+
+    def test_the_stored_token_is_the_one_the_client_sent(self):
+        """Stored verbatim, not normalised. The server does not mint or reshape
+        an opaque client identifier."""
+        appointment, _e = self._in_consultation_visit()
+        consultation = self._consultation_for(appointment)
+        token = "Client-Token_%s" % uuid.uuid4().hex
+
+        self._post_body(
+            ORDERS % appointment.id,
+            {"tests": [self.cbc.id], "request_token": token},
+        )
+
+        self.assertEqual(self._requests_of(consultation).request_token, token)
+
+    def test_a_retry_with_the_same_valid_token_reuses_the_same_request(self):
+        appointment, _e = self._in_consultation_visit()
+        consultation = self._consultation_for(appointment)
+        body = {
+            "tests": [self.cbc.id, self.creatinine.id],
+            "request_token": uuid.uuid4().hex,
+        }
+
+        first, first_body = self._post_body(ORDERS % appointment.id, body)
+        second, second_body = self._post_body(ORDERS % appointment.id, body)
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(
+            self._orders(first_body)[0]["id"], self._orders(second_body)[0]["id"]
+        )
+        self.assertEqual(len(self._requests_of(consultation)), 1)
+
+    def test_a_retry_with_the_same_valid_token_raises_no_second_charge(self):
+        """THE property the requirement exists to guarantee. Now that a token
+        cannot be omitted, every Doctor Desk order has this protection."""
+        appointment, _e = self._in_consultation_visit()
+        consultation = self._consultation_for(appointment)
+        body = {
+            "tests": [self.cbc.id, self.creatinine.id],
+            "request_token": uuid.uuid4().hex,
+        }
+
+        self._post_body(ORDERS % appointment.id, body)
+        self._post_body(ORDERS % appointment.id, body)
+
+        stored = self._requests_of(consultation)
+        self.assertEqual(len(stored), 1)
+        # Two tests, one submission, however many times the button was pressed.
+        self.assertEqual(len(stored.sudo().charge_line_ids), 2)
+
+    def test_the_model_still_accepts_a_tokenless_bench_order(self):
+        """THE CONTRACT IS THE API'S, NOT THE MODEL'S.
+
+        hospital.laboratory.request is legitimately created outside this API --
+        at the bench, from the Odoo form, by a scheduled job -- and those
+        callers have no submission to identify. Forcing a token on them would
+        make the column a lie and break the laboratory.
+        """
+        appointment, _e = self._in_consultation_visit()
+        consultation = self._consultation_for(appointment)
+
+        stored = self.env["hospital.laboratory.request"].sudo().create_from_consultation(
+            consultation, self.cbc, {}, request_token=None
+        )
+
+        self.assertTrue(stored)
+        self.assertFalse(stored.request_token)
+        self.assertEqual(stored.state, "requested")
+
+    def test_the_column_and_the_index_were_not_tightened(self):
+        """Defence against over-correcting the fix.
+
+        A required column would break every bench-raised order; a global index
+        would let one client's opaque string collide with another's across
+        unrelated episodes of care, handing back ANOTHER PATIENT'S request as
+        though this submission had created it.
+        """
+        field = self.env["hospital.laboratory.request"]._fields["request_token"]
+        self.assertFalse(field.required, "the token column was made required")
+
+        self.env.cr.execute(
+            """
+            SELECT indexdef FROM pg_indexes
+            WHERE tablename = 'hospital_laboratory_request'
+              AND indexname = 'hospital_laboratory_request_consultation_token_uniq'
+            """
+        )
+        row = self.env.cr.fetchone()
+        self.assertTrue(row, "the idempotency index is missing")
+        self.assertIn("consultation_id", row[0])
+        self.assertIn("WHERE", row[0], "the index stopped being partial")
 
 
 @tagged("post_install", "-at_install", "doctor_laboratory")
@@ -760,7 +967,7 @@ class TestLaboratoryAccess(LaboratoryCase):
 
         response, payload = self._post_body(
             ORDERS % appointment.id,
-            {"tests": [self.cbc.id]},
+            {"tests": [self.cbc.id], "request_token": uuid.uuid4().hex},
             user=self.doctor_user,
             password=self.doctor_password,
         )
@@ -772,7 +979,7 @@ class TestLaboratoryAccess(LaboratoryCase):
         appointment, _e = self._in_consultation_visit(doctor=self.other_doctor)
         self._post_body(
             ORDERS % appointment.id,
-            {"tests": [self.cbc.id]},
+            {"tests": [self.cbc.id], "request_token": uuid.uuid4().hex},
             user=self.other_user,
             password=self.other_password,
         )
@@ -837,7 +1044,7 @@ class TestLaboratoryAccess(LaboratoryCase):
 
             response, _p = self._post_body(
                 ORDERS % appointment.id,
-                {"tests": [self.cbc.id]},
+                {"tests": [self.cbc.id], "request_token": uuid.uuid4().hex},
                 user=user,
                 password=password,
             )

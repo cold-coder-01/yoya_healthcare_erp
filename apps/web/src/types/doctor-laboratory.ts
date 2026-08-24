@@ -108,13 +108,13 @@ export type LabOrderRequest = {
 };
 
 /**
- * The ORDERS sub-sections. Only laboratory ships in this slice; the rest are
+ * The ORDERS sub-sections. Laboratory and radiology are live; the rest are
  * declared so the workstation's shape is visible, and are rendered as inert
  * text rather than as controls that would swallow a click.
  */
 export const ORDER_KINDS = [
   { key: "laboratory", label: "Laboratory", live: true },
-  { key: "radiology", label: "Radiology", live: false },
+  { key: "radiology", label: "Radiology", live: true },
   { key: "medication", label: "Medication", live: false },
   { key: "procedure", label: "Procedure", live: false },
 ] as const;

@@ -5,3 +5,4 @@ from . import consultation
 from . import hospital_appointment
 from . import patient_diagnosis
 from . import laboratory_request
+from . import radiology_request

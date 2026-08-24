@@ -510,5 +510,180 @@
             <field name="perm_unlink" eval="True"/>
         </record>
 
+        <!-- ============================================================
+             hospital.radiology.request / .result
+             ============================================================
+
+             THE STATE THIS INHERITS, AND IT IS WORSE THAN LABORATORY'S WAS.
+             hospital_radiology ships ACL rows for all five of its models and
+             NO record rules whatsoever: not one, on any model, in any
+             installed module. Before this slice every Hospital Doctor could
+             read AND WRITE every radiology request in the hospital, and read
+             every radiology result: a doctor in one department could open the
+             imaging history of a patient they have never seen.
+
+             The rules below give the DOCTOR a deliberate scope, in exactly the
+             shape rule_laboratory_request_doctor already defines, so a doctor's
+             imaging scope and their laboratory scope cannot drift apart.
+
+             WHAT IS DELIBERATELY LEFT ALONE, AND WHY THAT IS NOT AN OVERSIGHT.
+             Lab Technician (which is the operational imaging role, there being
+             no radiographer group in this repository), Nurse, Receptionist and
+             the DPO get no rule here, so their access is exactly what it was.
+             A rule for a group only ever narrows it; the imaging bench works a
+             cross-patient queue and scoping it would break the department; and
+             narrowing the front office or the DPO is a separate decision
+             belonging to whoever owns those screens. This slice tightens the
+             one role it is adding a feature for, and no other.
+
+             THE OPERATIONAL ROLES ARE GIVEN AN EXPLICIT UNRESTRICTED RULE even
+             though omitting them would have the same effect today, for the
+             reason the laboratory rules state: the consequence of getting this
+             wrong is a department that cannot see the work it has been asked to
+             do, and Manager IMPLIES Doctor, so without naming Manager here,
+             the doctor scope above would silently become a manager's ceiling.
+
+             RESULTS ARE READ-ONLY FOR THE DOCTOR AND STAY THAT WAY. The shipped
+             ACL is 1,0,0,0 for the doctor group; the rule below narrows WHICH
+             results they read and grants nothing. Reporting, validating and
+             releasing belong to the imaging department. Slice 5 does not
+             serialize a report's contents at all (that is the Results slice),
+             but the rule is added now so the ORM boundary is right before
+             any endpoint goes near these models.
+        -->
+
+        <record id="rule_radiology_request_doctor" model="ir.rule">
+            <field name="name">Radiology Request: my orders and my visits (doctor)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_request"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!--
+                Three ways a request is legitimately this doctor's: they ordered
+                it, it belongs to a visit assigned to them, or it came from a
+                consultation they are conducting. The third branch is what makes
+                a request readable in the same transaction that creates it,
+                before physician_id has been read back.
+            -->
+            <field name="domain_force">
+                ['|', '|',
+                    ('physician_id.user_id', '=', user.id),
+                    ('appointment_id.doctor_id.user_id', '=', user.id),
+                    ('consultation_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_radiology_request_line_doctor" model="ir.rule">
+            <field name="name">Radiology Request Line: follows the request (doctor)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_request_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!-- Lines carry no patient of their own, so they inherit the
+                 request's scope rather than defining a second one that could
+                 drift away from it. -->
+            <field name="domain_force">
+                ['|', '|',
+                    ('request_id.physician_id.user_id', '=', user.id),
+                    ('request_id.appointment_id.doctor_id.user_id', '=', user.id),
+                    ('request_id.consultation_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_radiology_result_doctor" model="ir.rule">
+            <field name="name">Radiology Result: for my requests and my visits (doctor)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_result"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!--
+                The REQUEST's scope, reached through request_id, plus the
+                result's own physician_id, which hospital.radiology.result
+                populates from the request and which a radiologist may also set
+                when reporting for a named referrer.
+
+                Read-only by ACL (1,0,0,0); every perm_* below except read is
+                False so this rule cannot be mistaken for a grant of write.
+            -->
+            <field name="domain_force">
+                ['|', '|', '|',
+                    ('physician_id.user_id', '=', user.id),
+                    ('request_id.physician_id.user_id', '=', user.id),
+                    ('request_id.appointment_id.doctor_id.user_id', '=', user.id),
+                    ('request_id.consultation_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_radiology_result_line_doctor" model="ir.rule">
+            <field name="name">Radiology Result Line: follows the result (doctor)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_result_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">
+                ['|', '|', '|',
+                    ('result_id.physician_id.user_id', '=', user.id),
+                    ('result_id.request_id.physician_id.user_id', '=', user.id),
+                    ('result_id.request_id.appointment_id.doctor_id.user_id', '=', user.id),
+                    ('result_id.request_id.consultation_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_radiology_request_operations" model="ir.rule">
+            <field name="name">Radiology Request: all (imaging bench / manager / system administrator)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_request"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_radiology_request_line_operations" model="ir.rule">
+            <field name="name">Radiology Request Line: all (imaging bench / manager / system administrator)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_request_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_radiology_result_operations" model="ir.rule">
+            <field name="name">Radiology Result: all (imaging bench / manager / system administrator)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_result"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_radiology_result_line_operations" model="ir.rule">
+            <field name="name">Radiology Result Line: all (imaging bench / manager / system administrator)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_result_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
     </data>
 </odoo>
