@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="action_report_pharmacy_dispense" model="ir.actions.report">
+        <field name="name">Pharmacy Dispense Slip</field>
+        <field name="model">hospital.pharmacy.dispense</field>
+        <field name="report_type">qweb-pdf</field>
+        <field name="report_name">hospital_pharmacy.report_pharmacy_dispense</field>
+        <field name="report_file">hospital_pharmacy.report_pharmacy_dispense</field>
+        <field name="binding_model_id" ref="model_hospital_pharmacy_dispense"/>
+        <field name="binding_type">report</field>
+        <field name="paperformat_id" ref="base.paperformat_euro"/>
+    </record>
+</odoo>

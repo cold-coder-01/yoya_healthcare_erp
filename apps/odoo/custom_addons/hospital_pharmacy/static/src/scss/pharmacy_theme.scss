@@ -1,0 +1,366 @@
+/* ================================================================
+   Hospital Pharmacy — Dispense Form UI Pattern V1 (Task 24B)
+   Scoped under .hospital_pharmacy_dispense_profile
+   ================================================================ */
+
+.hospital_pharmacy_dispense_profile {
+    --pharmacy-primary:      #006A4F;
+    --pharmacy-primary-dark: #005A43;
+    --pharmacy-primary-soft: rgba(0, 106, 79, 0.08);
+    --pharmacy-border:       rgba(0, 106, 79, 0.14);
+    --pharmacy-border-plain: #dfe7e3;
+    --pharmacy-card:         #ffffff;
+    --pharmacy-page:         #f7faf9;
+    --pharmacy-text:         #1f2933;
+    --pharmacy-muted:        #6b7280;
+    --pharmacy-shadow:       0 6px 18px rgba(0, 0, 0, 0.06);
+    --pharmacy-shadow-sm:    0 2px 6px rgba(31, 41, 51, 0.04);
+    --pharmacy-radius:       8px;
+}
+
+/* ── Sheet ───────────────────────────────────── */
+
+.hospital_pharmacy_dispense_profile .o_form_sheet,
+.o_form_sheet.hospital_pharmacy_dispense_profile {
+    background-color: var(--pharmacy-page) !important;
+    border: 1px solid var(--pharmacy-border-plain) !important;
+    border-radius: 10px !important;
+    box-shadow: var(--pharmacy-shadow) !important;
+    color: var(--pharmacy-text);
+    margin-top: 10px !important;
+    max-width: none !important;
+    padding: 18px 22px 24px !important;
+}
+
+/* ── Statusbar ───────────────────────────────── */
+
+.hospital_pharmacy_dispense_profile .o_form_statusbar,
+.hospital_pharmacy_dispense_profile .o_statusbar_status {
+    background-color: #ffffff !important;
+}
+
+.hospital_pharmacy_dispense_profile .o_statusbar_status .o_arrow_button_current,
+.hospital_pharmacy_dispense_profile .o_statusbar_status .o_arrow_button_current.disabled,
+.hospital_pharmacy_dispense_profile .o_statusbar_status .o_arrow_button_current:disabled {
+    background-color: var(--pharmacy-primary) !important;
+    border-color: var(--pharmacy-primary) !important;
+    color: #ffffff !important;
+}
+
+.hospital_pharmacy_dispense_profile .o_statusbar_status .o_arrow_button:not(.o_arrow_button_current) {
+    background-color: #f4f7f6 !important;
+    color: #52616b !important;
+}
+
+/* ── Workflow Buttons ────────────────────────── */
+
+.hospital_pharmacy_dispense_profile header .btn-primary {
+    background-color: var(--pharmacy-primary) !important;
+    border-color: var(--pharmacy-primary) !important;
+    color: #ffffff !important;
+    font-weight: 600 !important;
+}
+
+.hospital_pharmacy_dispense_profile header .btn-primary:hover,
+.hospital_pharmacy_dispense_profile header .btn-primary:focus {
+    background-color: var(--pharmacy-primary-dark) !important;
+    border-color: var(--pharmacy-primary-dark) !important;
+}
+
+/* ── Hero Header ─────────────────────────────── */
+
+.hospital_pharmacy_dispense_profile .pharmacy_dispense_hero {
+    align-items: center;
+    display: flex;
+    gap: 16px;
+    margin-bottom: 18px;
+}
+
+.hospital_pharmacy_dispense_profile .pharmacy_dispense_hero_icon {
+    align-items: center;
+    background-color: var(--pharmacy-primary);
+    border-radius: 12px;
+    color: #ffffff;
+    display: flex;
+    flex: 0 0 72px;
+    font-size: 32px;
+    height: 72px;
+    justify-content: center;
+    width: 72px;
+}
+
+.hospital_pharmacy_dispense_profile .pharmacy_dispense_hero_label {
+    color: var(--pharmacy-muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    line-height: 1.2;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+}
+
+.hospital_pharmacy_dispense_profile .pharmacy_dispense_hero_ref .o_field_widget,
+.hospital_pharmacy_dispense_profile .pharmacy_dispense_hero_ref .o_field_char,
+.hospital_pharmacy_dispense_profile .pharmacy_dispense_hero_ref span {
+    color: var(--pharmacy-text) !important;
+    font-size: 28px !important;
+    font-weight: 700 !important;
+    line-height: 1.1;
+}
+
+.hospital_pharmacy_dispense_profile .pharmacy_dispense_hero_ref input {
+    border: 0 !important;
+    color: var(--pharmacy-text) !important;
+    font-size: 28px !important;
+    font-weight: 700 !important;
+    line-height: 1.1;
+    padding: 0 !important;
+}
+
+/* ── KPI Summary Row ─────────────────────────── */
+
+.hospital_pharmacy_dispense_profile .pharmacy_dispense_kpi_row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.hospital_pharmacy_dispense_profile .pharmacy_dispense_kpi_card {
+    align-items: center;
+    background-color: var(--pharmacy-card);
+    border: 1px solid var(--pharmacy-border-plain);
+    border-radius: var(--pharmacy-radius);
+    box-shadow: var(--pharmacy-shadow-sm);
+    display: flex;
+    flex: 1 1 168px;
+    gap: 12px;
+    min-height: 70px;
+    min-width: 0;
+    padding: 10px 14px;
+}
+
+.hospital_pharmacy_dispense_profile .pharmacy_dispense_kpi_icon {
+    align-items: center;
+    background-color: var(--pharmacy-primary-soft);
+    border-radius: var(--pharmacy-radius);
+    color: var(--pharmacy-primary);
+    display: flex;
+    flex: 0 0 40px;
+    font-size: 19px;
+    height: 40px;
+    justify-content: center;
+    width: 40px;
+}
+
+.hospital_pharmacy_dispense_profile .pharmacy_dispense_kpi_body {
+    min-width: 0;
+    overflow: hidden;
+}
+
+.hospital_pharmacy_dispense_profile .pharmacy_dispense_kpi_label {
+    color: var(--pharmacy-muted);
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    line-height: 1.2;
+    margin-bottom: 3px;
+    text-transform: uppercase;
+}
+
+.hospital_pharmacy_dispense_profile .pharmacy_dispense_kpi_value,
+.hospital_pharmacy_dispense_profile .pharmacy_dispense_kpi_value .o_field_widget {
+    color: var(--pharmacy-text) !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    line-height: 1.25;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.hospital_pharmacy_dispense_profile .pharmacy_dispense_kpi_value a {
+    color: var(--pharmacy-primary) !important;
+    font-weight: 600 !important;
+    text-decoration: none !important;
+}
+
+.hospital_pharmacy_dispense_profile .pharmacy_dispense_kpi_value .badge {
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    padding: 4px 10px !important;
+}
+
+/* ── Two-Column Info Grid ────────────────────── */
+
+.hospital_pharmacy_dispense_profile .pharmacy_dispense_info_grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    margin-bottom: 14px;
+}
+
+.hospital_pharmacy_dispense_profile .pharmacy_dispense_info_card {
+    background-color: var(--pharmacy-card);
+    border: 1px solid var(--pharmacy-border-plain);
+    border-radius: var(--pharmacy-radius);
+    box-shadow: var(--pharmacy-shadow-sm);
+    min-width: 0;
+    padding: 12px 16px 14px;
+}
+
+.hospital_pharmacy_dispense_profile .pharmacy_dispense_card_title {
+    align-items: center;
+    border-bottom: 1px solid var(--pharmacy-border-plain);
+    color: var(--pharmacy-primary);
+    display: flex;
+    font-size: 11.5px;
+    font-weight: 700;
+    gap: 8px;
+    letter-spacing: 0.05em;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    text-transform: uppercase;
+}
+
+.hospital_pharmacy_dispense_profile .pharmacy_dispense_card_title .fa {
+    color: var(--pharmacy-primary);
+    font-size: 13px;
+}
+
+/* Compact group inside info cards */
+.hospital_pharmacy_dispense_profile .pharmacy_compact_group .o_inner_group,
+.hospital_pharmacy_dispense_profile .pharmacy_compact_group {
+    margin-bottom: 0 !important;
+}
+
+.hospital_pharmacy_dispense_profile .pharmacy_compact_group .o_inner_group > tbody > tr > td {
+    padding-bottom: 5px !important;
+    padding-top: 5px !important;
+}
+
+.hospital_pharmacy_dispense_profile .pharmacy_compact_group .o_td_label label {
+    color: var(--pharmacy-text) !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    white-space: nowrap;
+}
+
+.hospital_pharmacy_dispense_profile .pharmacy_compact_group .o_field_widget {
+    font-size: 13px;
+}
+
+/* Badge state display in groups */
+.hospital_pharmacy_dispense_profile .pharmacy_compact_group .badge {
+    font-size: 12px !important;
+    padding: 3px 10px !important;
+}
+
+/* ── Notebook / Tabs ─────────────────────────── */
+
+.hospital_pharmacy_dispense_profile .o_notebook .nav-tabs .nav-link {
+    color: var(--pharmacy-muted) !important;
+    font-weight: 500 !important;
+}
+
+.hospital_pharmacy_dispense_profile .o_notebook .nav-tabs .nav-link:hover,
+.hospital_pharmacy_dispense_profile .o_notebook .nav-tabs .nav-link:focus {
+    background-color: #e6f2ef !important;
+    border-color: #b8d8cf #b8d8cf #dee2e6 !important;
+    color: var(--pharmacy-primary) !important;
+}
+
+.hospital_pharmacy_dispense_profile .o_notebook .nav-tabs .nav-link.active {
+    border-top: 2px solid var(--pharmacy-primary) !important;
+    color: var(--pharmacy-primary) !important;
+    font-weight: 700 !important;
+}
+
+.hospital_pharmacy_dispense_profile .o_notebook .tab-content {
+    background-color: var(--pharmacy-card);
+    border: 1px solid var(--pharmacy-border-plain);
+    border-radius: 0 0 var(--pharmacy-radius) var(--pharmacy-radius);
+    border-top: 0;
+    padding: 14px 16px;
+}
+
+/* ── Medicine Lines Table ────────────────────── */
+
+.hospital_pharmacy_dispense_profile .o_list_renderer thead th {
+    background-color: #f3f8f6 !important;
+    color: var(--pharmacy-text) !important;
+    font-size: 12px !important;
+    font-weight: 700 !important;
+}
+
+.hospital_pharmacy_dispense_profile .o_list_renderer tbody td {
+    font-size: 12.5px;
+}
+
+/* ── Notes Card ──────────────────────────────── */
+
+.hospital_pharmacy_dispense_profile .pharmacy_notes_title {
+    align-items: center;
+    color: var(--pharmacy-primary);
+    display: flex;
+    font-size: 11.5px;
+    font-weight: 700;
+    gap: 8px;
+    letter-spacing: 0.05em;
+    margin-bottom: 10px;
+    text-transform: uppercase;
+}
+
+.hospital_pharmacy_dispense_profile .pharmacy_notes_title .fa {
+    font-size: 13px;
+}
+
+.hospital_pharmacy_dispense_profile .pharmacy_notes_card .o_field_widget {
+    width: 100%;
+}
+
+.hospital_pharmacy_dispense_profile .pharmacy_notes_card textarea {
+    background-color: #f7faf9;
+    border: 1px solid var(--pharmacy-border-plain) !important;
+    border-radius: 6px;
+    min-height: 90px;
+    width: 100%;
+}
+
+/* ── Responsive ──────────────────────────────── */
+
+@media (max-width: 991.98px) {
+    .hospital_pharmacy_dispense_profile .pharmacy_dispense_info_grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .hospital_pharmacy_dispense_profile .pharmacy_dispense_kpi_card {
+        flex-basis: calc(50% - 10px);
+    }
+}
+
+@media (max-width: 575.98px) {
+    .hospital_pharmacy_dispense_profile .o_form_sheet,
+    .o_form_sheet.hospital_pharmacy_dispense_profile {
+        padding: 12px !important;
+    }
+
+    .hospital_pharmacy_dispense_profile .pharmacy_dispense_kpi_card {
+        flex-basis: 100%;
+    }
+
+    .hospital_pharmacy_dispense_profile .pharmacy_dispense_hero_icon {
+        flex: 0 0 54px;
+        font-size: 24px;
+        height: 54px;
+        width: 54px;
+    }
+
+    .hospital_pharmacy_dispense_profile .pharmacy_dispense_hero_ref .o_field_widget,
+    .hospital_pharmacy_dispense_profile .pharmacy_dispense_hero_ref span,
+    .hospital_pharmacy_dispense_profile .pharmacy_dispense_hero_ref input {
+        font-size: 22px !important;
+    }
+}

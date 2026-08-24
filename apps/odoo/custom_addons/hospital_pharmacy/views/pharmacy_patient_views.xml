@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Extend hospital.patient form: smart button + notebook tab -->
+    <record id="view_hospital_patient_form_inherit_pharmacy" model="ir.ui.view">
+        <field name="name">hospital.patient.form.inherit.pharmacy</field>
+        <field name="model">hospital.patient</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_patient_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button
+                    name="action_view_pharmacy_dispenses"
+                    type="object"
+                    class="oe_stat_button"
+                    icon="fa-medkit"
+                    invisible="not id"
+                >
+                    <field name="pharmacy_dispense_count" widget="statinfo" string="Pharmacy Dispenses"/>
+                </button>
+            </xpath>
+
+            <xpath expr="//field[@name='laboratory_result_ids']/ancestor::page[1]" position="after">
+                <page string="Pharmacy Dispenses" name="pharmacy_dispenses" invisible="not id">
+                    <field name="pharmacy_dispense_ids" readonly="1">
+                        <list string="Pharmacy Dispenses">
+                            <field name="name"/>
+                            <field name="dispense_date"/>
+                            <field name="prescription_id"/>
+                            <field name="physician_id"/>
+                            <field name="pharmacist_id"/>
+                            <field name="priority"/>
+                            <field name="state"/>
+                        </list>
+                    </field>
+                </page>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- Extend hospital.prescription form: smart button for dispensing -->
+    <record id="view_hospital_prescription_form_inherit_pharmacy" model="ir.ui.view">
+        <field name="name">hospital.prescription.form.inherit.pharmacy</field>
+        <field name="model">hospital.prescription</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_prescription_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//div[@class='oe_title']" position="before">
+                <div class="oe_button_box" name="button_box">
+                    <button
+                        name="action_view_pharmacy_dispense"
+                        type="object"
+                        class="oe_stat_button"
+                        icon="fa-medkit"
+                        invisible="not id"
+                    >
+                        <field name="pharmacy_dispense_count" widget="statinfo" string="Dispensing"/>
+                    </button>
+                </div>
+            </xpath>
+
+            <!-- Medicine lines: select from pharmacy catalog instead of free text.
+                 medicine_name stays in the arch (invisible) so the onchange-written
+                 value is saved for legacy reports. -->
+            <xpath expr="//field[@name='line_ids']/list/field[@name='medicine_name']" position="before">
+                <field name="medicine_id" options="{'no_create': True}"/>
+            </xpath>
+            <xpath expr="//field[@name='line_ids']/list/field[@name='medicine_name']" position="attributes">
+                <attribute name="column_invisible">1</attribute>
+                <attribute name="required">0</attribute>
+            </xpath>
+        </field>
+    </record>
+</odoo>
