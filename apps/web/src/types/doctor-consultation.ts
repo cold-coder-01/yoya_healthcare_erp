@@ -18,11 +18,11 @@
  * response replaces it, including a fresh `version`.
  */
 
-import type { ApiEnvelope } from "./doctor";
+import type { ApiEnvelope, DoctorVisitDetail } from "./doctor";
 
 export type { ApiEnvelope };
 
-/** hospital.consultation.state. Completion is not implemented in this slice. */
+/** hospital.consultation.state. */
 export type ConsultationState = "draft" | "completed";
 
 /**
@@ -71,6 +71,57 @@ export type DoctorConsultationResponse = {
   available: boolean;
   reason: string | null;
   consultation: DoctorConsultation | null;
+  /**
+   * SERVER TRUTH, not a client derivation.
+   * hospital.consultation.completion_blockers() is the single implementation
+   * that action_complete() also enforces, so the button this enables and the
+   * rule the server applies are the same rule. Deriving either in TypeScript
+   * would be a second opinion that diverges on the first change to either.
+   */
+  can_complete: boolean;
+  completion_blockers: ConsultationBlocker[];
+  completion_warnings: ConsultationWarning[];
+};
+
+/** Why completion is refused. `code` binds to a control; `message` is shown. */
+export type ConsultationBlocker = {
+  code:
+    | "assessment_missing"
+    | "no_diagnosis"
+    | "no_primary_diagnosis"
+    | "consultation_not_draft";
+  message: string;
+};
+
+/**
+ * Shown before completing. INFORMATIONAL ONLY -- never blocks.
+ *
+ * `amount` is the ONE financial figure that crosses into a clinical payload,
+ * and it is a bare total: the doctor needs to know the patient still owes the
+ * cashier, because the services just ordered will not be delivered until it is
+ * paid. No charge id, no payer, no sponsor split, no accounting structure
+ * exists on this type or on the server payload that fills it.
+ */
+export type ConsultationWarning = {
+  code: "outstanding_balance" | "pending_orders";
+  message: string;
+  amount?: number;
+  count?: number;
+};
+
+/**
+ * The completion response: the envelope, PLUS the re-read visit detail and the
+ * visit's new queue bucket, so the desk re-renders the read-only workspace and
+ * re-buckets the queue row from one payload instead of firing follow-up reads
+ * against a state it would have to guess at.
+ */
+export type ConsultationCompleteResponse = DoctorConsultationResponse & {
+  visit_detail: DoctorVisitDetail;
+  bucket: string;
+};
+
+export type ConsultationCompleteRequest = {
+  version: string;
 };
 
 /** What the editor holds while the doctor types. Never null, always a string. */
@@ -89,6 +140,13 @@ export type ConsultationSaveRequest = {
  */
 export const CONSULTATION_CONFLICT_CODE = "consultation_conflict";
 export const CONSULTATION_NOT_AVAILABLE_CODE = "consultation_not_available";
+
+/** What the workspace is currently doing about COMPLETION, separately from saving. */
+export type ConsultationCompleteStatus =
+  | "idle"
+  | "confirming"
+  | "completing"
+  | "error";
 
 /** What the workspace is currently doing. Drives every status affordance. */
 export type ConsultationSaveStatus =

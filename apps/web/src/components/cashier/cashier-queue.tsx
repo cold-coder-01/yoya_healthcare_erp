@@ -30,10 +30,16 @@ type Props = {
  * INITIAL CLEARANCE is the entrance handoff: triage is done and money stands
  * between the patient and the doctor.
  *
- * IN-CONSULTATION PAYMENTS is the second lane. The doctor has already started,
- * and a service ordered DURING the consultation is waiting on payment. These
- * visits are state=in_consultation and STAY that way through payment: the desk
- * shows the clinical state as a fact, never as something the cashier changes.
+ * SERVICE PAYMENTS is the second lane: a service ordered during the
+ * consultation is waiting on payment. It was named "In-consultation payments"
+ * until Slice 4 made that wrong -- a visit stays in this lane after the doctor
+ * signs off, because completing a consultation does not settle a bill, and a
+ * patient whose laboratory work is still unpaid must not vanish from the queue
+ * at the moment their doctor finishes with them.
+ *
+ * Rows therefore carry state=in_consultation OR state=done, and STAY that way
+ * through payment: the desk shows the clinical state as a fact, never as
+ * something the cashier changes.
  *
  * The two are rendered separately on purpose. Merged into one list, a patient
  * mid-consultation would read as somebody who never got past the entrance, and
@@ -73,8 +79,8 @@ export default function CashierQueue({
       <div className="p-4 text-sm text-slate-500">
         <p className="font-medium text-slate-700">Nothing awaiting payment.</p>
         <p className="mt-1 leading-5">
-          Visits appear here once triage is complete and money is still owed, or
-          when a service is ordered during a consultation.
+          Visits appear here once triage is complete and money is still owed,
+          or when an ordered service has not been paid for.
         </p>
       </div>
     );
@@ -129,11 +135,11 @@ export default function CashierQueue({
         </QueueSection>
 
         <QueueSection
-          title="In-consultation payments"
-          hint="Care under way. A newly ordered service is waiting on payment."
+          title="Service payments"
+          hint="An ordered service is waiting on payment."
           count={activeServiceRows.length}
           truncated={activeServiceTruncated}
-          empty="No services awaiting payment during a consultation."
+          empty="No ordered services awaiting payment."
         >
           {activeServiceRows.map((row) => {
             const categories = serviceCategorySummary(row.service_categories);

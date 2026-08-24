@@ -80,6 +80,71 @@ NARRATIVE_FIELDS = (
     "plan",
 )
 
+# Who may complete a consultation, beyond the physician it belongs to.
+#
+# MIRRORS hospital.appointment.CONSULTATION_OVERRIDE_GROUPS in
+# yoya_reception_bridge, which is the same tuple that may START a consultation.
+# Restated here rather than imported because yoya_clinical_bridge sits BELOW
+# yoya_reception_bridge in the dependency graph -- importing upward would be a
+# cycle. The two are asserted equal in the Slice 4 tests, so a change to one
+# surfaces as a failure rather than as silently divergent authority.
+COMPLETION_OVERRIDE_GROUPS = MANAGER_GROUPS
+
+# THE MINIMUM CLINICAL RECORD A COMPLETED CONSULTATION MAY CONSIST OF.
+#
+# Two rules, and deliberately only two. The precedent is
+# patient_evaluation._assert_triage_minimum_data, including its restraint:
+# every additional required field is a field a clinician will fabricate rather
+# than be blocked by, and fabricated clinical content is worse than absent
+# clinical content.
+#
+#   ASSESSMENT. The one narrative field that carries the physician's own
+#   reasoning and has no other source. presenting_complaint is SEEDED from
+#   triage, so requiring it would be a rule that passes automatically on almost
+#   every visit; `plan` is legitimately empty when the plan IS the orders
+#   already placed; HPI, ROS and examination are all judgement calls a doctor
+#   may reasonably leave for a focused visit.
+#
+#   AN ACTIVE PRIMARY DIAGNOSIS. Slice 2 built primary-uniqueness locking; a
+#   consultation completing with no primary leaves the episode uncodeable and
+#   makes that whole workflow optional. Requiring the primary implies requiring
+#   at least one diagnosis, so there is no separate "at least one" rule -- but
+#   the blocker below names the two situations differently, because "record a
+#   diagnosis" and "mark one of your diagnoses primary" are different actions.
+#
+# CERTAINTY IS NOT REQUIRED TO BE FINAL. hospital.patient.diagnosis.certainty
+# was given NO default precisely so nothing asserts a certainty nobody
+# recorded, and its help text explicitly blesses "Provisional and Active".
+# Demanding `final` would force doctors to overstate certainty on exactly the
+# visits where laboratory work is still pending -- the dangerous direction.
+COMPLETION_REQUIRED_NARRATIVE = "assessment"
+PRIMARY_DIAGNOSIS_TYPE = "primary"
+
+# Stable machine codes for the completion blockers, so the Doctor Desk can
+# render each one against its own control rather than pattern-matching prose.
+BLOCKER_ASSESSMENT_MISSING = "assessment_missing"
+BLOCKER_NO_DIAGNOSIS = "no_diagnosis"
+BLOCKER_NO_PRIMARY_DIAGNOSIS = "no_primary_diagnosis"
+BLOCKER_NOT_DRAFT = "consultation_not_draft"
+
+
+class ConsultationIncomplete(ValidationError):
+    """The clinical minimum for completion is not met yet.
+
+    A DISTINCT TYPE for the same reason ConsultationConflict is one: the API
+    layer has to answer it with its own status code and its own sentence.
+
+    Without it, "record your assessment" arrives at the desk as a bare 400
+    validation_error -- indistinguishable from a malformed request. The
+    difference matters: one is fixed by the doctor writing a paragraph, the
+    other by a developer fixing a client. It subclasses ValidationError so
+    that any caller which does not know about it still sees a clean refusal.
+
+    THIS IS NEITHER AN AUTHORIZATION FAILURE NOR A CONFLICT. The caller is
+    the right person, holding a current token; the record is simply not
+    finished yet.
+    """
+
 
 class ConsultationConflict(UserError):
     """A save was refused because the record changed since the client read it.
@@ -626,6 +691,205 @@ class HospitalConsultation(models.Model):
                 "edits were not saved. Reload the consultation to see the "
                 "current note, then re-apply your changes."
             )
+
+    # ------------------------------------------------------------------
+    # Completion
+    # ------------------------------------------------------------------
+    def _assert_may_complete(self):
+        """Only the physician conducting this consultation, or an override role.
+
+        SAME SHAPE AS hospital.appointment._assert_may_start_consultation, and
+        that symmetry is the point: the person who may open a consultation is
+        the person who may close it. A different answer at the two ends would
+        mean a note somebody could start and nobody could sign.
+
+        Enforced HERE, in the model, so the Odoo form, an RPC client and any
+        later service obey it -- not only the Doctor Desk route. The record
+        rules already stop a nurse, receptionist, cashier, lab technician or
+        pharmacist from reaching a consultation at all (none holds an ACL row
+        on this model); this closes the remaining case, which is one DOCTOR
+        completing ANOTHER doctor's consultation.
+        """
+        self.ensure_one()
+        user = self.env.user
+
+        if any(user.has_group(group) for group in COMPLETION_OVERRIDE_GROUPS):
+            return
+
+        # sudo() on the READ only. Which physician a consultation belongs to is
+        # a property of the record, not of the caller's rights, and the caller
+        # has already been admitted to this row by their own record rule. It
+        # only ever refuses; it grants nothing.
+        authoritative = self.sudo()
+        permitted = (
+            authoritative.doctor_id
+            | authoritative.appointment_id.doctor_id
+            | authoritative.encounter_id.primary_doctor_id
+        )
+        for doctor in permitted:
+            if doctor.user_id and doctor.user_id.id == user.id:
+                return
+
+        if not permitted:
+            raise AccessError(
+                "Consultation %s names no consulting physician, so only a "
+                "Hospital Manager or Hospital System Administrator may "
+                "complete it." % authoritative.name
+            )
+        raise AccessError(
+            "Only %s may complete consultation %s. Hospital Managers and "
+            "Hospital System Administrators may also do so."
+            % (", ".join(permitted.mapped("display_name")), authoritative.name)
+        )
+
+    def completion_blockers(self):
+        """Why this consultation may NOT be completed yet. [] means completable.
+
+        PURE. Reads, decides, returns -- writes nothing and raises nothing, so
+        the Doctor Desk can render the live list beside the button and
+        action_complete() can enforce the identical list a moment later. ONE
+        implementation consulted twice is what stops an enabled button from
+        meeting a refusal.
+
+        Each entry carries a stable `code` for the client to bind a control to,
+        and a `message` written for the clinician who has to fix it.
+        """
+        self.ensure_one()
+        blockers = []
+
+        if self.state != "draft":
+            blockers.append(
+                {
+                    "code": BLOCKER_NOT_DRAFT,
+                    "message": "This consultation is already completed.",
+                }
+            )
+            # Nothing below is meaningful for a record that is already closed,
+            # and listing clinical gaps against it would invite an edit the
+            # freeze would then refuse.
+            return blockers
+
+        if not (self[COMPLETION_REQUIRED_NARRATIVE] or "").strip():
+            blockers.append(
+                {
+                    "code": BLOCKER_ASSESSMENT_MISSING,
+                    "message": "Record your assessment before completing the "
+                    "consultation.",
+                }
+            )
+
+        # sudo() on the COUNT only. Diagnoses live under their own record rule,
+        # and this asks a question about the CONSULTATION -- "has a primary been
+        # recorded here" -- whose answer must not depend on which rows the
+        # caller may read. A doctor who could not see a colleague's diagnosis
+        # would otherwise be told to record a second primary, which
+        # _assert_single_primary would then refuse.
+        diagnoses = self.sudo().diagnosis_ids.filtered(lambda row: row.active)
+        if not diagnoses:
+            blockers.append(
+                {
+                    "code": BLOCKER_NO_DIAGNOSIS,
+                    "message": "Record at least one diagnosis, and mark one as "
+                    "primary, before completing the consultation.",
+                }
+            )
+        elif not diagnoses.filtered(
+            lambda row: row.diagnosis_type == PRIMARY_DIAGNOSIS_TYPE
+        ):
+            # Deliberately a DIFFERENT message from the one above. "Record a
+            # diagnosis" and "mark one of the diagnoses you already recorded as
+            # primary" are different actions, and one sentence covering both
+            # would send half the doctors who read it to the wrong control.
+            blockers.append(
+                {
+                    "code": BLOCKER_NO_PRIMARY_DIAGNOSIS,
+                    "message": "Mark one of the recorded diagnoses as the "
+                    "primary diagnosis before completing the consultation.",
+                }
+            )
+
+        return blockers
+
+    def can_complete(self):
+        """Affordance only. action_complete() remains the authority."""
+        self.ensure_one()
+        return not self.completion_blockers()
+
+    def _assert_completion_minimum_data(self):
+        """The blockers, raised. The same list the desk was shown."""
+        self.ensure_one()
+        blockers = self.completion_blockers()
+        if not blockers:
+            return
+        raise ConsultationIncomplete(
+            "Consultation %s cannot be completed yet.\n\n%s"
+            % (
+                self.display_name,
+                "\n".join("- %s" % blocker["message"] for blocker in blockers),
+            )
+        )
+
+    def action_complete(self, version):
+        """THE completion transition. Clinical first, then delegate.
+
+        ORDER IS THE DESIGN. Authorization, then state, then clinical minimum,
+        then the version lock, then the write -- and only then the appointment.
+        Every refusal above happens before anything is written, so a rejected
+        completion leaves the consultation, the appointment, the encounter and
+        the consultation charge byte-for-byte as they were.
+
+        THE VERSION IS REQUIRED, NOT OPTIONAL. Completing is a write against the
+        note the doctor believes they are signing. Without the token a tab
+        holding a stale read could freeze content it never displayed -- the same
+        last-write-wins hazard save_narrative closes, with worse consequences,
+        because there is no amendment workflow to undo it. _assert_version takes
+        SELECT ... FOR UPDATE on this row, so a concurrent save and a concurrent
+        completion serialize against each other and the second caller sees a
+        ConsultationConflict rather than a lost paragraph.
+
+        state and completed_at are writable here BY DESIGN: both are absent from
+        LOCKED_CLINICAL_FIELDS precisely so this transition can stamp itself
+        without needing a context bypass.
+
+        THE APPOINTMENT HALF IS DELEGATED, NEVER REIMPLEMENTED.
+        appointment.action_done() is the authoritative transition and already
+        carries the whole chain -- hospital_billing marks the consultation
+        charge delivered and moves the encounter active -> completed. Copying
+        any of that here would create a second, silently diverging definition of
+        what finishing a visit means.
+
+        NO SAVEPOINT AND NO COMMIT IN HERE. This runs inside whatever
+        transaction its caller opened, and the API route owns the savepoint. A
+        nested one here would let the consultation write survive a rolled-back
+        response.
+        """
+        self.ensure_one()
+
+        self._assert_may_complete()
+
+        if self.state != "draft":
+            raise UserError(
+                "Consultation %s is already completed." % self.display_name
+            )
+
+        self._assert_completion_minimum_data()
+        self._assert_version(version)
+
+        self.write({"state": "completed", "completed_at": fields.Datetime.now()})
+        self._log_audit(
+            "state_change",
+            "Consultation %s completed by %s."
+            % (self.name, self.env.user.display_name),
+        )
+
+        # Runs as the CALLER, deliberately. The doctor completing their own
+        # consultation is exactly the user hospital.appointment.action_done()
+        # now authorizes, so elevating here would hide an authorization bug
+        # rather than avoid one.
+        appointment = self.appointment_id
+        if appointment:
+            appointment.action_done()
+        return self
 
     def save_narrative(self, values, version):
         """THE authoritative narrative write. Version-checked and freeze-aware.

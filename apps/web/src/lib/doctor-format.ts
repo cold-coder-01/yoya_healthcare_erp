@@ -93,7 +93,8 @@ export function compactGender(value: string | null | undefined) {
  *             day -- intake, triage, awaiting_cashier
  *   review    queue_stage === ready_doctor AND the visit is still confirmed --
  *             the doctor's actual working set
- *   finished  in_consultation / completed
+ *   open      in_consultation -- the patient the doctor is with right now
+ *   finished  completed -- signed off
  *
  * WHAT THIS REPLACED, AND WHY. Review used to be `triage_status === "completed"`.
  * Triage completion is NOT readiness: a patient whose triage is done but who
@@ -113,21 +114,35 @@ export const DOCTOR_BUCKETS = [
   { key: "all", label: "All" },
   { key: "wait", label: "Wait" },
   { key: "review", label: "Review" },
+  { key: "open", label: "Open" },
   { key: "finished", label: "Finished" },
 ] as const;
 
 export type DoctorBucket = (typeof DOCTOR_BUCKETS)[number]["key"];
 
-const FINISHED_STAGES: readonly DoctorQueueStage[] = ["in_consultation", "completed"];
+/*
+  'in_consultation' USED TO LIVE IN FINISHED, and Slice 4 is why it does not any
+  more: once a consultation can be completed, Finished would hold both the
+  patient the doctor is with and the patient they signed off, indistinguishably
+  -- in the one tab a doctor uses to confirm they have nothing left to finish.
+
+  Mirrors OPEN_STAGES / FINISHED_STAGES in doctor_serializers.py. The two are
+  asserted equal in the backend tests rather than trusted to stay in step.
+*/
+const OPEN_STAGES: readonly DoctorQueueStage[] = ["in_consultation"];
+const FINISHED_STAGES: readonly DoctorQueueStage[] = ["completed"];
 
 export function bucketOf(row: DoctorQueueRow): Exclude<DoctorBucket, "all"> {
+  // Order matters: open before finished, so an in-consultation visit never
+  // falls through into the signed-off tab.
+  if (OPEN_STAGES.includes(row.queue_stage)) return "open";
   if (FINISHED_STAGES.includes(row.queue_stage)) return "finished";
   if (row.queue_stage === READY_STAGE && row.state === "confirmed") return "review";
   return "wait";
 }
 
 export function bucketCounts(rows: DoctorQueueRow[]) {
-  const counts = { all: rows.length, wait: 0, review: 0, finished: 0 };
+  const counts = { all: rows.length, wait: 0, review: 0, open: 0, finished: 0 };
   for (const row of rows) counts[bucketOf(row)] += 1;
   return counts;
 }
@@ -135,9 +150,8 @@ export function bucketCounts(rows: DoctorQueueRow[]) {
 /** Short Stat cell, matching the vendor column's three-letter register. */
 export function statLabel(row: DoctorQueueRow) {
   const bucket = bucketOf(row);
-  if (bucket === "finished") {
-    return row.queue_stage === "completed" ? "Done" : "Cons";
-  }
+  if (bucket === "finished") return "Done";
+  if (bucket === "open") return "Cons";
   if (bucket === "review") return "Rev";
   // Distinguishes the two reasons a patient is waiting, which is the single
   // most useful thing this column can say: the desk still has them, or triage

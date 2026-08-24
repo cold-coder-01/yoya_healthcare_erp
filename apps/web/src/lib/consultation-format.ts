@@ -85,6 +85,29 @@ export function isConsultationMode(visitState: string | null | undefined) {
 }
 
 /**
+ * VISIBLE is not the same question as EDITABLE, and Slice 4 is why.
+ *
+ * Before completion existed, `state === in_consultation` answered both: the
+ * only visit with a note was the visit being conducted. Completing one moves it
+ * to `done`, and keying the WORKSPACE on in_consultation would then hide the
+ * note the doctor had just signed -- replacing it with the pre-consultation
+ * patient panel and its Start Consultation button, on a visit that is finished.
+ *
+ * So visibility asks "is there a clinical record to read", and editability is
+ * decided by the SERVER, on the consultation itself (`consultation.editable`,
+ * which is state === 'draft'). Never re-derive editability from the visit
+ * state: the two can legitimately disagree, and the server is the one that
+ * refuses the write.
+ */
+export const COMPLETED_VISIT_STATE = "done";
+
+export function isConsultationVisible(visitState: string | null | undefined) {
+  return (
+    visitState === CONSULTATION_STATE || visitState === COMPLETED_VISIT_STATE
+  );
+}
+
+/**
  * The server record, flattened into an editable draft.
  *
  * Odoo returns null for an unset Text field; a textarea needs "". Doing the

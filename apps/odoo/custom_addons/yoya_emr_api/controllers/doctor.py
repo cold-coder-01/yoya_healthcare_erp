@@ -68,6 +68,7 @@ from odoo.osv import expression
 from odoo.addons.yoya_clinical_bridge.models.consultation import (
     CONSULTATION_APPOINTMENT_STATE,
     ConsultationConflict,
+    ConsultationIncomplete,
 )
 from odoo.addons.yoya_clinical_bridge.models.patient_diagnosis import (
     DIAGNOSIS_EDITABLE_FIELDS,
@@ -260,6 +261,24 @@ class ConsultationNoteResponseError(Exception):
     """
 
 
+class ConsultationCompleteResponseError(Exception):
+    """The consultation was completed, but its response could not be built.
+
+    A FOURTH response-failure type, for the same reason the third exists: the
+    sentence has to match the act. This one matters most of all, because the
+    act it reports is IRREVERSIBLE by any workflow this system has -- there is
+    no amendment path for a completed consultation. A doctor told "your note
+    failed to save" when what actually happened was a completed, frozen
+    consultation would be left believing they still had a note to finish.
+
+    By the time this reaches the handler the savepoint has rolled back the
+    consultation state, the completed_at stamp, the appointment transition, the
+    encounter completion and the consultation charge delivery -- all of it, as
+    one unit -- so "nothing was changed" is a statement of fact and the retry
+    is safe.
+    """
+
+
 class DiagnosisResponseError(Exception):
     """The diagnosis was written, but its response could not be built.
 
@@ -327,6 +346,15 @@ def doctor_endpoint(func):
                 "could not be produced. Nothing was changed. Please retry.",
                 500,
             )
+        except ConsultationCompleteResponseError:
+            # Logged at the raise site. The savepoint has already undone the
+            # completion, the appointment transition AND the encounter move.
+            return error_response(
+                "consultation_complete_response_failed",
+                "The consultation was not completed because the confirmation "
+                "could not be produced. Nothing was changed. Please retry.",
+                500,
+            )
         except DiagnosisResponseError:
             return error_response(
                 "diagnosis_response_failed",
@@ -359,6 +387,12 @@ def doctor_endpoint(func):
             # raises AccessError and names the doctor the visit is assigned to;
             # replacing that with generic copy would hide which gate refused.
             return error_response("access_denied", str(error), 403)
+        except ConsultationIncomplete as error:
+            # Above the ValidationError branch it subclasses, for the same
+            # reason ConsultationConflict sits above UserError. 422 rather
+            # than 400 because the REQUEST was fine: the record is not
+            # finished, and the doctor -- not a developer -- can fix it.
+            return error_response("consultation_incomplete", str(error), 422)
         except ValidationError as error:
             return error_response("validation_error", str(error), 400)
         except UserError as error:
@@ -475,6 +509,18 @@ def _load_open_consultation(env, appointment):
     decides the status code the desk sees.
     """
     if appointment.state != CONSULTATION_APPOINTMENT_STATE:
+        # A DONE VISIT IS NOT AN UNSTARTED ONE. Telling a doctor "the
+        # consultation has not been started" about a visit they signed ten
+        # seconds ago sends them hunting for a Start button on a locked
+        # record -- the same class of message bug the consultation GET
+        # carried before Slice 4.
+        signed = env["hospital.consultation"].find_for_appointment(appointment)
+        if signed and signed.state == "completed":
+            raise ApiError(
+                "consultation_completed",
+                "This consultation is completed and its diagnoses are locked.",
+                409,
+            )
         raise ApiError(
             "consultation_not_available", CONSULTATION_NOT_STARTED_REASON, 409
         )
@@ -704,6 +750,57 @@ def _build_consultation_values(body):
     # and is distinct from omitting the key, which leaves the field untouched.
     values = {name: coerce_text(name, body[name]) for name in provided}
     return version, values
+
+
+def _build_completion_version(body):
+    """Completion takes the version token and NOTHING else.
+
+    A stricter allowlist than _build_consultation_values, and deliberately so:
+    completing is not an edit. A client sending narrative alongside the
+    completion would be asking for an unsaved paragraph to be silently written
+    and then frozen -- which is exactly the "complete with unsaved changes"
+    hazard the Doctor Desk disables its button to prevent. Rejecting the field
+    by name says so, where dropping it silently would let that client ship.
+    """
+    provided = set(body)
+
+    version = body.get("version")
+    if not isinstance(version, str) or not version:
+        raise ApiError(
+            "missing_version",
+            "'version' is required and must be the token returned by the last "
+            "consultation read.",
+            400,
+        )
+    provided.discard("version")
+
+    protected = provided & CONSULTATION_PROTECTED_FIELDS
+    if protected:
+        raise ApiError(
+            "protected_field",
+            "These fields cannot be written directly: %s."
+            % ", ".join(sorted(protected)),
+            400,
+        )
+
+    narrative = provided & set(CONSULTATION_NARRATIVE_FIELDS)
+    if narrative:
+        raise ApiError(
+            "unknown_field",
+            "Completing a consultation writes no clinical content. Save the "
+            "note first, then complete it. Rejected: %s."
+            % ", ".join(sorted(narrative)),
+            400,
+        )
+
+    if provided:
+        raise ApiError(
+            "unknown_field",
+            "Unrecognised fields: %s." % ", ".join(sorted(provided)),
+            400,
+        )
+
+    return version
 
 
 class YoyaEmrDoctorController(http.Controller):
@@ -972,16 +1069,40 @@ class YoyaEmrDoctorController(http.Controller):
 
         appointment = _load_visit(env, appointment_id)
 
-        if appointment.state != CONSULTATION_APPOINTMENT_STATE:
-            return success_response(
-                serialize_consultation_envelope(
-                    env["hospital.consultation"].browse(),
-                    available=False,
-                    reason=CONSULTATION_NOT_STARTED_REASON,
+        # KEYED ON THE CONSULTATION, NOT ON THE APPOINTMENT STATE.
+        #
+        # This previously short-circuited on `state != in_consultation`, which
+        # meant that the moment a visit was completed the note written during
+        # it disappeared from the desk -- and disappeared behind the sentence
+        # "The consultation has not been started for this visit yet", told to
+        # the doctor who had just signed it. Diagnoses and laboratory orders
+        # were converted to the consultation-keyed shape for exactly this
+        # reason; the note was the last of the three still doing it.
+        #
+        # Three cases, distinguished by the only thing that governs the answer:
+        #
+        #   no consultation (pre-start)   -> unavailable, with the reason
+        #   consultation, state draft     -> available, editable true
+        #   consultation, state completed -> available, editable FALSE
+        #
+        # find_for_appointment() is the pure lookup and creates nothing, so this
+        # GET stays a pure read for a visit that never started.
+        consultation = env["hospital.consultation"].find_for_appointment(appointment)
+        if not consultation:
+            # An in_consultation visit with no consultation is the integrity
+            # fault _load_consultation reports; anything earlier in the workflow
+            # simply has no note yet, which is a normal shape.
+            if appointment.state == CONSULTATION_APPOINTMENT_STATE:
+                consultation = _load_consultation(env, appointment)
+            else:
+                return success_response(
+                    serialize_consultation_envelope(
+                        env["hospital.consultation"].browse(),
+                        available=False,
+                        reason=CONSULTATION_NOT_STARTED_REASON,
+                    )
                 )
-            )
 
-        consultation = _load_consultation(env, appointment)
         return success_response(
             serialize_consultation_envelope(consultation, available=True)
         )
@@ -1019,6 +1140,15 @@ class YoyaEmrDoctorController(http.Controller):
         version, values = _build_consultation_values(read_json_body())
 
         if appointment.state != CONSULTATION_APPOINTMENT_STATE:
+            signed = env["hospital.consultation"].find_for_appointment(
+                appointment
+            )
+            if signed and signed.state == "completed":
+                raise ApiError(
+                    "consultation_completed",
+                    "This consultation is completed and its note is locked.",
+                    409,
+                )
             raise ApiError(
                 "consultation_not_available",
                 CONSULTATION_NOT_STARTED_REASON,
@@ -1049,6 +1179,105 @@ class YoyaEmrDoctorController(http.Controller):
                     env.uid,
                 )
                 raise ConsultationNoteResponseError(str(error)) from error
+
+        return response
+
+    # ------------------------------------------------------------------
+    # 6b. Consultation -- complete
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>/consultation/complete",
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @doctor_endpoint
+    def consultation_complete(self, appointment_id, **params):
+        """THE completion write, AND IT DECIDES NOTHING.
+
+        Loads the visit through the caller's own scope, reads the version off
+        the body and calls one model method. It does NOT check authorization
+        beyond opening the desk, does NOT evaluate the clinical minimum, does
+        NOT compare versions, does NOT write consultation.state, does NOT move
+        the appointment, does NOT touch the encounter or any charge, and does
+        NOT sudo(). Every one of those belongs to
+        hospital.consultation.action_complete(), which enforces them for the
+        Odoo form and any RPC caller as well as for this route.
+
+        ATOMICITY, AND WHY IT MATTERS MORE HERE THAN ANYWHERE ELSE.
+        One savepoint spans a transition that reaches four records: the
+        consultation freezes, the appointment moves to done, the encounter moves
+        active -> completed and the consultation charge is marked delivered.
+        doctor_endpoint catches exceptions and RETURNS a response, and Odoo's
+        dispatcher commits on a normal return -- so without the savepoint a
+        failure while serializing would commit all four and tell the doctor
+        completion had failed. They would then be looking at a frozen note they
+        believe is still open, with no amendment workflow to recover through.
+
+        THE RESPONSE IS THE WHOLE POST-COMPLETION PICTURE. Envelope plus visit
+        detail plus bucket, so the desk re-renders the read-only workspace AND
+        re-buckets the queue row from one payload rather than firing three
+        follow-up reads against a state it has to guess at.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+
+        appointment = _load_visit(env, appointment_id)
+        version = _build_completion_version(read_json_body())
+
+        if appointment.state != CONSULTATION_APPOINTMENT_STATE:
+            # Completing anything else is not a stale read, it is the wrong
+            # visit -- a done visit is already complete and a confirmed one was
+            # never started. 409 with the state named, rather than letting the
+            # model raise a message written for the Odoo form.
+            raise ApiError(
+                "consultation_not_available",
+                "Visit %s is not in consultation, so there is nothing to "
+                "complete." % (appointment.appointment_code or appointment.id),
+                409,
+            )
+
+        consultation = _load_consultation(env, appointment)
+
+        # ONE atomic unit: the transition AND its serialized response.
+        with env.cr.savepoint():
+            # Raises AccessError (403), ValidationError (422) or
+            # ConsultationConflict (409) -- all before anything is written, and
+            # all propagating out of the savepoint untouched.
+            consultation.action_complete(version)
+
+            try:
+                # Re-read from the records as they NOW stand. The desk renders
+                # the derived state, never a value it guessed from the action it
+                # just took.
+                consultation.invalidate_recordset()
+                appointment.invalidate_recordset()
+                prefetch_worklist(appointment)
+
+                payload = serialize_consultation_envelope(
+                    consultation, available=True
+                )
+                # Nested under its own key rather than merged into the
+                # envelope: the two payloads are independently owned and carry
+                # two different confidentiality arguments, and flattening them
+                # would make either one's key set impossible to audit.
+                detail = serialize_visit_detail(
+                    appointment, doctor_capability_flags(env)
+                )
+                payload["visit_detail"] = detail
+                payload["bucket"] = bucket_of(
+                    {
+                        "queue_stage": detail["visit"]["queue_stage"],
+                        "state": detail["visit"]["state"],
+                    }
+                )
+                response = success_response(payload)
+            except Exception as error:
+                _logger.exception(
+                    "Doctor consultation-complete response failed for "
+                    "appointment=%s uid=%s; rolling the completion back",
+                    appointment_id,
+                    env.uid,
+                )
+                raise ConsultationCompleteResponseError(str(error)) from error
 
         return response
 

@@ -4,7 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { messageFromPayload } from "@/lib/api-error";
 import { hospitalToday } from "@/lib/clinical-format";
-import { isConsultationMode } from "@/lib/consultation-format";
+import {
+  isConsultationMode,
+  isConsultationVisible,
+} from "@/lib/consultation-format";
 import type { ConsultationSection } from "@/lib/diagnosis-format";
 import { bucketCounts, bucketOf, type DoctorBucket } from "@/lib/doctor-format";
 import type {
@@ -196,6 +199,22 @@ export default function DoctorWorkstation() {
     and a consultation this browser thinks it started but the model refused
     never does.
   */
+  /*
+    TWO QUESTIONS, ANSWERED SEPARATELY.
+
+    `consultationVisible` decides whether the clinical workspace renders at all.
+    It covers a COMPLETED visit too, because the note, diagnoses and orders of a
+    finished consultation must stay readable from the desk -- keying the
+    workspace on in_consultation alone put the doctor back on the
+    Start Consultation panel the instant they signed off.
+
+    `consultationOpen` still means "the doctor may act". It gates the Clinical
+    Actions rail, which offers WRITES; the workspace itself takes editability
+    from the server's own consultation.editable rather than from either flag.
+  */
+  const consultationVisible = isConsultationVisible(
+    detailForSelection?.visit.state,
+  );
   const consultationOpen = isConsultationMode(detailForSelection?.visit.state);
 
   /*
@@ -249,7 +268,7 @@ export default function DoctorWorkstation() {
           truncated={truncated}
           onSelect={setSelectedId}
         />
-        {consultationOpen && detailForSelection ? (
+        {consultationVisible && detailForSelection ? (
           /*
             key={appointment_id} is LOAD-BEARING, not a lint appeasement. It
             forces a fresh mount per patient, so the previous patient's draft,
@@ -264,6 +283,15 @@ export default function DoctorWorkstation() {
             loading={detailLoading}
             section={section}
             onSectionChange={openSection}
+            /*
+              One token bump refetches BOTH the queue and the open patient, so
+              the visit's new state, its new bucket and the read-only workspace
+              can never disagree after a completion. The detail the server
+              returned is discarded here deliberately: the refetch is the same
+              path every other state change already uses, and having one
+              recovery path is worth more than saving a round trip.
+            */
+            onCompleted={refresh}
           />
         ) : (
           <DoctorPatientPanel
@@ -280,6 +308,11 @@ export default function DoctorWorkstation() {
           <DoctorOrderRail
             visitState={detailForSelection?.visit.state ?? null}
             encounterName={detailForSelection?.encounter?.name ?? null}
+            /*
+              The rail offers WRITES, so it stays keyed on consultationOpen. A
+              completed visit renders the workspace but must not be invited to
+              record a diagnosis or place an order.
+            */
             diagnosisActive={consultationOpen && section === "diagnosis"}
             onOpenDiagnosis={
               consultationOpen ? () => openSection("diagnosis") : null

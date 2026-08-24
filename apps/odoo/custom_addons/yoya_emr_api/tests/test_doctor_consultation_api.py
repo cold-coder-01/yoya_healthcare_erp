@@ -1042,12 +1042,36 @@ class TestConsultationConfidentiality(ConsultationCase):
             self.assertNotIn(forbidden, serialized, forbidden)
 
     def test_the_payload_key_set_is_exactly_the_agreed_contract(self):
-        """A new key cannot appear without this test being updated on purpose."""
+        """A new key cannot appear without this test being updated on purpose.
+
+        Slice 4 added three, deliberately: can_complete, completion_blockers and
+        completion_warnings. They come from the MODEL
+        (hospital.consultation.completion_blockers()), which action_complete()
+        enforces a moment later, so the button the desk enables and the rule the
+        server applies are one rule.
+
+        The warnings are the ONE place a financial figure crosses into a
+        clinical payload -- a bare outstanding total, because a doctor about to
+        sign off needs to know the services they just ordered will not be
+        delivered until the patient pays. The confidentiality test above still
+        runs over the whole payload and still refuses every billing structure,
+        which is what keeps that exception narrow.
+        """
         appointment, _encounter = self._in_consultation_visit()
 
         _response, payload = self._get(CONSULTATION % appointment.id)
 
-        self.assertEqual(set(payload["data"]), {"available", "reason", "consultation"})
+        self.assertEqual(
+            set(payload["data"]),
+            {
+                "available",
+                "reason",
+                "consultation",
+                "can_complete",
+                "completion_blockers",
+                "completion_warnings",
+            },
+        )
         self.assertEqual(
             set(payload["data"]["consultation"]), EXPECTED_CONSULTATION_KEYS
         )

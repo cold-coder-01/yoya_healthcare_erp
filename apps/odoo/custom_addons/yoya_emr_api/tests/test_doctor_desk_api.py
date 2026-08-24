@@ -443,7 +443,14 @@ class TestDoctorDeskQueueSemantics(DoctorDeskCase):
         self.assertEqual(self._rows(payload)[appointment.id]["queue_stage"], READY_STAGE)
 
     def test_in_consultation_and_done_stay_in_the_worklist(self):
-        """The Finished bucket is history the doctor still needs today."""
+        """Both stay in the doctor's day -- in DIFFERENT buckets.
+
+        Slice 4 split them. `in_consultation` used to count as "finished",
+        which put the patient the doctor was currently examining into the tab
+        they use to confirm nothing is left to finish. That was tolerable only
+        while nothing could ever leave in_consultation; completing a
+        consultation ended it.
+        """
         appointment, _ = self._ready_visit()
         appointment.with_user(self.doctor_user).action_start_consultation()
         appointment.invalidate_recordset()
@@ -452,7 +459,11 @@ class TestDoctorDeskQueueSemantics(DoctorDeskCase):
         row = self._rows(payload)[appointment.id]
         self.assertEqual(row["queue_stage"], "in_consultation")
         self.assertEqual(row["state"], "in_consultation")
-        self.assertEqual(payload["data"]["counts"]["finished"], 1)
+        self.assertEqual(payload["data"]["counts"]["open"], 1)
+        self.assertEqual(
+            payload["data"]["counts"]["finished"], 0,
+            "A patient still with the doctor is not finished.",
+        )
         # Already started: the desk must not offer to start it again.
         self.assertFalse(row["can_start_consultation"])
 
@@ -517,7 +528,10 @@ class TestDoctorDeskStartConsultation(DoctorDeskCase):
         # Re-serialized from the records as they now stand.
         self.assertEqual(payload["data"]["visit"]["state"], "in_consultation")
         self.assertEqual(payload["data"]["visit"]["queue_stage"], "in_consultation")
-        self.assertEqual(payload["data"]["bucket"], "finished")
+        self.assertEqual(
+            payload["data"]["bucket"], "open",
+            "Starting a consultation opens it; it does not finish it.",
+        )
 
     def test_model_triage_gate_still_refuses_and_the_route_forwards_it(self):
         """Odoo's refusal is not swallowed, and no state moves."""
@@ -711,7 +725,10 @@ class TestDoctorDeskStartConsultation(DoctorDeskCase):
         self.assertTrue(payload["success"])
         self.assertEqual(payload["data"]["visit"]["state"], "in_consultation")
         self.assertEqual(payload["data"]["visit"]["queue_stage"], "in_consultation")
-        self.assertEqual(payload["data"]["bucket"], "finished")
+        self.assertEqual(
+            payload["data"]["bucket"], "open",
+            "Starting a consultation opens it; it does not finish it.",
+        )
 
         appointment.invalidate_recordset()
         encounter.invalidate_recordset()

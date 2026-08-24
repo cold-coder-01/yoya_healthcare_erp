@@ -37,6 +37,7 @@ import json
 import uuid
 
 from odoo import fields
+from odoo.exceptions import UserError
 from odoo.tests import HttpCase, tagged
 
 G_CASHIER = "hospital_billing.group_hospital_cashier"
@@ -235,6 +236,58 @@ class TestCashierActiveServiceQueue(HttpCase):
         request.action_confirm_request()
         appointment.invalidate_recordset()
         return request
+
+    def _complete_consultation(self, appointment):
+        """Finish the visit the way Slice 4 really does: through the model.
+
+        NOT a state write. action_complete() is what delegates to
+        appointment.action_done(), which delivers the consultation charge and
+        completes the encounter -- and it is precisely that chain the lane has
+        to survive. A fixture that wrote state='done' would prove nothing.
+        """
+        consultation = (
+            self.env["hospital.consultation"]
+            .sudo()
+            .find_for_appointment(appointment.sudo())
+        )
+        if not consultation:
+            consultation = (
+                self.env["hospital.consultation"]
+                .sudo()
+                .get_or_create_for_appointment(appointment.sudo())
+            )
+        # The clinical minimum, written directly: this file tests the CASHIER
+        # lane, and the completion rules have their own suite.
+        consultation.sudo().write({"assessment": "Seen and assessed."})
+        # Through the model's own service method, not a raw create(): ownership
+        # -- patient, encounter, appointment, physician -- is derived from the
+        # consultation there, and a raw create would have to restate all four
+        # and would drift the moment one of them changes.
+        self.env["hospital.patient.diagnosis"].sudo().add_to_consultation(
+            consultation.sudo(),
+            self._disease(),
+            {"diagnosis_type": "primary"},
+        )
+        consultation.invalidate_recordset()
+        consultation.with_user(self.manager).action_complete(
+            consultation.version_token()
+        )
+        appointment.invalidate_recordset()
+        self.assertEqual(appointment.state, "done")
+        return consultation
+
+    def _disease(self):
+        tag = uuid.uuid4().hex[:6]
+        category = self.env["hospital.disease.category"].sudo().create(
+            {"name": "Cash %s" % tag, "code": "CSH%s" % tag.upper()}
+        )
+        return self.env["hospital.disease"].sudo().create(
+            {
+                "name": "Cash Disease %s" % tag,
+                "code": "C%s" % tag.upper(),
+                "category_id": category.id,
+            }
+        )
 
     # ------------------------------------------------------------------
     # HTTP helpers
@@ -705,3 +758,152 @@ class TestCashierActiveServiceQueue(HttpCase):
             places=2,
             msg="The figure is this encounter's alone.",
         )
+
+
+# ======================================================================
+# SLICE 4 CARRY-FORWARD: a completed visit must not vanish from the window.
+# ======================================================================
+@tagged("post_install", "-at_install", "cashier_active_service")
+class TestCashierServicePaymentsAfterCompletion(TestCashierActiveServiceQueue):
+    """THE REGRESSION SLICE 4 COULD MOST EASILY HAVE INTRODUCED.
+
+    ACTIVE_SERVICE_CLEARANCE_STATES held only ('in_consultation',) when this
+    lane was built, because at that time nothing could leave that state. Slice 4
+    made completion possible, and with the old tuple the transition
+    in_consultation -> done would have made an unpaid patient DISAPPEAR from
+    every cashier queue at the exact moment their doctor signed off: money still
+    owed, no queue anywhere, and the laboratory still refusing to collect the
+    specimen.
+
+    Widening the tuple is the whole fix. The predicate is untouched, which is
+    what these tests pin: a done visit with nothing outstanding still never
+    appears, and one that owes money still leaves the lane the instant it is
+    paid.
+    """
+
+    def test_90_an_unpaid_visit_survives_consultation_completion(self):
+        appointment = self._in_consultation()
+        self._order_laboratory(appointment)
+        self._login_cashier()
+        self.assertTrue(
+            self._active(self._worklist(), appointment),
+            "Precondition: the unpaid visit is discoverable while in consultation.",
+        )
+
+        self._complete_consultation(appointment)
+
+        self._login_cashier()
+        rows = self._active(self._worklist(), appointment)
+        self.assertEqual(
+            len(rows), 1,
+            "Signing off a consultation does not settle a bill.",
+        )
+        self.assertEqual(rows[0]["visit_state"], "done")
+        self.assertAlmostEqual(rows[0]["patient_outstanding"], LAB_FEE, places=2)
+        self.assertEqual(
+            [category["key"] for category in rows[0]["service_categories"]],
+            ["laboratory"],
+        )
+
+    def test_91_completion_does_not_touch_front_desk_stage(self):
+        """The lane is a SECOND lane, not a widened stage. A completed visit
+        must read 'completed' on front_desk_stage -- never 'awaiting_cashier',
+        which would put it back in the pre-consultation entrance queue."""
+        appointment = self._in_consultation()
+        self._order_laboratory(appointment)
+        self._complete_consultation(appointment)
+
+        appointment.invalidate_recordset()
+        self.assertEqual(appointment.sudo().front_desk_stage, "completed")
+
+        self._login_cashier()
+        payload = self._worklist()
+        self.assertFalse(
+            self._initial(payload, appointment),
+            "A finished visit is not an initial-clearance case.",
+        )
+        self.assertTrue(self._active(payload, appointment))
+
+    def test_92_a_completed_visit_with_nothing_owed_never_appears(self):
+        appointment = self._in_consultation()
+        self._complete_consultation(appointment)
+        self._login_cashier()
+        self.assertFalse(
+            self._active(self._worklist(), appointment),
+            "Widening the state tuple must not widen eligibility.",
+        )
+
+    def test_93_payment_removes_the_done_visit_and_leaves_it_done(self):
+        """THE EXIT CONDITION, on the far side of completion."""
+        appointment = self._in_consultation()
+        request = self._order_laboratory(appointment)
+        self._complete_consultation(appointment)
+
+        self._login_cashier()
+        self.assertTrue(self._active(self._worklist(), appointment))
+
+        response = self._pay_http(appointment, LAB_FEE)
+        self.assertEqual(response.status_code, 200)
+        appointment.invalidate_recordset()
+
+        self.assertFalse(
+            self._active(self._worklist(), appointment),
+            "Cleared money means the visit leaves the lane by itself.",
+        )
+        self.assertEqual(
+            appointment.state, "done",
+            "Paying is not a clinical transition, in either direction.",
+        )
+        # And the laboratory moved with it, which is the point of the whole lane.
+        request.invalidate_recordset()
+        self.assertFalse(request.sudo().billing_blocked)
+
+    def test_94_the_blocked_lab_stays_blocked_until_it_is_paid(self):
+        """Completion must not unblock pending work, and does not touch it."""
+        appointment = self._in_consultation()
+        request = self._order_laboratory(appointment)
+        self.assertTrue(request.sudo().billing_blocked)
+
+        self._complete_consultation(appointment)
+        request.invalidate_recordset()
+        self.assertTrue(
+            request.sudo().billing_blocked,
+            "A signed consultation does not pay for a test.",
+        )
+        with self.assertRaises(UserError):
+            request.sudo().action_mark_sample_collected()
+
+    def test_95_after_payment_the_specimen_can_be_collected(self):
+        """The encounter is COMPLETED, not closed, so downstream work proceeds."""
+        appointment = self._in_consultation()
+        request = self._order_laboratory(appointment)
+        self._complete_consultation(appointment)
+
+        self._login_cashier()
+        self._pay_http(appointment, LAB_FEE)
+
+        appointment.invalidate_recordset()
+        request.invalidate_recordset()
+        self.assertEqual(appointment.encounter_id.sudo().state, "completed")
+        request.sudo().action_mark_sample_collected()
+        request.invalidate_recordset()
+        self.assertEqual(request.state, "sample_collected")
+
+    def test_96_the_done_row_carries_no_clinical_content(self):
+        appointment = self._in_consultation("Completed Confidential")
+        request = self._order_laboratory(appointment)
+        request.sudo().write({"clinical_notes": "SECRETAFTERDONE sepsis"})
+        consultation = self._complete_consultation(appointment)
+
+        self._login_cashier()
+        blob = json.dumps(self._worklist())
+        for banned in (
+            "SECRETAFTERDONE",
+            "clinical_notes",
+            "diagnosis",
+            "assessment",
+            "presenting_complaint",
+            consultation.name,
+            request.name,
+        ):
+            self.assertNotIn(banned, blob, banned)

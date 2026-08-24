@@ -45,6 +45,12 @@ const STATE_LABELS: Record<string, string> = {
   // fact plainly so nobody reads the queue as a change of care state.
   in_consultation: "In consultation",
   confirmed: "Checked in",
+  // Slice 4. A completed visit stays in the service-payment lane while money
+  // is still owed on it, so the lane has to be able to say so. "Visit
+  // finished" describes the CLINICAL state and nothing else -- the patient is
+  // no longer with the doctor; the money is a separate fact the row's amount
+  // already carries.
+  done: "Visit finished",
 };
 
 export function laneLabel(lane: CashierLane) {

@@ -173,9 +173,13 @@ test("buckets are driven by the authoritative stage", () => {
   assert.equal(bucketOf(row({ queue_stage: "triage" })), "wait");
   assert.equal(bucketOf(row({ queue_stage: "awaiting_cashier" })), "wait");
   assert.equal(bucketOf(row({ queue_stage: "ready_doctor" })), "review");
+  // Slice 4 split these two. `in_consultation` used to be filed as "finished",
+  // which put the patient the doctor was CURRENTLY EXAMINING into the tab they
+  // use to confirm nothing is left to finish. Tolerable only while nothing
+  // could ever leave in_consultation; completion ended that.
   assert.equal(
     bucketOf(row({ queue_stage: "in_consultation", state: "in_consultation" })),
-    "finished",
+    "open",
   );
   assert.equal(bucketOf(row({ queue_stage: "completed", state: "done" })), "finished");
 });
@@ -198,7 +202,10 @@ test("Review also requires the visit to still be confirmed", () => {
   );
 });
 
-test("a started consultation counts as finished even if triage never completed", () => {
+test("a started consultation is OPEN even if triage never completed", () => {
+  // The claim being pinned is unchanged: the STAGE decides, and a stale
+  // triage_status cannot drag a started consultation back into Wait. Only the
+  // bucket it lands in moved, from finished to open.
   assert.equal(
     bucketOf(
       row({
@@ -207,7 +214,7 @@ test("a started consultation counts as finished even if triage never completed",
         triage_status: "waiting",
       }),
     ),
-    "finished",
+    "open",
   );
 });
 
@@ -224,7 +231,11 @@ test("bucket counts sum to the total", () => {
   assert.equal(counts.wait, 2);
   assert.equal(counts.review, 2);
   assert.equal(counts.finished, 1);
-  assert.equal(counts.wait + counts.review + counts.finished, counts.all);
+  assert.equal(counts.open, 0);
+  assert.equal(
+    counts.wait + counts.review + counts.open + counts.finished,
+    counts.all,
+  );
 });
 
 test("stat labels stay within the vendor column's short register", () => {

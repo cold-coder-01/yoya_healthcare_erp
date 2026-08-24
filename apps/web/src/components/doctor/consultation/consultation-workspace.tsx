@@ -23,7 +23,11 @@ import type { ApiEnvelope, DoctorVisitDetail, DoctorVitals } from "@/types/docto
 import type {
   ConsultationDraft,
   ConsultationNarrativeField,
+  ConsultationBlocker,
+  ConsultationCompleteResponse,
+  ConsultationCompleteStatus,
   ConsultationSaveStatus,
+  ConsultationWarning,
   DoctorConsultation,
   DoctorConsultationResponse,
 } from "@/types/doctor-consultation";
@@ -102,6 +106,7 @@ export default function ConsultationWorkspace({
   loading,
   section,
   onSectionChange,
+  onCompleted,
 }: {
   detail: DoctorVisitDetail;
   loading: boolean;
@@ -118,6 +123,17 @@ export default function ConsultationWorkspace({
   */
   section: ConsultationSection;
   onSectionChange: (section: ConsultationSection) => void;
+  /*
+    Fired after a SUCCESSFUL completion, with the visit detail the server
+    re-read inside the same transaction. The parent uses it to re-bucket the
+    queue row and to swap the workspace to read-only.
+
+    The payload is passed UP rather than refetched, because the server already
+    produced the post-completion state atomically; a follow-up GET would be a
+    second read of a state this component has already been handed, and could
+    race a concurrent write.
+  */
+  onCompleted?: (detail: DoctorVisitDetail) => void;
 }) {
   const appointmentId = detail.visit.appointment_id;
 
@@ -145,6 +161,29 @@ export default function ConsultationWorkspace({
   const [savedPulse, setSavedPulse] = useState(false);
 
   /*
+    COMPLETION IS TRACKED SEPARATELY FROM SAVING, and deliberately so.
+
+    They are different acts with different consequences: a failed save leaves
+    text the doctor can retype, a failed completion leaves a question about
+    whether the record is signed. Sharing one status enum would make "error"
+    ambiguous at exactly the moment the doctor most needs to know which of the
+    two failed.
+  */
+  const [completeStatus, setCompleteStatus] =
+    useState<ConsultationCompleteStatus>("idle");
+  const [completeError, setCompleteError] = useState<string | null>(null);
+  /*
+    SERVER VERDICTS, held exactly as received and never recomputed here.
+    can_complete and completion_blockers come from
+    hospital.consultation.completion_blockers(), which action_complete()
+    enforces a moment later. A local re-derivation would eventually enable a
+    button the server refuses.
+  */
+  const [canComplete, setCanComplete] = useState(false);
+  const [blockers, setBlockers] = useState<ConsultationBlocker[]>([]);
+  const [warnings, setWarnings] = useState<ConsultationWarning[]>([]);
+
+  /*
     NOTE ON CROSS-PATIENT SAFETY.
 
     The parent mounts this component with key={appointmentId}, so switching
@@ -160,6 +199,21 @@ export default function ConsultationWorkspace({
     setDraft(next);
     setBaseline(next);
   }, []);
+
+  /*
+    The completion verdict travels with EVERY consultation payload -- the load,
+    each save and the completion itself -- so the button re-evaluates the moment
+    a doctor writes an assessment or marks a primary diagnosis, without this
+    component knowing what either of those rules is.
+  */
+  const applyCompletionVerdict = useCallback(
+    (payload: DoctorConsultationResponse) => {
+      setCanComplete(Boolean(payload.can_complete));
+      setBlockers(payload.completion_blockers ?? []);
+      setWarnings(payload.completion_warnings ?? []);
+    },
+    [],
+  );
 
   /* ---------------- load ---------------- */
   useEffect(() => {
@@ -187,6 +241,7 @@ export default function ConsultationWorkspace({
           return;
         }
         applyServerRecord(payload.data.consultation);
+        applyCompletionVerdict(payload.data);
         if (!payload.data.available) {
           setLoadError(payload.data.reason);
         }
@@ -203,7 +258,7 @@ export default function ConsultationWorkspace({
 
     void loadNote();
     return () => controller.abort();
-  }, [appointmentId, applyServerRecord]);
+  }, [appointmentId, applyServerRecord, applyCompletionVerdict]);
 
   /*
     The per-field ✓ fades after a few seconds. Leaving every field permanently
@@ -287,6 +342,10 @@ export default function ConsultationWorkspace({
         there is no divergence for a refresh to repair.
       */
       applyServerRecord(body.data.consultation);
+      // The saved assessment may have just satisfied the completion rule, so
+      // the verdict is re-read from the same response rather than left stale
+      // until the next page load.
+      applyCompletionVerdict(body.data);
       setStatus("saved");
       setStatusMessage(null);
       setSavedAt(new Date().toISOString());
@@ -295,7 +354,15 @@ export default function ConsultationWorkspace({
       setStatus("error");
       setStatusMessage("Unable to reach the consultation service.");
     }
-  }, [appointmentId, applyServerRecord, baseline, consultation, draft, editable]);
+  }, [
+    appointmentId,
+    applyServerRecord,
+    applyCompletionVerdict,
+    baseline,
+    consultation,
+    draft,
+    editable,
+  ]);
 
   const reload = useCallback(async () => {
     const target = appointmentId;
@@ -308,6 +375,7 @@ export default function ConsultationWorkspace({
         (await response.json()) as ApiEnvelope<DoctorConsultationResponse>;
       if (response.ok && payload.success) {
         applyServerRecord(payload.data.consultation);
+        applyCompletionVerdict(payload.data);
         setStatus("idle");
         setStatusMessage(null);
       }
@@ -316,7 +384,86 @@ export default function ConsultationWorkspace({
     } finally {
       setNoteLoading(false);
     }
-  }, [appointmentId, applyServerRecord]);
+  }, [appointmentId, applyServerRecord, applyCompletionVerdict]);
+
+  /* ---------------- complete ---------------- */
+  /*
+    THE GATE ON THE BUTTON, in one place.
+
+    `dirty` is the condition that matters most and is the reason completion does
+    NOT auto-save: completing writes no clinical content, so an unsaved
+    paragraph would be frozen out of existence -- the note would lock with text
+    the doctor could still see on screen but which was never sent. The server
+    enforces the same separation by rejecting narrative fields on the completion
+    endpoint; this refuses to offer the action in the first place.
+  */
+  const completeBlockedByDraft = dirty || status === "saving";
+  const mayComplete =
+    editable && canComplete && !completeBlockedByDraft && !noteLoading;
+
+  const complete = useCallback(async () => {
+    if (!consultation || !editable || completeBlockedByDraft) return;
+
+    setCompleteStatus("completing");
+    setCompleteError(null);
+    const target = appointmentId;
+
+    try {
+      const response = await fetch(
+        `/api/doctor/visits/${target}/consultation/complete`,
+        {
+          method: "POST",
+          cache: "no-store",
+          headers: { "Content-Type": "application/json" },
+          // THE VERSION AND NOTHING ELSE. Completion is not an edit, and the
+          // server rejects narrative fields here by name.
+          body: JSON.stringify({ version: consultation.version }),
+        },
+      );
+      const body =
+        (await response.json()) as ApiEnvelope<ConsultationCompleteResponse>;
+
+      if (!response.ok || !body.success) {
+        const code = body.success === false ? body.error.code : null;
+        /*
+          A conflict here means the note moved after this tab read it -- another
+          tab saved, or another tab completed. Reloading is the only safe
+          recovery for the same reason it is on save: the doctor must see what
+          they are actually signing.
+        */
+        setCompleteStatus(code === CONSULTATION_CONFLICT_CODE ? "error" : "error");
+        setCompleteError(
+          messageFromPayload(body, "Unable to complete the consultation."),
+        );
+        return;
+      }
+
+      /*
+        The server re-read all of this INSIDE the completing transaction, so it
+        describes the committed state rather than a state this component
+        predicted. The consultation now reports editable=false, which is what
+        flips the whole workspace read-only -- no local flag is set for it.
+      */
+      applyServerRecord(body.data.consultation);
+      applyCompletionVerdict(body.data);
+      setCompleteStatus("idle");
+      setCompleteError(null);
+      setStatus("idle");
+      setStatusMessage(null);
+      onCompleted?.(body.data.visit_detail);
+    } catch {
+      setCompleteStatus("error");
+      setCompleteError("Unable to reach the consultation service.");
+    }
+  }, [
+    appointmentId,
+    applyServerRecord,
+    applyCompletionVerdict,
+    completeBlockedByDraft,
+    consultation,
+    editable,
+    onCompleted,
+  ]);
 
   const { patient, triage, medical_alerts: alerts, visit, encounter } = detail;
   const problem = status === "conflict" || status === "error";
@@ -508,9 +655,18 @@ export default function ConsultationWorkspace({
         ) : (
           <>
             {!editable && consultation ? (
-              <p className="mb-2.5 rounded-md border border-slate-300 bg-white px-3 py-2 text-[11px] leading-snug text-slate-700">
-                This consultation is completed and its clinical content is locked.
-              </p>
+              <div className="mb-2.5 rounded-md border border-slate-300 bg-slate-50 px-3 py-2">
+                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-700">
+                  Consultation completed
+                </p>
+                <p className="mt-0.5 text-[11px] leading-snug text-slate-600">
+                  The clinical note and its diagnoses are locked. Orders already
+                  placed continue under their own workflow.
+                  {consultation.completed_at
+                    ? ` Signed ${formatHospitalTime(consultation.completed_at)}.`
+                    : ""}
+                </p>
+              </div>
             ) : null}
             <ConsultationNoteEditor
               draft={draft}
@@ -533,6 +689,63 @@ export default function ConsultationWorkspace({
               : "border-slate-200 bg-white"
         }`}
       >
+        {completeStatus === "confirming" ? (
+          <CompletionConfirm
+            warnings={warnings}
+            busy={false}
+            onCancel={() => setCompleteStatus("idle")}
+            onConfirm={complete}
+          />
+        ) : null}
+        {completeStatus === "completing" ? (
+          <CompletionConfirm
+            warnings={warnings}
+            busy
+            onCancel={() => undefined}
+            onConfirm={() => undefined}
+          />
+        ) : null}
+
+        {completeError ? (
+          <div
+            role="alert"
+            className="mb-2 rounded-md border border-red-300 bg-white px-2.5 py-1.5 text-[11px] leading-snug text-red-900"
+          >
+            <p className="font-semibold">Consultation not completed</p>
+            <p className="mt-0.5 text-red-800">{completeError}</p>
+            <button
+              type="button"
+              onClick={reload}
+              className="mt-1.5 rounded border border-red-400 bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-800 outline-none transition-colors hover:bg-red-50 focus-visible:ring-2 focus-visible:ring-red-600"
+            >
+              Reload the note
+            </button>
+          </div>
+        ) : null}
+
+        {/*
+          WHY THE BLOCKERS ARE LISTED RATHER THAN JUST DISABLING THE BUTTON.
+          A greyed-out control with no explanation is the single most common way
+          a clinician loses time on a form. Each sentence is the SERVER's, bound
+          to its own stable code, so the desk never guesses at a rule it does
+          not own.
+        */}
+        {editable && blockers.length && !completeBlockedByDraft ? (
+          <ul className="mb-2 space-y-0.5 rounded-md border border-slate-300 bg-slate-50 px-2.5 py-1.5">
+            {blockers.map((blocker) => (
+              <li
+                key={blocker.code}
+                className="flex items-start gap-1.5 text-[11px] leading-snug text-slate-700"
+              >
+                <span aria-hidden className="mt-px text-slate-400">
+                  •
+                </span>
+                {blocker.message}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
         {statusMessage && problem ? (
           <div
             role="alert"
@@ -570,7 +783,7 @@ export default function ConsultationWorkspace({
                   Unsaved changes
                 </span>
                 <span className="hidden text-slate-500 sm:inline">
-                  · nothing is stored until you save
+                  · save your note before completing the consultation
                 </span>
               </>
             ) : status === "saved" || savedAt ? (
@@ -602,24 +815,147 @@ export default function ConsultationWorkspace({
             )}
           </p>
 
-          <button
-            type="button"
-            onClick={save}
-            disabled={!editable || !dirty || status === "saving" || noteLoading}
-            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-emerald-700 px-4 text-[11.5px] font-bold uppercase tracking-[0.06em] text-white shadow-sm outline-none transition-colors hover:bg-emerald-800 focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none"
-          >
-            {status === "saving" ? (
-              <>
-                <Spinner className="h-3.5 w-3.5" />
-                Saving…
-              </>
-            ) : (
-              "Save Note"
-            )}
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={save}
+              disabled={!editable || !dirty || status === "saving" || noteLoading}
+              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-emerald-700 bg-white px-3.5 text-[11.5px] font-bold uppercase tracking-[0.06em] text-emerald-800 shadow-sm outline-none transition-colors hover:bg-emerald-50 focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none"
+            >
+              {status === "saving" ? (
+                <>
+                  <Spinner className="h-3.5 w-3.5" />
+                  Saving…
+                </>
+              ) : (
+                "Save Note"
+              )}
+            </button>
+
+            {/*
+              COMPLETION IS THE TERMINAL ACTION, so it carries the solid accent
+              and Save steps back to an outline. It is rendered only while the
+              consultation is still open: after completion there is nothing to
+              complete, and a disabled button would keep offering an act that no
+              longer exists.
+
+              `title` names the reason whenever the control is disabled, so the
+              two blocking conditions the blocker list does NOT cover -- unsaved
+              text and an in-flight save -- are still explained.
+            */}
+            {editable ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setCompleteError(null);
+                  setCompleteStatus("confirming");
+                }}
+                disabled={!mayComplete || completeStatus !== "idle"}
+                title={
+                  completeBlockedByDraft
+                    ? "Save your note before completing the consultation."
+                    : !canComplete && blockers.length
+                      ? blockers[0].message
+                      : undefined
+                }
+                className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-emerald-700 px-4 text-[11.5px] font-bold uppercase tracking-[0.06em] text-white shadow-sm outline-none transition-colors hover:bg-emerald-800 focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none"
+              >
+                {completeStatus === "completing" ? (
+                  <>
+                    <Spinner className="h-3.5 w-3.5" />
+                    Completing…
+                  </>
+                ) : (
+                  "Complete Consultation"
+                )}
+              </button>
+            ) : null}
+          </div>
         </div>
       </footer>
     </section>
+  );
+}
+
+/**
+ * The completion confirmation. An INLINE PANEL, never window.confirm().
+ *
+ * A native confirm cannot show the warnings, cannot be styled to match the
+ * desk, blocks the whole browser, and -- the reason that actually matters --
+ * gives the doctor no way to read the outstanding balance and the pending-order
+ * count before deciding. Those two sentences are the entire point of asking.
+ *
+ * The warnings are INFORMATIONAL. They never disable Complete: a patient owing
+ * money is a cashier problem, not a reason to refuse a doctor the right to
+ * finish documenting the care they have already given.
+ */
+function CompletionConfirm({
+  warnings,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  warnings: ConsultationWarning[];
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="Confirm consultation completion"
+      className="mb-2 rounded-md border border-emerald-300 bg-white px-3 py-2.5 shadow-sm"
+    >
+      <p className="text-[11.5px] font-bold uppercase tracking-wide text-emerald-900">
+        Complete this consultation?
+      </p>
+
+      <ul className="mt-1.5 space-y-0.5 text-[11px] leading-snug text-slate-700">
+        <li>The clinical note is locked and can no longer be edited.</li>
+        <li>Diagnoses become read-only.</li>
+        <li>No further orders can be placed from this consultation.</li>
+        <li>Orders already placed continue under their own workflow.</li>
+      </ul>
+
+      {warnings.length ? (
+        <ul className="mt-2 space-y-1">
+          {warnings.map((warning) => (
+            <li
+              key={warning.code}
+              className="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] leading-snug text-amber-900"
+            >
+              {warning.message}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      <div className="mt-2.5 flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={busy}
+          className="inline-flex h-7 items-center rounded-md border border-slate-300 bg-white px-3 text-[11px] font-bold uppercase tracking-wide text-slate-700 outline-none transition-colors hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-slate-500 disabled:cursor-not-allowed disabled:text-slate-400"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={onConfirm}
+          disabled={busy}
+          className="inline-flex h-7 items-center gap-1.5 rounded-md bg-emerald-700 px-3.5 text-[11px] font-bold uppercase tracking-wide text-white outline-none transition-colors hover:bg-emerald-800 focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300"
+        >
+          {busy ? (
+            <>
+              <Spinner className="h-3 w-3" />
+              Completing…
+            </>
+          ) : (
+            "Complete Consultation"
+          )}
+        </button>
+      </div>
+    </div>
   );
 }
 
