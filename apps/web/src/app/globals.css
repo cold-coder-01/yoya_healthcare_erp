@@ -5,11 +5,27 @@
   --foreground: #171717;
 }
 
+/*
+  THE TYPEFACES, FROM THE OPERATING SYSTEM AND NOWHERE ELSE.
+
+  These two tokens used to read var(--font-geist-sans) / var(--font-geist-mono),
+  injected by next/font/google in layout.tsx. next/font self-hosts what it
+  downloads, but it still has to REACH fonts.gstatic.com at build time -- so on
+  a machine without that access the Turbopack dev server fails outright instead
+  of falling back. A hospital desk should not need the public internet to
+  render.
+
+  --font-mono is the one that carries real weight here: every money column,
+  MRN, visit code and clock time on the cashier and doctor desks is a `font-mono`
+  utility, and those columns are scanned vertically. Consolas leads because it
+  is present on every Windows install this runs on and has unambiguous 0/O and
+  1/l shapes; "Courier New" is the universal fallback.
+*/
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: Arial, "Helvetica Neue", Helvetica, sans-serif;
+  --font-mono: Consolas, "Courier New", monospace;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -22,5 +38,8 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  /* The same stack the theme token declares, referenced rather than repeated
+     so the two cannot drift. Body text already used Arial/Helvetica before
+     this change, which is why the visual result is unchanged for prose. */
+  font-family: var(--font-sans);
 }
