@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- Inherit the hospital_inventory dispense view (which itself inherits
+         the base pharmacy form) so the existing manual consumption button can
+         be repurposed as an admin recovery action and the fiscal workflow
+         buttons can be added around it. -->
+    <record id="view_hospital_pharmacy_dispense_fiscal_inherit" model="ir.ui.view">
+        <field name="name">hospital.pharmacy.dispense.fiscal.inherit</field>
+        <field name="model">hospital.pharmacy.dispense</field>
+        <field name="inherit_id" ref="hospital_inventory.view_hospital_pharmacy_dispense_inventory_inherit"/>
+        <field name="arch" type="xml">
+
+            <!-- ── Payment gate: Validate Dispense only after payment ──
+                 The server-side gate in action_mark_dispensed() is the real
+                 protection (blocks RPC too); this hides the button so the
+                 normal Ready-state workflow is Prepare Fiscal Payment only.
+                 After payment it stays available as a manual recovery. -->
+            <xpath expr="//button[@name='action_mark_dispensed']" position="attributes">
+                <attribute name="invisible">state not in ('ready', 'partial')</attribute>
+            </xpath>
+
+            <!-- ── Normal workflow: prepare / retry buttons ─────────── -->
+            <xpath expr="//sheet" position="inside">
+                <field name="unified_billing_enabled" invisible="1"/>
+            </xpath>
+
+            <xpath expr="//header" position="inside">
+                <button name="action_prepare_fiscal_payment"
+                    string="Pay with Fiscal Terminal" type="object"
+                    class="btn-primary"
+                    invisible="not id or state not in ('ready', 'partial') or fiscal_payment_state in ('prepared', 'paid', 'exception') or inventory_consumption_state == 'consumed'"
+                    groups="hospital_management.group_hospital_pharmacist,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                <button name="action_retry_inventory_consumption"
+                    string="Retry Inventory Consumption" type="object"
+                    class="btn-warning"
+                    invisible="unified_billing_enabled or fiscal_payment_state != 'paid' or inventory_consumption_state == 'consumed'"
+                    groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+            </xpath>
+
+            <!-- ── Old manual button becomes admin-only recovery ──────
+                 Only after a successful fiscal payment, on a dispensed (or
+                 paid partially-dispensed) record whose consumption is still
+                 missing or failed. Never in Ready state before payment. -->
+            <xpath expr="//button[@name='action_create_inventory_consumption']" position="attributes">
+                <attribute name="string">Create Inventory Consumption (Admin)</attribute>
+                <attribute name="groups">hospital_management.group_hospital_system_administrator</attribute>
+                <attribute name="invisible">not id or unified_billing_enabled or state not in ('dispensed', 'partial') or inventory_consumption_state not in ('not_created', 'failed')</attribute>
+            </xpath>
+
+            <!-- ── Fiscal payment smart button ──────────────────────── -->
+            <xpath expr="//div[@name='inventory_button_box']" position="inside">
+                <button name="action_view_fiscal_transactions" type="object"
+                    class="oe_stat_button" icon="fa-money"
+                    invisible="fiscal_transaction_count == 0">
+                    <field name="fiscal_transaction_count" widget="statinfo" string="Fiscal Payment"/>
+                </button>
+            </xpath>
+
+            <!-- ── Fiscal payment page ──────────────────────────────── -->
+            <xpath expr="//notebook" position="inside">
+                <page string="Fiscal Payment" name="fiscal_payment">
+                    <div class="alert alert-danger" role="alert"
+                        invisible="not auto_consumption_error">
+                        <strong>Automatic inventory consumption failed.</strong>
+                        The fiscal payment is recorded and kept. A manager can
+                        use <em>Retry Inventory Consumption</em> after fixing
+                        the cause below.
+                    </div>
+                    <group>
+                        <group string="Fiscal Payment">
+                            <field name="amount_payable"/>
+                            <field name="fiscal_payment_state"/>
+                            <field name="fiscal_reference"/>
+                            <field name="fiscal_receipt_number"/>
+                            <field name="fiscal_transaction_id" readonly="1"/>
+                            <field name="fiscal_bill_id" readonly="1"/>
+                        </group>
+                        <group string="Inventory Consumption">
+                            <field name="inventory_consumption_state"/>
+                            <field name="inventory_consumption_id" readonly="1"/>
+                        </group>
+                    </group>
+                    <group string="Auto Consumption Error"
+                        invisible="not auto_consumption_error">
+                        <field name="auto_consumption_error" nolabel="1" readonly="1"/>
+                    </group>
+                </page>
+            </xpath>
+
+            <!-- ── Prices on medicine lines ─────────────────────────── -->
+            <xpath expr="//field[@name='line_ids']/list/field[@name='dispensed_quantity']" position="after">
+                <field name="unit_price" optional="show"/>
+                <field name="price_subtotal" sum="Total" optional="show"/>
+            </xpath>
+
+            <!-- ── Chatter (fiscal + consumption audit trail) ───────── -->
+            <xpath expr="//sheet" position="after">
+                <chatter/>
+            </xpath>
+
+        </field>
+    </record>
+
+</odoo>
