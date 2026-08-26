@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo noupdate="1">
+
+    <record id="category_pharmacy_medicine" model="hospital.inventory.category">
+        <field name="name">Pharmacy Medicine</field>
+        <field name="code">CAT-PHARM</field>
+        <field name="sequence">10</field>
+        <field name="description">Prescription and over-the-counter medicines dispensed through the pharmacy.</field>
+    </record>
+
+    <record id="category_iv_fluid" model="hospital.inventory.category">
+        <field name="name">IV Fluid</field>
+        <field name="code">CAT-IV</field>
+        <field name="sequence">15</field>
+        <field name="description">Intravenous fluids including saline, dextrose, Ringer's lactate.</field>
+    </record>
+
+    <record id="category_lab_reagent" model="hospital.inventory.category">
+        <field name="name">Laboratory Reagent</field>
+        <field name="code">CAT-LAB-REAGENT</field>
+        <field name="sequence">20</field>
+        <field name="description">Chemical reagents and test kits used in the laboratory.</field>
+    </record>
+
+    <record id="category_lab_consumable" model="hospital.inventory.category">
+        <field name="name">Laboratory Consumable</field>
+        <field name="code">CAT-LAB-CONS</field>
+        <field name="sequence">25</field>
+        <field name="description">Tubes, slides, gloves, and other disposable laboratory supplies.</field>
+    </record>
+
+    <record id="category_radiology_supply" model="hospital.inventory.category">
+        <field name="name">Radiology Supply</field>
+        <field name="code">CAT-RAD</field>
+        <field name="sequence">30</field>
+        <field name="description">Films, contrast media, and consumables used in radiology and imaging.</field>
+    </record>
+
+    <record id="category_surgical_consumable" model="hospital.inventory.category">
+        <field name="name">Surgical Consumable</field>
+        <field name="code">CAT-SURG</field>
+        <field name="sequence">35</field>
+        <field name="description">Sutures, drapes, blades, and other sterile surgical consumables.</field>
+    </record>
+
+    <record id="category_procedure_material" model="hospital.inventory.category">
+        <field name="name">Procedure Material</field>
+        <field name="code">CAT-PROC</field>
+        <field name="sequence">40</field>
+        <field name="description">Consumables used in minor and major clinical procedures.</field>
+    </record>
+
+    <record id="category_nursing_supply" model="hospital.inventory.category">
+        <field name="name">Nursing Supply</field>
+        <field name="code">CAT-NURSE</field>
+        <field name="sequence">45</field>
+        <field name="description">Wound dressings, syringes, cannulas, and bedside nursing consumables.</field>
+    </record>
+
+    <record id="category_general_medical_consumable" model="hospital.inventory.category">
+        <field name="name">General Medical Consumable</field>
+        <field name="code">CAT-CONS</field>
+        <field name="sequence">50</field>
+        <field name="description">General-purpose medical consumables not classified elsewhere.</field>
+    </record>
+
+    <record id="category_administrative_supply" model="hospital.inventory.category">
+        <field name="name">Administrative Supply</field>
+        <field name="code">CAT-ADMIN</field>
+        <field name="sequence">90</field>
+        <field name="description">Stationery, forms, and non-medical administrative consumables.</field>
+    </record>
+
+</odoo>

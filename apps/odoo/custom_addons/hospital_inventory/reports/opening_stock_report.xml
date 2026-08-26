@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <report
+        id="report_hospital_opening_stock_summary"
+        model="hospital.opening.stock"
+        string="Opening Stock Summary"
+        report_type="qweb-pdf"
+        name="hospital_inventory.report_opening_stock_summary_template"
+        file="hospital_inventory.report_opening_stock_summary_template"
+        print_report_name="'Opening Stock Summary - ' + object.name"/>
+
+</odoo>

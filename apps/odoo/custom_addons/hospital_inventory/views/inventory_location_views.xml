@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- INVENTORY LOCATION — LIST VIEW -->
+    <record id="view_hospital_inventory_location_list" model="ir.ui.view">
+        <field name="name">hospital.inventory.location.list</field>
+        <field name="model">hospital.inventory.location</field>
+        <field name="arch" type="xml">
+            <list string="Inventory Locations">
+                <field name="code"/>
+                <field name="name"/>
+                <field name="location_type"/>
+                <field name="department_id"/>
+                <field name="responsible_user_id"/>
+                <field name="is_default"/>
+                <field name="is_consumption_location"/>
+                <field name="batch_count"/>
+                <field name="total_inventory_value"/>
+                <field name="currency_id" column_invisible="1"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- INVENTORY LOCATION — FORM VIEW -->
+    <record id="view_hospital_inventory_location_form" model="ir.ui.view">
+        <field name="name">hospital.inventory.location.form</field>
+        <field name="model">hospital.inventory.location</field>
+        <field name="arch" type="xml">
+            <form string="Inventory Location">
+                <sheet>
+                    <field name="active" invisible="1"/>
+                    <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active"/>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1>
+                            <field name="name" placeholder="Location name..."/>
+                        </h1>
+                    </div>
+                    <div class="alert alert-info" role="alert" invisible="not department_recommended">
+                        This is a department-level store. Linking it to a department
+                        improves stock traceability.
+                    </div>
+                    <group>
+                        <group string="Location Information">
+                            <field name="code"/>
+                            <field name="location_type"/>
+                            <field name="department_id"/>
+                            <field name="department_recommended" invisible="1"/>
+                            <field name="responsible_user_id"/>
+                        </group>
+                        <group string="Behaviour">
+                            <field name="is_default"/>
+                            <field name="is_consumption_location"/>
+                            <field name="batch_count"/>
+                            <field name="total_inventory_value"/>
+                            <field name="currency_id"/>
+                        </group>
+                    </group>
+                    <group string="Notes">
+                        <field name="notes" nolabel="1" placeholder="Notes..."/>
+                    </group>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <!-- INVENTORY LOCATION — SEARCH VIEW -->
+    <record id="view_hospital_inventory_location_search" model="ir.ui.view">
+        <field name="name">hospital.inventory.location.search</field>
+        <field name="model">hospital.inventory.location</field>
+        <field name="arch" type="xml">
+            <search string="Inventory Locations">
+                <field name="name"/>
+                <field name="code"/>
+                <field name="department_id"/>
+                <filter string="Central Store" name="central" domain="[('location_type', '=', 'central_store')]"/>
+                <filter string="Transit" name="transit" domain="[('location_type', '=', 'transit')]"/>
+                <filter string="Department Stores" name="dept_stores"
+                    domain="[('location_type', 'in', ('department_store','pharmacy_store','laboratory_store','radiology_store','procedure_store','ward_store'))]"/>
+                <filter string="Consumption" name="consumption" domain="[('is_consumption_location', '=', True)]"/>
+                <separator/>
+                <filter string="Default" name="default" domain="[('is_default', '=', True)]"/>
+                <filter string="Archived" name="archived" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Location Type" name="group_type" context="{'group_by': 'location_type'}"/>
+                    <filter string="Department" name="group_department" context="{'group_by': 'department_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- INVENTORY LOCATION — ACTION -->
+    <record id="action_hospital_inventory_location" model="ir.actions.act_window">
+        <field name="name">Locations</field>
+        <field name="res_model">hospital.inventory.location</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_inventory_location_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">No inventory locations yet.</p>
+            <p>Define where stock lives: Central Store, Transit, and department
+               stores (pharmacy, lab, radiology, ward, procedure) plus a virtual
+               Patient Consumption location.</p>
+        </field>
+    </record>
+
+</odoo>

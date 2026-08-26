@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!--
+        Task 31B — Demo item catalog ONLY.
+
+        This file loads only as DEMO data (manifest "demo" key), never as normal
+        production data. It creates a realistic hospital item catalog so the full
+        Opening Stock -> Issue -> Consumption flow can be tested.
+
+        It deliberately creates NO batches and NO opening quantities: stock must
+        always enter the system through Opening Stock (or a future receipt) into a
+        real location. Use the "Recommended Demo Opening Stock" table in README.md
+        to load quantities manually.
+    -->
+
+    <!-- 1. Medicines -->
+    <record id="demo_item_med_para500" model="hospital.inventory.item">
+        <field name="code">MED-PARA500</field>
+        <field name="name">Paracetamol 500mg Tablet</field>
+        <field name="item_type">medicine</field>
+        <field name="unit_of_measure">tablet</field>
+        <field name="standard_cost">2.50</field>
+        <field name="minimum_stock_level">500</field>
+        <field name="reorder_level">1000</field>
+        <field name="requires_batch_tracking" eval="True"/>
+        <field name="requires_expiry_tracking" eval="True"/>
+        <field name="accounting_category">medicine</field>
+        <field name="cost_method">batch_actual</field>
+    </record>
+
+    <record id="demo_item_med_amox500" model="hospital.inventory.item">
+        <field name="code">MED-AMOX500</field>
+        <field name="name">Amoxicillin 500mg Capsule</field>
+        <field name="item_type">medicine</field>
+        <field name="unit_of_measure">capsule</field>
+        <field name="standard_cost">6.00</field>
+        <field name="minimum_stock_level">300</field>
+        <field name="reorder_level">600</field>
+        <field name="requires_batch_tracking" eval="True"/>
+        <field name="requires_expiry_tracking" eval="True"/>
+        <field name="accounting_category">medicine</field>
+        <field name="cost_method">batch_actual</field>
+    </record>
+
+    <!-- 2. Nursing / ward supplies -->
+    <record id="demo_item_nurs_glove" model="hospital.inventory.item">
+        <field name="code">NURS-GLOVE</field>
+        <field name="name">Sterile Gloves</field>
+        <field name="item_type">nursing_supply</field>
+        <field name="unit_of_measure">pair</field>
+        <field name="standard_cost">25.00</field>
+        <field name="minimum_stock_level">100</field>
+        <field name="reorder_level">200</field>
+        <field name="accounting_category">nursing_supply</field>
+    </record>
+
+    <record id="demo_item_nurs_gauze" model="hospital.inventory.item">
+        <field name="code">NURS-GAUZE</field>
+        <field name="name">Sterile Gauze Pack</field>
+        <field name="item_type">nursing_supply</field>
+        <field name="unit_of_measure">pack</field>
+        <field name="standard_cost">15.00</field>
+        <field name="minimum_stock_level">100</field>
+        <field name="reorder_level">200</field>
+        <field name="accounting_category">nursing_supply</field>
+    </record>
+
+    <!-- 3. Procedure materials -->
+    <record id="demo_item_proc_dress" model="hospital.inventory.item">
+        <field name="code">PROC-DRESS</field>
+        <field name="name">Sterile Wound Dressing Kit</field>
+        <field name="item_type">procedure_material</field>
+        <field name="unit_of_measure">kit</field>
+        <field name="standard_cost">80.00</field>
+        <field name="minimum_stock_level">20</field>
+        <field name="reorder_level">40</field>
+        <field name="accounting_category">procedure_material</field>
+    </record>
+
+    <record id="demo_item_proc_syr5ml" model="hospital.inventory.item">
+        <field name="code">PROC-SYR5ML</field>
+        <field name="name">5ml Syringe</field>
+        <field name="item_type">procedure_material</field>
+        <field name="unit_of_measure">unit</field>
+        <field name="standard_cost">5.00</field>
+        <field name="minimum_stock_level">200</field>
+        <field name="reorder_level">400</field>
+        <field name="accounting_category">procedure_material</field>
+    </record>
+
+    <!-- 4. Laboratory reagents -->
+    <record id="demo_item_lab_cbc_reag" model="hospital.inventory.item">
+        <field name="code">LAB-CBC-REAG</field>
+        <field name="name">CBC Reagent</field>
+        <field name="item_type">lab_reagent</field>
+        <field name="unit_of_measure">bottle</field>
+        <field name="standard_cost">450.00</field>
+        <field name="minimum_stock_level">10</field>
+        <field name="reorder_level">20</field>
+        <field name="accounting_category">lab_reagent</field>
+    </record>
+
+    <record id="demo_item_lab_glu_strip" model="hospital.inventory.item">
+        <field name="code">LAB-GLU-STRIP</field>
+        <field name="name">Glucose Test Strip</field>
+        <field name="item_type">lab_reagent</field>
+        <field name="unit_of_measure">pack</field>
+        <field name="standard_cost">300.00</field>
+        <field name="minimum_stock_level">10</field>
+        <field name="reorder_level">20</field>
+        <field name="accounting_category">lab_reagent</field>
+    </record>
+
+    <!-- 5. Radiology consumables -->
+    <record id="demo_item_rad_us_gel" model="hospital.inventory.item">
+        <field name="code">RAD-US-GEL</field>
+        <field name="name">Ultrasound Gel</field>
+        <field name="item_type">radiology_consumable</field>
+        <field name="unit_of_measure">bottle</field>
+        <field name="standard_cost">120.00</field>
+        <field name="minimum_stock_level">10</field>
+        <field name="reorder_level">20</field>
+        <field name="accounting_category">radiology_consumable</field>
+    </record>
+
+    <record id="demo_item_rad_contrast" model="hospital.inventory.item">
+        <field name="code">RAD-CONTRAST</field>
+        <field name="name">Radiology Contrast Medium</field>
+        <field name="item_type">radiology_consumable</field>
+        <field name="unit_of_measure">vial</field>
+        <field name="standard_cost">900.00</field>
+        <field name="minimum_stock_level">5</field>
+        <field name="reorder_level">10</field>
+        <field name="accounting_category">radiology_consumable</field>
+    </record>
+
+    <!-- 6. Pharmacy / general consumables -->
+    <record id="demo_item_cons_mask" model="hospital.inventory.item">
+        <field name="code">CONS-MASK</field>
+        <field name="name">Surgical Face Mask</field>
+        <field name="item_type">consumable</field>
+        <field name="unit_of_measure">box</field>
+        <field name="standard_cost">150.00</field>
+        <field name="minimum_stock_level">20</field>
+        <field name="reorder_level">40</field>
+        <field name="accounting_category">medical_consumable</field>
+    </record>
+
+</odoo>

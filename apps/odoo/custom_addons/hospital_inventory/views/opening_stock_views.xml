@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- OPENING STOCK — LIST VIEW -->
+    <record id="view_hospital_opening_stock_list" model="ir.ui.view">
+        <field name="name">hospital.opening.stock.list</field>
+        <field name="model">hospital.opening.stock</field>
+        <field name="arch" type="xml">
+            <list string="Opening Stock"
+                decoration-muted="state == 'cancelled'"
+                decoration-success="state == 'confirmed'">
+                <field name="name"/>
+                <field name="opening_date"/>
+                <field name="location_id"/>
+                <field name="department_id"/>
+                <field name="total_value"/>
+                <field name="currency_id" column_invisible="1"/>
+                <field name="state"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- OPENING STOCK — FORM VIEW -->
+    <record id="view_hospital_opening_stock_form" model="ir.ui.view">
+        <field name="name">hospital.opening.stock.form</field>
+        <field name="model">hospital.opening.stock</field>
+        <field name="arch" type="xml">
+            <form string="Opening Stock">
+                <header>
+                    <button name="action_confirm" string="Confirm" type="object"
+                        class="btn-primary" invisible="state != 'draft'"
+                        groups="hospital_management.group_hospital_pharmacist,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <button name="action_cancel" string="Cancel" type="object"
+                        invisible="state != 'draft'"/>
+                    <button name="action_reset_to_draft" string="Reset to Draft" type="object"
+                        invisible="state != 'cancelled'"
+                        groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <field name="state" widget="statusbar"
+                        statusbar_visible="draft,confirmed"/>
+                </header>
+                <sheet>
+                    <field name="active" invisible="1"/>
+                    <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active"/>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_view_movements" type="object"
+                            class="oe_stat_button" icon="fa-exchange"
+                            invisible="state != 'confirmed'">
+                            <span class="o_stat_text">Movements</span>
+                        </button>
+                    </div>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1>
+                            <field name="name" readonly="1"/>
+                        </h1>
+                    </div>
+                    <div class="alert alert-info" role="alert" invisible="state != 'draft'">
+                        Confirming creates a batch and a receipt stock movement for
+                        every line. This loads initial quantities and value into the
+                        chosen location. No accounting entry is posted.
+                    </div>
+                    <group>
+                        <group string="Opening Stock Info">
+                            <field name="location_id" options="{'no_create': True}"
+                                readonly="state != 'draft'"/>
+                            <field name="department_id" readonly="state != 'draft'"/>
+                            <field name="opening_date" readonly="state != 'draft'"/>
+                        </group>
+                        <group string="Confirmation">
+                            <field name="confirmed_by" readonly="1"/>
+                            <field name="confirmed_date" readonly="1"/>
+                            <field name="total_value" readonly="1"/>
+                            <field name="currency_id" readonly="1"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Opening Stock Lines" name="lines">
+                            <field name="line_ids" readonly="state != 'draft'">
+                                <list string="Opening Stock Lines" editable="bottom">
+                                    <field name="item_id" options="{'no_create': True}"/>
+                                    <field name="batch_number"/>
+                                    <field name="received_date"/>
+                                    <field name="expiry_date"/>
+                                    <field name="quantity"/>
+                                    <field name="unit_cost"/>
+                                    <field name="currency_id" column_invisible="1"/>
+                                    <field name="line_value" readonly="1"/>
+                                    <field name="created_batch_id" readonly="1" optional="show"/>
+                                    <field name="movement_id" readonly="1" optional="show"/>
+                                    <field name="notes" optional="hide"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Notes" name="notes">
+                            <field name="notes" nolabel="1" placeholder="Notes..."/>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <!-- OPENING STOCK — SEARCH VIEW -->
+    <record id="view_hospital_opening_stock_search" model="ir.ui.view">
+        <field name="name">hospital.opening.stock.search</field>
+        <field name="model">hospital.opening.stock</field>
+        <field name="arch" type="xml">
+            <search string="Opening Stock">
+                <field name="name"/>
+                <field name="location_id"/>
+                <field name="department_id"/>
+                <filter string="Draft" name="draft" domain="[('state', '=', 'draft')]"/>
+                <filter string="Confirmed" name="confirmed" domain="[('state', '=', 'confirmed')]"/>
+                <filter string="Cancelled" name="cancelled" domain="[('state', '=', 'cancelled')]"/>
+                <separator/>
+                <filter string="Archived" name="archived" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Location" name="group_location" context="{'group_by': 'location_id'}"/>
+                    <filter string="State" name="group_state" context="{'group_by': 'state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- OPENING STOCK — ACTION -->
+    <record id="action_hospital_opening_stock" model="ir.actions.act_window">
+        <field name="name">Opening Stock</field>
+        <field name="res_model">hospital.opening.stock</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_opening_stock_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">No opening stock yet.</p>
+            <p>Load initial quantities into the Central Store or a department store.
+               Confirming creates batches and receipt movements.</p>
+        </field>
+    </record>
+
+</odoo>

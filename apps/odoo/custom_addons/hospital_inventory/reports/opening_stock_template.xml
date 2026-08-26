@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <template id="report_opening_stock_summary_template">
+        <t t-call="web.html_container">
+            <t t-foreach="docs" t-as="doc">
+                <t t-call="web.external_layout">
+                    <div class="page">
+                        <style>
+                            .hospital-section-title {
+                                color: #006A4F;
+                                font-size: 14px;
+                                font-weight: 700;
+                                margin: 14px 0 6px;
+                                border-bottom: 1px solid #006A4F;
+                                padding-bottom: 3px;
+                            }
+                            .hospital-report-table {
+                                width: 100%;
+                                border-collapse: collapse;
+                                margin-bottom: 10px;
+                            }
+                            .hospital-report-table th,
+                            .hospital-report-table td {
+                                border: 1px solid #DDDDDD;
+                                padding: 5px 7px;
+                                font-size: 11px;
+                                vertical-align: top;
+                            }
+                            .hospital-info-table td:first-child,
+                            .hospital-info-table td:nth-child(3) {
+                                width: 18%;
+                                color: #555555;
+                                font-weight: 700;
+                                background: #F9FAFB;
+                            }
+                            .hospital-empty-note {
+                                color: #666666;
+                                font-style: italic;
+                                margin: 4px 0 10px;
+                                font-size: 11px;
+                            }
+                            .hospital-footer-note {
+                                color: #555555;
+                                font-size: 11px;
+                                margin-top: 20px;
+                                border-top: 1px solid #DDDDDD;
+                                padding-top: 6px;
+                            }
+                            .badge-state {
+                                display: inline-block;
+                                padding: 2px 7px;
+                                border-radius: 4px;
+                                font-size: 10px;
+                                font-weight: 700;
+                                background: #e8f4f0;
+                                color: #006A4F;
+                            }
+                            .text-right { text-align: right; }
+                        </style>
+
+                        <t t-set="report_title" t-value="'Opening Stock Summary'"/>
+                        <t t-set="report_ref_label" t-value="'Opening Stock Ref'"/>
+                        <t t-set="report_ref" t-value="doc.name"/>
+                        <t t-set="report_date_label" t-value="'Opening Date'"/>
+                        <t t-set="report_date" t-value="doc.opening_date"/>
+                        <t t-call="hospital_management.hospital_report_header"/>
+
+                        <!-- Opening Stock Information -->
+                        <div class="hospital-section-title">Opening Stock Information</div>
+                        <table class="hospital-report-table hospital-info-table">
+                            <tbody>
+                                <tr>
+                                    <td>Reference</td>
+                                    <td><span t-field="doc.name"/></td>
+                                    <td>Status</td>
+                                    <td><span class="badge-state" t-field="doc.state"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Location</td>
+                                    <td><span t-out="doc.location_id.display_name or 'N/A'"/></td>
+                                    <td>Department</td>
+                                    <td><span t-out="doc.department_id.display_name or 'N/A'"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Confirmed By</td>
+                                    <td><span t-out="doc.confirmed_by.display_name or 'N/A'"/></td>
+                                    <td>Confirmed Date</td>
+                                    <td><span t-out="doc.confirmed_date or 'N/A'"/></td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <!-- Opening Stock Lines -->
+                        <div class="hospital-section-title">Opening Stock Lines</div>
+                        <table class="hospital-report-table">
+                            <thead>
+                                <tr>
+                                    <th>Item</th>
+                                    <th>Batch / Lot</th>
+                                    <th>Expiry</th>
+                                    <th class="text-right">Quantity</th>
+                                    <th class="text-right">Unit Cost</th>
+                                    <th class="text-right">Line Value</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <t t-if="doc.line_ids">
+                                    <tr t-foreach="doc.line_ids" t-as="line">
+                                        <td><span t-field="line.item_id"/></td>
+                                        <td><span t-field="line.batch_number"/></td>
+                                        <td><span t-out="line.expiry_date or 'N/A'"/></td>
+                                        <td class="text-right"><span t-field="line.quantity"/></td>
+                                        <td class="text-right"><span t-field="line.unit_cost"/></td>
+                                        <td class="text-right"><span t-field="line.line_value"/></td>
+                                    </tr>
+                                </t>
+                                <tr>
+                                    <td colspan="5" class="text-right"><strong>Total Opening Value</strong></td>
+                                    <td class="text-right"><strong><span t-field="doc.total_value"/></strong></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        <t t-if="not doc.line_ids">
+                            <p class="hospital-empty-note">No opening stock lines recorded.</p>
+                        </t>
+
+                        <!-- Notes -->
+                        <div class="hospital-section-title">Notes</div>
+                        <table class="hospital-report-table hospital-info-table">
+                            <tbody>
+                                <tr>
+                                    <td>Notes</td>
+                                    <td colspan="3"><span t-out="doc.notes or 'N/A'"/></td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <div class="hospital-footer-note">
+                            This report is generated from YOYA Hospital — Ethiopian Hospital ERP.
+                            Opening stock loads initial inventory quantity and value into a
+                            location. Values shown are informational and are not an accounting
+                            posting.
+                        </div>
+                    </div>
+                </t>
+            </t>
+        </t>
+    </template>
+</odoo>

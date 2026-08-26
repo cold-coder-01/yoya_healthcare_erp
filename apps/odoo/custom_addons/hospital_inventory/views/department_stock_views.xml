@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- DEPARTMENT STOCK — LIST VIEW -->
+    <record id="view_hospital_department_stock_list" model="ir.ui.view">
+        <field name="name">hospital.department.stock.list</field>
+        <field name="model">hospital.department.stock</field>
+        <field name="arch" type="xml">
+            <list string="Department Stock" decoration-danger="is_below_reorder">
+                <field name="department_id"/>
+                <field name="item_id"/>
+                <field name="quantity_on_hand"/>
+                <field name="reserved_quantity"/>
+                <field name="available_quantity"/>
+                <field name="reorder_level"/>
+                <field name="responsible_user_id"/>
+                <field name="is_below_reorder" string="Below Reorder"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- DEPARTMENT STOCK — FORM VIEW -->
+    <record id="view_hospital_department_stock_form" model="ir.ui.view">
+        <field name="name">hospital.department.stock.form</field>
+        <field name="model">hospital.department.stock</field>
+        <field name="arch" type="xml">
+            <form string="Department Stock">
+                <sheet>
+                    <field name="active" invisible="1"/>
+                    <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active"/>
+                    <group>
+                        <group string="Department / Item">
+                            <field name="department_id" options="{'no_create': True}"/>
+                            <field name="item_id" options="{'no_create': True}"/>
+                            <field name="responsible_user_id"/>
+                            <field name="reorder_level"/>
+                        </group>
+                        <group string="Availability">
+                            <field name="quantity_on_hand"/>
+                            <field name="reserved_quantity"/>
+                            <field name="available_quantity"/>
+                            <field name="is_below_reorder"/>
+                        </group>
+                    </group>
+                    <group string="Notes">
+                        <field name="notes" nolabel="1" placeholder="Notes..."/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!-- DEPARTMENT STOCK — SEARCH VIEW -->
+    <record id="view_hospital_department_stock_search" model="ir.ui.view">
+        <field name="name">hospital.department.stock.search</field>
+        <field name="model">hospital.department.stock</field>
+        <field name="arch" type="xml">
+            <search string="Department Stock">
+                <field name="department_id"/>
+                <field name="item_id"/>
+                <filter string="Archived" name="archived" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Department" name="group_department" context="{'group_by': 'department_id'}"/>
+                    <filter string="Item" name="group_item" context="{'group_by': 'item_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- DEPARTMENT STOCK — ACTION -->
+    <record id="action_hospital_department_stock" model="ir.actions.act_window">
+        <field name="name">Department Stock</field>
+        <field name="res_model">hospital.department.stock</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_department_stock_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">No department stock lines yet.</p>
+            <p>Add a department/item line to monitor department-level stock visibility.</p>
+        </field>
+    </record>
+
+</odoo>

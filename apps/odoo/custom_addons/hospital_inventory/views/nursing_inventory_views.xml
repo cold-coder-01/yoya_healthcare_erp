@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- MEDICATION ADMINISTRATION — consume medicine -->
+    <record id="view_hospital_medication_administration_inventory_inherit" model="ir.ui.view">
+        <field name="name">hospital.medication.administration.inventory.inherit</field>
+        <field name="model">hospital.medication.administration</field>
+        <field name="inherit_id" ref="hospital_nursing.view_hospital_medication_administration_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//header" position="inside">
+                <button name="action_consume_medicine"
+                    string="Consume Medicine" type="object"
+                    invisible="not id or inventory_consumption_id != False"
+                    groups="hospital_management.group_hospital_nurse,hospital_management.group_hospital_pharmacist,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+            </xpath>
+            <xpath expr="//sheet" position="inside">
+                <div class="oe_button_box" name="inventory_button_box">
+                    <button name="action_view_inventory_consumptions" type="object"
+                        class="oe_stat_button" icon="fa-cubes" invisible="not id">
+                        <field name="inventory_consumption_count" widget="statinfo" string="Consumption"/>
+                    </button>
+                </div>
+                <group string="Inventory Consumption">
+                    <group>
+                        <field name="inventory_item_id" options="{'no_create': True}"/>
+                        <field name="inventory_batch_id"
+                            domain="[('item_id', '=', inventory_item_id), ('state', 'not in', ('expired', 'blocked', 'depleted'))]"
+                            options="{'no_create': True}"/>
+                    </group>
+                    <group>
+                        <field name="inventory_consumed_quantity"/>
+                        <field name="inventory_consumption_id" readonly="1"/>
+                    </group>
+                </group>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- NURSING ROUND — supply consumption -->
+    <record id="view_hospital_nursing_round_inventory_inherit" model="ir.ui.view">
+        <field name="name">hospital.nursing.round.inventory.inherit</field>
+        <field name="model">hospital.nursing.round</field>
+        <field name="inherit_id" ref="hospital_nursing.view_hospital_nursing_round_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//header" position="inside">
+                <button name="action_create_nursing_supply_consumption"
+                    string="Create Nursing Supply Consumption" type="object"
+                    invisible="not id"
+                    groups="hospital_management.group_hospital_nurse,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+            </xpath>
+            <xpath expr="//sheet" position="inside">
+                <div class="oe_button_box" name="inventory_button_box">
+                    <button name="action_view_inventory_consumptions" type="object"
+                        class="oe_stat_button" icon="fa-cubes" invisible="not id">
+                        <field name="inventory_consumption_count" widget="statinfo" string="Consumption"/>
+                    </button>
+                </div>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- INVENTORY ITEM — LIST VIEW -->
+    <record id="view_hospital_inventory_item_list" model="ir.ui.view">
+        <field name="name">hospital.inventory.item.list</field>
+        <field name="model">hospital.inventory.item</field>
+        <field name="arch" type="xml">
+            <list string="Inventory Items" decoration-danger="is_low_stock">
+                <field name="code"/>
+                <field name="name"/>
+                <field name="item_type"/>
+                <field name="unit_of_measure"/>
+                <field name="total_quantity_on_hand"/>
+                <field name="total_available_quantity"/>
+                <field name="standard_cost"/>
+                <field name="currency_id" column_invisible="1"/>
+                <field name="reorder_level"/>
+                <field name="near_expiry_batch_count"/>
+                <field name="expired_batch_count"/>
+                <field name="is_low_stock" string="Low Stock"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- INVENTORY ITEM — FORM VIEW -->
+    <record id="view_hospital_inventory_item_form" model="ir.ui.view">
+        <field name="name">hospital.inventory.item.form</field>
+        <field name="model">hospital.inventory.item</field>
+        <field name="arch" type="xml">
+            <form string="Inventory Item">
+                <sheet>
+                    <field name="active" invisible="1"/>
+                    <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active"/>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_view_batches" type="object"
+                            class="oe_stat_button" icon="fa-cubes" invisible="not id">
+                            <field name="batch_count" widget="statinfo" string="Batches"/>
+                        </button>
+                    </div>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1>
+                            <field name="name" placeholder="Item name..."/>
+                        </h1>
+                    </div>
+
+                    <group>
+                        <group string="Item Information">
+                            <field name="code"/>
+                            <field name="item_type"/>
+                            <field name="category_id"/>
+                            <field name="category" invisible="1"/>
+                            <field name="unit_of_measure"/>
+                        </group>
+                        <group string="Stock Rules">
+                            <field name="minimum_stock_level"/>
+                            <field name="maximum_stock_level"/>
+                            <field name="reorder_level"/>
+                            <field name="requires_batch_tracking"/>
+                            <field name="requires_expiry_tracking"/>
+                        </group>
+                    </group>
+
+                    <group>
+                        <group string="Costing">
+                            <field name="standard_cost"/>
+                            <field name="currency_id"/>
+                            <field name="accounting_category"/>
+                            <field name="cost_method"/>
+                        </group>
+                        <group string="Stock Summary">
+                            <field name="total_quantity_on_hand"/>
+                            <field name="total_available_quantity"/>
+                            <field name="near_expiry_batch_count"/>
+                            <field name="expired_batch_count"/>
+                        </group>
+                    </group>
+
+                    <notebook>
+                        <page string="Batches" name="batches">
+                            <field name="batch_ids" nolabel="1" readonly="1">
+                                <list string="Batches">
+                                    <field name="name"/>
+                                    <field name="batch_number"/>
+                                    <field name="department_id"/>
+                                    <field name="quantity_on_hand"/>
+                                    <field name="available_quantity"/>
+                                    <field name="expiry_date"/>
+                                    <field name="state"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Notes" name="notes">
+                            <field name="description" nolabel="1" placeholder="Description / notes..."/>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <!-- INVENTORY ITEM — SEARCH VIEW -->
+    <record id="view_hospital_inventory_item_search" model="ir.ui.view">
+        <field name="name">hospital.inventory.item.search</field>
+        <field name="model">hospital.inventory.item</field>
+        <field name="arch" type="xml">
+            <search string="Inventory Items">
+                <field name="name"/>
+                <field name="code"/>
+                <field name="category_id"/>
+                <filter string="Medicines" name="medicines" domain="[('item_type', '=', 'medicine')]"/>
+                <filter string="Consumables" name="consumables" domain="[('item_type', '=', 'consumable')]"/>
+                <filter string="Lab Reagents" name="lab_reagents" domain="[('item_type', '=', 'lab_reagent')]"/>
+                <filter string="Radiology Consumables" name="radiology_consumables" domain="[('item_type', '=', 'radiology_consumable')]"/>
+                <filter string="Procedure Materials" name="procedure_materials" domain="[('item_type', '=', 'procedure_material')]"/>
+                <filter string="Nursing Supplies" name="nursing_supplies" domain="[('item_type', '=', 'nursing_supply')]"/>
+                <separator/>
+                <filter string="Low Stock" name="low_stock" domain="[('is_low_stock', '=', True)]"/>
+                <separator/>
+                <filter string="Archived" name="archived" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Item Type" name="group_item_type" context="{'group_by': 'item_type'}"/>
+                    <filter string="Category" name="group_category" context="{'group_by': 'category_id'}"/>
+                    <filter string="Unit of Measure" name="group_uom" context="{'group_by': 'unit_of_measure'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- INVENTORY ITEM — ACTION -->
+    <record id="action_hospital_inventory_item" model="ir.actions.act_window">
+        <field name="name">Items</field>
+        <field name="res_model">hospital.inventory.item</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_inventory_item_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">No inventory items yet.</p>
+            <p>Create a master catalog item for medicines, consumables, reagents or supplies.</p>
+        </field>
+    </record>
+
+</odoo>
