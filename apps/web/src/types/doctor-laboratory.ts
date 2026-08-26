@@ -108,14 +108,19 @@ export type LabOrderRequest = {
 };
 
 /**
- * The ORDERS sub-sections. Laboratory and radiology are live; the rest are
- * declared so the workstation's shape is visible, and are rendered as inert
- * text rather than as controls that would swallow a click.
+ * The ORDERS sub-sections. Laboratory, radiology and medication are live;
+ * procedure is declared so the workstation's shape is visible, and is rendered
+ * as inert text rather than as a control that would swallow a click.
+ *
+ * DUPLICATED IN lib/laboratory-format.ts ON PURPOSE. That copy is the runtime
+ * one, and it must stay free of value imports so node:test can run the format
+ * tests with no resolver and no transform. A contract test asserts the two
+ * lists agree, so flipping one without the other fails rather than drifts.
  */
 export const ORDER_KINDS = [
   { key: "laboratory", label: "Laboratory", live: true },
   { key: "radiology", label: "Radiology", live: true },
-  { key: "medication", label: "Medication", live: false },
+  { key: "medication", label: "Medication", live: true },
   { key: "procedure", label: "Procedure", live: false },
 ] as const;
 

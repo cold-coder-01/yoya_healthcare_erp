@@ -702,14 +702,18 @@
              radiology orders already have, so one clinician's view of what they
              prescribed and what they ordered cannot drift apart.
 
-             CONSULTATION IS ABSENT FROM THESE DOMAINS, DELIBERATELY.
-             hospital.prescription has no consultation_id yet; Slice 6B adds it
-             in this module. Referencing a field that does not exist would make
-             this file fail to load, so the domains below use the two anchors
-             that DO exist: the prescribing physician and the visit's doctor.
-             They are written as an explicit '|' chain rather than a two-term
-             shortcut precisely so 6B extends them by adding one leaf and one
-             '|', in the shape rule_laboratory_request_doctor already shows.
+             CONSULTATION IS NOW PART OF THESE DOMAINS. Slice 6A wrote them
+             without it because hospital.prescription had no consultation_id and
+             referencing a missing field would have made this file fail to load.
+             Slice 6B adds the column in this module, so the third branch
+             arrives here, exactly as 6A said it would and in the shape
+             rule_laboratory_request_doctor already shows.
+
+             That branch is what makes a prescription readable in the SAME
+             transaction that creates it. create_from_consultation() derives
+             physician_id from the consultation, so the first branch usually
+             matches as well; a visit reassigned mid-episode would leave only
+             this one.
 
              WHAT IS DELIBERATELY LEFT ALONE. Nurse, Receptionist, Accountant
              and the DPO get no rule here, so their access is exactly what it
@@ -736,9 +740,10 @@
                 same transaction that creates it from a consultation.
             -->
             <field name="domain_force">
-                ['|',
+                ['|', '|',
                     ('physician_id.user_id', '=', user.id),
-                    ('appointment_id.doctor_id.user_id', '=', user.id)
+                    ('appointment_id.doctor_id.user_id', '=', user.id),
+                    ('consultation_id.doctor_id.user_id', '=', user.id)
                 ]
             </field>
             <field name="perm_read" eval="True"/>
@@ -755,9 +760,10 @@
                  prescription's scope rather than defining a second one that
                  could drift away from it. -->
             <field name="domain_force">
-                ['|',
+                ['|', '|',
                     ('prescription_id.physician_id.user_id', '=', user.id),
-                    ('prescription_id.appointment_id.doctor_id.user_id', '=', user.id)
+                    ('prescription_id.appointment_id.doctor_id.user_id', '=', user.id),
+                    ('prescription_id.consultation_id.doctor_id.user_id', '=', user.id)
                 ]
             </field>
             <field name="perm_read" eval="True"/>
@@ -783,10 +789,11 @@
                 at creation, so the two branches mirror the prescription rule.
             -->
             <field name="domain_force">
-                ['|', '|',
+                ['|', '|', '|',
                     ('physician_id.user_id', '=', user.id),
                     ('appointment_id.doctor_id.user_id', '=', user.id),
-                    ('prescription_id.physician_id.user_id', '=', user.id)
+                    ('prescription_id.physician_id.user_id', '=', user.id),
+                    ('prescription_id.consultation_id.doctor_id.user_id', '=', user.id)
                 ]
             </field>
             <field name="perm_read" eval="True"/>
@@ -800,10 +807,11 @@
             <field name="model_id" ref="hospital_pharmacy.model_hospital_pharmacy_dispense_line"/>
             <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
             <field name="domain_force">
-                ['|', '|',
+                ['|', '|', '|',
                     ('dispense_id.physician_id.user_id', '=', user.id),
                     ('dispense_id.appointment_id.doctor_id.user_id', '=', user.id),
-                    ('dispense_id.prescription_id.physician_id.user_id', '=', user.id)
+                    ('dispense_id.prescription_id.physician_id.user_id', '=', user.id),
+                    ('dispense_id.prescription_id.consultation_id.doctor_id.user_id', '=', user.id)
                 ]
             </field>
             <field name="perm_read" eval="True"/>

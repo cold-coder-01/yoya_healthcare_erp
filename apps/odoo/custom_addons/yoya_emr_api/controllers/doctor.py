@@ -112,6 +112,12 @@ from ..services.radiology_serializers import (
     serialize_radiology_exam,
     serialize_radiology_orders,
 )
+from ..services.medication_serializers import (
+    CATALOGUE_DEFAULT_LIMIT as MED_CATALOGUE_DEFAULT_LIMIT,
+    CATALOGUE_MAX_LIMIT as MED_CATALOGUE_MAX_LIMIT,
+    serialize_medicine,
+    serialize_prescriptions,
+)
 from ..services.diagnosis_serializers import (
     CATALOGUE_DEFAULT_LIMIT,
     CATALOGUE_MAX_LIMIT,
@@ -261,6 +267,41 @@ RAD_ORDER_PROTECTED_FIELDS = frozenset(
 )
 
 
+# The prescription header fields a doctor may write. `notes` is the only one:
+# every clinical detail of a medication order lives on the LINE, and the header
+# carries ownership, a date and a state that nothing outside the model may set.
+MEDICATION_HEADER_FIELDS = ("notes",)
+
+# Everything a client must never write on the header. Same shape and same
+# reasoning as the two sets above.
+#
+# `pharmacy_dispense_ids` appears here because hospital_pharmacy hangs the
+# dispense off the prescription as a one2many, and a client that could write it
+# would be creating the dispense the Doctor Desk is forbidden to create --
+# through the back door, in the same request that writes the prescription.
+#
+# `prescription_date` is protected rather than editable: it is the date the
+# medication was ordered, and a browser is not the authority on when that was.
+MEDICATION_PROTECTED_FIELDS = frozenset(
+    {
+        "id",
+        "name",
+        "state",
+        "patient_id",
+        "physician_id",
+        "appointment_id",
+        "consultation_id",
+        "diagnosis_id",
+        "active",
+        "prescription_date",
+        "request_token",
+        "line_ids",
+        "pharmacy_dispense_ids",
+        "pharmacy_dispense_count",
+    }
+)
+
+
 class LaboratoryResponseError(Exception):
     """The laboratory order was placed, but its response could not be built.
 
@@ -284,6 +325,21 @@ class RadiologyResponseError(Exception):
     By the time this reaches the handler the savepoint has already rolled back
     the request, its lines AND the charges hospital_billing raised at
     confirmation.
+    """
+
+
+class MedicationResponseError(Exception):
+    """The prescription was written, but its response could not be built.
+
+    Its own type, like every other response-failure on this surface, because the
+    sentences differ and a doctor told "the radiology order was not placed"
+    after a prescription would go looking at the wrong department.
+
+    By the time this reaches the handler the savepoint has already rolled back
+    the prescription, its lines AND the pharmacy dispense hospital_pharmacy
+    composed at confirmation. No charge is involved: medication is billed later,
+    at the pharmacist's Mark Ready, so unlike the laboratory and radiology cases
+    there is nothing financial to unwind here.
     """
 
 
@@ -407,6 +463,13 @@ def doctor_endpoint(func):
             return error_response(
                 "radiology_response_failed",
                 "The radiology order was not placed because the confirmation "
+                "could not be produced. Nothing was changed. Please retry.",
+                500,
+            )
+        except MedicationResponseError:
+            return error_response(
+                "medication_response_failed",
+                "The prescription was not written because the confirmation "
                 "could not be produced. Nothing was changed. Please retry.",
                 500,
             )
@@ -725,6 +788,126 @@ def _build_radiology_values(body):
         )
 
     unknown = provided - set(RAD_ORDER_EDITABLE_FIELDS)
+    if unknown:
+        raise ApiError(
+            "unknown_field", "Unrecognised fields: %s." % ", ".join(sorted(unknown)), 400
+        )
+    return {key: body[key] for key in provided}
+
+
+def _load_prescription(env, consultation, prescription_id):
+    """One prescription, through the caller's rules AND this consultation.
+
+    The consultation filter is not redundant with the record rule: the doctor
+    rule admits every prescription they wrote, across all their patients, so
+    without it a prescription id from one visit could be cancelled through
+    another visit's URL. A prescription outside this consultation reads as not
+    found rather than forbidden, so the endpoint cannot be used to probe which
+    ids exist.
+    """
+    prescription = env["hospital.prescription"].browse(prescription_id).exists()
+    if not prescription or prescription.consultation_id != consultation:
+        raise ApiError(
+            "prescription_not_found",
+            "Prescription not found for this consultation.",
+            404,
+        )
+    return prescription
+
+
+def _medication_payload(env, consultation):
+    """The whole prescription list, re-read from the database after a mutation."""
+    consultation.invalidate_recordset()
+    prescriptions = env["hospital.prescription"].for_consultation(consultation)
+    return serialize_prescriptions(prescriptions, consultation.state == "draft")
+
+
+def _build_medicine_entries(body):
+    """The prescribed medicines, validated as a SHAPE and nothing more.
+
+    THIS LAYER CHECKS STRUCTURE; THE MODEL CHECKS MEANING. Whether a quantity is
+    positive, whether a route is in the line's selection, whether a medicine is
+    orderable at all -- every one of those is decided by
+    hospital.prescription.create_from_consultation(), because they are the same
+    questions asked of every caller and not only of this endpoint.
+
+    ONE ENTRY PER PRESCRIBED MEDICINE, and duplicates are NOT collapsed. That is
+    a real difference from the radiology endpoint, which de-duplicates its exam
+    list because ordering the same study twice in one submission is always a
+    client mistake. Prescribing the same drug twice on one prescription is not:
+    a tapering course and a rescue dose are two lines of the same medicine with
+    different instructions, and merging them would silently delete a clinical
+    decision.
+    """
+    raw = body.get("medicines")
+    if not isinstance(raw, list) or not raw:
+        raise ApiError(
+            "invalid_field",
+            "'medicines' must be a non-empty list of prescribed medicines.",
+            400,
+        )
+
+    allowed = {
+        "medicine_id",
+        "quantity",
+        "dosage",
+        "route",
+        "frequency",
+        "duration",
+        "instructions",
+    }
+
+    entries = []
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ApiError(
+                "invalid_field",
+                "Each entry in 'medicines' must be an object with a medicine_id.",
+                400,
+            )
+        unknown = set(item) - allowed
+        if unknown:
+            raise ApiError(
+                "unknown_field",
+                "Unrecognised fields on medicine %s: %s."
+                % (index + 1, ", ".join(sorted(unknown))),
+                400,
+            )
+        medicine_id = coerce_optional_id("medicine_id", item.get("medicine_id"))
+        if not medicine_id:
+            raise ApiError(
+                "invalid_field",
+                "Each entry in 'medicines' needs a medicine id.",
+                400,
+            )
+        entry = {key: item[key] for key in item if key != "medicine_id"}
+        entry["medicine_id"] = medicine_id
+        entries.append(entry)
+    return entries
+
+
+def _build_medication_header(body):
+    """The prescription header's own optional fields.
+
+    Patient, physician, appointment and consultation are derived server-side
+    from the consultation record. A client that sends one of them is told so by
+    name rather than having it silently dropped, which is what stops a frontend
+    believing it had reassigned a prescription.
+    """
+    provided = set(body)
+    for key in ("medicines", "diagnosis_id", "request_token"):
+        provided.discard(key)
+
+    protected = provided & MEDICATION_PROTECTED_FIELDS
+    if protected:
+        raise ApiError(
+            "protected_field",
+            "These fields cannot be written directly: %s."
+            % ", ".join(sorted(protected)),
+            400,
+        )
+
+    unknown = provided - set(MEDICATION_HEADER_FIELDS)
     if unknown:
         raise ApiError(
             "unknown_field", "Unrecognised fields: %s." % ", ".join(sorted(unknown)), 400
@@ -2189,5 +2372,246 @@ class YoyaEmrDoctorController(http.Controller):
                     env.uid,
                 )
                 raise RadiologyResponseError(str(error)) from error
+
+        return response
+
+    # ------------------------------------------------------------------
+    # 20. Medicine catalogue -- search
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/catalogue/medicines",
+        type="http", auth="user", methods=["GET"], csrf=False,
+    )
+    @doctor_endpoint
+    def medicine_catalogue(self, **params):
+        """Search the medicine catalogue. READ ONLY, bounded in SQL.
+
+        Clinical and reference fields only. hospital.pharmacy.medicine carries
+        `sale_price` on the record itself once the fiscal bridge is installed,
+        plus `billing_service_id` and `inventory_item_id`; none of the three is
+        ever serialized.
+
+        ORDERABLE ONLY, AND THIS MATTERS MORE HERE THAN FOR EITHER SIBLING. The
+        medicine picker predicts TWO downstream gates, not one: the pharmacist's
+        Mark Ready, which refuses an unmapped billing service, and Validate
+        Dispense, which refuses a missing inventory item. The second is why this
+        is not cosmetic -- a billable-but-unstocked medicine gets prescribed,
+        priced, AND PAID FOR before anything refuses, so offering one would be a
+        way to take money for medication that cannot be handed over. The
+        predicate is the MODEL's; this controller does not know what makes a
+        medicine orderable and does not decide it.
+
+        Reference data with no patient in it, so there is nothing to scope:
+        hospital_pharmacy already grants Hospital Doctor read on
+        hospital.pharmacy.medicine, and nothing here widens that.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+
+        search = (params.get("q") or "").strip()
+        limit = MED_CATALOGUE_DEFAULT_LIMIT
+        if params.get("limit"):
+            limit = max(
+                1,
+                min(
+                    parse_int_param("limit", params["limit"]),
+                    MED_CATALOGUE_MAX_LIMIT,
+                ),
+            )
+
+        model = env["hospital.pharmacy.medicine"]
+        domain = model.doctor_orderable_domain()
+        if search:
+            domain = expression.AND(
+                [
+                    domain,
+                    [
+                        "|", "|", "|",
+                        ("name", "ilike", search),
+                        ("code", "ilike", search),
+                        ("generic_name", "ilike", search),
+                        ("brand_name", "ilike", search),
+                    ],
+                ]
+            )
+
+        medicines = model.search(domain, limit=limit, order="name")
+        return success_response(
+            {
+                "medicines": [serialize_medicine(m) for m in medicines],
+                "query": search or None,
+                "limit": limit,
+                "truncated": len(medicines) == limit,
+            }
+        )
+
+    # ------------------------------------------------------------------
+    # 21. Consultation prescriptions -- read
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>/orders/medications",
+        type="http", auth="user", methods=["GET"], csrf=False,
+    )
+    @doctor_endpoint
+    def medication_order_list(self, appointment_id, **params):
+        """The prescriptions written in this visit's consultation.
+
+        Keyed on the CONSULTATION, not the appointment state, so prescriptions
+        stay readable after the visit finishes -- which is exactly when a doctor
+        checks whether the patient ever collected them. That is not incidental
+        for medication: the ordinary outpatient shape is that the doctor signs
+        off, the patient walks to the cashier and then to the pharmacy, so the
+        dispense routinely outlives the consultation. `can_order` reports
+        whether new prescriptions may still be written.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+
+        appointment = _load_visit(env, appointment_id)
+        consultation = env["hospital.consultation"].find_for_appointment(appointment)
+        if not consultation:
+            return success_response({"prescriptions": [], "can_order": False})
+
+        prescriptions = env["hospital.prescription"].for_consultation(consultation)
+        return success_response(
+            serialize_prescriptions(prescriptions, consultation.state == "draft")
+        )
+
+    # ------------------------------------------------------------------
+    # 22. Consultation prescriptions -- write
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>/orders/medications",
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @doctor_endpoint
+    def medication_order_create(self, appointment_id, **params):
+        """Write a prescription. THE CONTROLLER CREATES NOTHING DOWNSTREAM.
+
+        It resolves the visit, the consultation and the optional diagnosis
+        through the CALLER's own record rules, then hands them to one model
+        method. create_from_consultation() re-checks every medicine against
+        doctor_orderable_domain(), builds the lines, and calls action_confirm()
+        -- where hospital_pharmacy composes exactly one draft dispense.
+
+        NOTHING FINANCIAL HAPPENS HERE OR ANYWHERE BELOW THIS CALL, and that is
+        a real difference from the laboratory and radiology endpoints. Those
+        raise charges at confirmation. Medication is billed later, by the
+        PHARMACIST, at Mark Ready, using the quantity they intend to hand over.
+        So this endpoint creates no charge, resolves no encounter, checks no
+        clearance and touches no stock -- there is nothing yet to touch.
+
+        ONE SUBMISSION, ONE PRESCRIPTION, HOWEVER MANY MEDICINES. The domain
+        models a prescription as a header with many lines, and
+        unique(prescription_id) on the dispense means one prescription becomes
+        one dispense. Writing one prescription per medicine would send the
+        patient to the counter once per drug.
+
+        ATOMICITY. The create, the confirmation, the dispense it composes, the
+        reload and the response are ONE savepoint. A failure while serializing
+        must not leave a confirmed prescription and a live pharmacy dispense
+        behind a message saying nothing was written -- the doctor would
+        re-prescribe and the patient would be dispensed twice.
+
+        `request_token` IS REQUIRED. Unlike every other field on this body it is
+        refused when absent rather than defaulted, because it is the only replay
+        protection a prescription has.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+
+        appointment = _load_visit(env, appointment_id)
+        body = read_json_body()
+        header = _build_medication_header(body)
+        entries = _build_medicine_entries(body)
+
+        diagnosis_id = coerce_optional_id("diagnosis_id", body.get("diagnosis_id"))
+        # REQUIRED, and checked here -- before the consultation is resolved and
+        # long before the savepoint -- so a submission with no replay protection
+        # is refused having touched nothing at all.
+        request_token = _require_request_token(
+            body, "prescribing the same medicines twice"
+        )
+
+        consultation = _load_open_consultation(env, appointment)
+
+        diagnosis = env["hospital.patient.diagnosis"].browse(diagnosis_id).exists()
+        if diagnosis_id and not diagnosis:
+            raise ApiError(
+                "diagnosis_not_found",
+                "Diagnosis not found for this consultation.",
+                404,
+            )
+
+        with env.cr.savepoint():
+            env["hospital.prescription"].create_from_consultation(
+                consultation,
+                entries,
+                header,
+                diagnosis=diagnosis or None,
+                # Passed straight through, with no `or None` fallback: the token
+                # is already guaranteed non-empty above, and a fallback here
+                # would quietly re-open the tokenless path this endpoint exists
+                # to close.
+                request_token=request_token,
+            )
+            try:
+                response = success_response(_medication_payload(env, consultation))
+            except Exception as error:
+                _logger.exception(
+                    "Doctor prescription response failed for appointment=%s "
+                    "uid=%s; rolling the prescription and its dispense back",
+                    appointment_id,
+                    env.uid,
+                )
+                raise MedicationResponseError(str(error)) from error
+
+        return response
+
+    # ------------------------------------------------------------------
+    # 23. Consultation prescriptions -- cancel
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>"
+        "/orders/medications/<int:prescription_id>/cancel",
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @doctor_endpoint
+    def medication_order_cancel(self, appointment_id, prescription_id, **params):
+        """Cancel a prescription through the model's own workflow.
+
+        Slice 6A made action_cancel() authoritative for all of this, and none of
+        it is reimplemented here: the base guard permits cancellation only from
+        draft or confirmed, hospital_pharmacy then refuses outright if the
+        linked dispense is partial or dispensed, cancels the dispense when it is
+        draft or ready, and hospital_billing cancels any medication charges the
+        pharmacist had already raised. Its refusal reaches the doctor with its
+        own wording, because that sentence is the only thing that says WHY.
+
+        THE CHARGE CLEANUP MATTERS EVEN THOUGH PRESCRIBING RAISES NO CHARGE. By
+        the time a doctor thinks to cancel, the pharmacist may well have marked
+        the dispense ready -- and that is the moment the charges appear. A
+        cancellation that left them live would strand the visit in the cashier's
+        SERVICE PAYMENTS lane, collecting for medication nobody will hand over.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+
+        appointment = _load_visit(env, appointment_id)
+        consultation = _load_open_consultation(env, appointment)
+        prescription = _load_prescription(env, consultation, prescription_id)
+
+        with env.cr.savepoint():
+            prescription.cancel_from_consultation()
+            try:
+                response = success_response(_medication_payload(env, consultation))
+            except Exception as error:
+                _logger.exception(
+                    "Doctor prescription cancel response failed for "
+                    "prescription=%s uid=%s; rolling the cancellation back",
+                    prescription_id,
+                    env.uid,
+                )
+                raise MedicationResponseError(str(error)) from error
 
         return response

@@ -36,7 +36,7 @@ imaging orders and results rather than the whole hospital's.
 This module never modifies ``hospital_management``, ``hospital_billing`` or
 ``hospital_radiology``.
 """,
-    "version": "18.0.1.5.0",
+    "version": "18.0.1.6.0",
     "category": "Healthcare",
     "author": "YOYA Healthcare",
     "license": "LGPL-3",
@@ -56,6 +56,13 @@ This module never modifies ``hospital_management``, ``hospital_billing`` or
         # about ANOTHER module's manifest. Named explicitly so the load order
         # this file needs is one this file asks for.
         "hospital_pharmacy",
+        # Slice 6B. doctor_orderable_domain() composes the INVENTORY half of
+        # medicine orderability from hospital_inventory's own
+        # _doctor_orderable_inventory_domain(), which is derived from the
+        # predicate _inventory_increment_lines() enforces at Validate Dispense.
+        # Without it the picker would offer medicines the patient can be charged
+        # for and then not receive, so this is a hard dependency, not a soft one.
+        "hospital_inventory",
     ],
     # Access rows before record rules, matching yoya_reception_bridge: the ACL
     # decides WHETHER a group may touch the model at all, the rules decide WHICH

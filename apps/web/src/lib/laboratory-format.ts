@@ -24,7 +24,7 @@ export const ORDER_KINDS: ReadonlyArray<{
 }> = [
   { key: "laboratory", label: "Laboratory", live: true },
   { key: "radiology", label: "Radiology", live: true },
-  { key: "medication", label: "Medication", live: false },
+  { key: "medication", label: "Medication", live: true },
   { key: "procedure", label: "Procedure", live: false },
 ];
 

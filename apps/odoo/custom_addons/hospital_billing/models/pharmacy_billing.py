@@ -43,6 +43,52 @@ class HospitalPharmacyMedicineBilling(models.Model):
             if service and service.service_type != "pharmacy":
                 raise ValidationError("%s: billing service must be Pharmacy." % medicine.display_name)
 
+    @api.model
+    def _doctor_orderable_billing_domain(self, company=None):
+        """The billing half of medicine orderability. AS A DOMAIN.
+
+        A ONE-TO-ONE RESTATEMENT OF _assert_billable() BELOW, and it lives here
+        rather than in the Doctor Desk bridge for exactly that reason: the two
+        must agree, and the only way to keep them agreeing is to write them in
+        the same file, next to each other, owned by the module that decides what
+        billable means.
+
+        The four conditions map to the four problems _assert_billable reports:
+
+            no billing service mapped   billing_service_id is set
+            service is archived         the service is active
+            belongs to another company  the service is company-less or ours
+            not effective on <date>     today falls inside its window
+
+        Nothing is added and nothing is left out. Notably NOT service_type,
+        which _assert_billable does not check either: a model constraint already
+        guarantees it at write time, and duplicating it here would make the
+        picker stricter than the gate it exists to predict.
+
+        RETURNED AS A DOMAIN so the catalogue filters in SQL. Post-filtering a
+        fetched page would silently shrink it below the requested limit and make
+        the `truncated` flag a lie.
+
+        _assert_billable REMAINS THE AUTHORITY. This decides only what is
+        OFFERED; a medicine that reaches Mark Ready by any other route is still
+        refused there, and the transaction still rolls back.
+        """
+        company = company or self.env.company
+        today = fields.Date.context_today(self)
+        return [
+            ("billing_service_id", "!=", False),
+            ("billing_service_id.active", "=", True),
+            "|",
+            ("billing_service_id.company_id", "=", False),
+            ("billing_service_id.company_id", "=", company.id),
+            "|",
+            ("billing_service_id.effective_date_start", "=", False),
+            ("billing_service_id.effective_date_start", "<=", today),
+            "|",
+            ("billing_service_id.effective_date_end", "=", False),
+            ("billing_service_id.effective_date_end", ">=", today),
+        ]
+
     def _assert_billable(self, company=None):
         company = company or self.env.company
         today = fields.Date.context_today(self)

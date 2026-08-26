@@ -50,6 +50,49 @@ class HospitalPharmacyMedicine(models.Model):
             ("company_id", "in", self._pharmacy_inventory_allowed_company_ids()),
         ]
 
+    @api.model
+    def _doctor_orderable_inventory_domain(self):
+        """The inventory half of medicine orderability. AS A DOMAIN.
+
+        DERIVED FROM _pharmacy_inventory_item_domain(), NOT RESTATED. That
+        method is already the authoritative description of an inventory item
+        this pharmacy can consume from, and _is_valid_pharmacy_inventory_item()
+        is the same list of conditions expressed as Python. A third hand-written
+        copy is exactly how a Doctor Desk picker starts offering medicines that
+        _inventory_increment_lines() refuses at Validate Dispense.
+
+        So this walks the existing domain and prefixes every leaf's field with
+        `inventory_item_id.`, turning a domain over hospital.inventory.item into
+        the same domain over hospital.pharmacy.medicine. Operator strings ('|',
+        '&', '!') pass through untouched, which is what keeps the prefix-notation
+        OR over company_id intact.
+
+        WHY THIS MATTERS MORE THAN THE BILLING HALF. An unmapped-but-billable
+        medicine is worse than a picker trap: the prescription is placed, the
+        pharmacist marks it ready, the charge is raised and THE PATIENT PAYS,
+        and only then does consumption refuse with 'not linked to inventory
+        items'. The money is taken before the refusal.
+
+        DELIBERATELY NOT INCLUDED: dosage-form/UoM compatibility. It is a Python
+        dict lookup and not expressible as a domain, and it does not need to be
+        -- an @api.constrains already enforces it at mapping time, so any STORED
+        mapping is compatible by construction.
+
+        ALSO DELIBERATELY NOT INCLUDED: live stock. See the Doctor Desk bridge.
+        """
+        prefixed = []
+        for leaf in self._pharmacy_inventory_item_domain():
+            if isinstance(leaf, (list, tuple)) and len(leaf) == 3:
+                field, operator, value = leaf
+                prefixed.append(("inventory_item_id.%s" % field, operator, value))
+            else:
+                prefixed.append(leaf)
+        # Stated rather than left implicit. A medicine with no item is already
+        # excluded by every traversal above, but _is_valid_pharmacy_inventory_
+        # item() opens with `if not item: return False`, and the domain should
+        # read the same way it does.
+        return [("inventory_item_id", "!=", False)] + prefixed
+
     def _is_valid_pharmacy_inventory_item(self, item):
         self.ensure_one()
         if not item or not item.active:

@@ -10,19 +10,23 @@ import type {
 } from "@/types/doctor-diagnosis";
 
 import LaboratoryPanel from "./laboratory-panel";
+import MedicationPanel from "./medication-panel";
 import RadiologyPanel from "./radiology-panel";
 
 /**
  * The ORDERS section of the active consultation.
  *
- * LABORATORY AND RADIOLOGY ARE LIVE. Medication and procedure are rendered as
- * inert text with no handler and no tab stop, because a control that looks
- * pressable and does nothing is worse than an honest label in a clinical tool.
+ * LABORATORY, RADIOLOGY AND MEDICATION ARE LIVE. Procedure is rendered as inert
+ * text with no handler and no tab stop, because a control that looks pressable
+ * and does nothing is worse than an honest label in a clinical tool.
  *
  * THIS COMPONENT OWNS THE TABS AND THE DIAGNOSIS LIST, AND NOTHING ELSE. Each
  * order kind's body lives in its own panel: they carry different fields,
  * different status vocabularies and different workflows, and one parameterised
- * panel would have needed a union type at every line of JSX.
+ * panel would have needed a union type at every line of JSX. Medication makes
+ * that plainest -- a lab or imaging order is a set of picked items, while a
+ * prescription is a set of picked items each carrying its own dose, route,
+ * frequency, duration and quantity.
  *
  * THE PANELS ARE MOUNTED ONE AT A TIME, so switching tabs re-reads that kind's
  * orders. That is the honest behaviour for a queue another department is
@@ -103,6 +107,8 @@ export default function OrdersWorkspace({
 
       {kind === "radiology" ? (
         <RadiologyPanel appointmentId={appointmentId} diagnoses={diagnoses} />
+      ) : kind === "medication" ? (
+        <MedicationPanel appointmentId={appointmentId} diagnoses={diagnoses} />
       ) : (
         <LaboratoryPanel appointmentId={appointmentId} diagnoses={diagnoses} />
       )}
