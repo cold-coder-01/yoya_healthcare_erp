@@ -4,15 +4,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { messageFromPayload } from "@/lib/api-error";
 import {
-  EMPTY_ORDER_FORM,
   addTest,
   buildOrderPayload,
   canSubmitOrder,
   isSelected,
   labPriorityLabel,
   orderTestSummary,
-  removeTest,
-  testLabel,
+  selectionSummary,
+  testCountLabel,
 } from "@/lib/laboratory-format";
 import type { ApiEnvelope } from "@/types/doctor";
 import type { DoctorDiagnosis } from "@/types/doctor-diagnosis";
@@ -20,10 +19,12 @@ import type {
   DoctorLabOrder,
   DoctorLabOrderResponse,
   LabCatalogueResponse,
-  LabOrderForm,
   LabTestOption,
 } from "@/types/doctor-laboratory";
-import { LAB_PRIORITIES } from "@/types/doctor-laboratory";
+import type { LabOrderDraft } from "@/lib/order-draft-format";
+
+import { useLabOrderDraft } from "./order-draft-context";
+import LaboratoryOrderModal from "./laboratory-order-modal";
 
 /**
  * The LABORATORY tab of the ORDERS section.
@@ -38,9 +39,17 @@ import { LAB_PRIORITIES } from "@/types/doctor-laboratory";
  * test's billing configuration and raises one charge per test, all-or-nothing.
  * Nothing here knows what a test costs, and the payload carries no money.
  *
- * NOTHING IS SENT UNTIL "PLACE LAB ORDER". Searching and selecting are local;
- * the one request that leaves this component is the submission itself, and it
- * carries an idempotency token so a double click cannot bill the patient twice.
+ * NOTHING IS SENT UNTIL "PLACE LAB ORDER". Searching, selecting and composing
+ * are local; the one request that leaves this component is the submission
+ * itself, and it carries an idempotency token so a double click cannot bill the
+ * patient twice.
+ *
+ * THE UNSENT ORDER IS NOT THIS COMPONENT'S TO LOSE. Selecting a test opens a
+ * centred editor and Save commits the request to the CONSULTATION's draft
+ * store, which lives above the ORDERS tabs. Switching to Radiology and back
+ * unmounts this panel and re-reads the placed orders -- a queue another
+ * department is working really can move while the doctor is away -- but the
+ * half-written request comes back exactly as it was left.
  */
 
 const STATUS_TONE: Record<string, string> = {
@@ -61,7 +70,14 @@ export default function LaboratoryPanel({
   diagnoses: DoctorDiagnosis[];
 }) {
   const [orders, setOrders] = useState<DoctorLabOrder[]>([]);
-  const [canOrder, setCanOrder] = useState(false);
+  /*
+    NULL UNTIL THE SERVER HAS SAID. Ordering permission is the server's verdict,
+    and "not yet known" is a third state that matters: a false starting value
+    would read as "this consultation is completed" for the duration of every
+    load, and the read-only rule below would discard the doctor's draft on every
+    tab switch -- the exact loss this slice exists to stop.
+  */
+  const [canOrder, setCanOrder] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -73,13 +89,40 @@ export default function LaboratoryPanel({
   const [results, setResults] = useState<LabTestOption[]>([]);
   const [truncated, setTruncated] = useState(false);
   const [searching, setSearching] = useState(false);
-  const [selected, setSelected] = useState<LabTestOption[]>([]);
-  const [form, setForm] = useState<LabOrderForm>(EMPTY_ORDER_FORM);
 
-  const applyResponse = useCallback((data: DoctorLabOrderResponse) => {
-    setOrders(data.orders);
-    setCanOrder(data.can_order);
-  }, []);
+  /* The unsent request, owned by the consultation rather than by this panel. */
+  const { draft, setDraft, discard } = useLabOrderDraft();
+  const [editor, setEditor] = useState<{
+    entry: LabOrderDraft;
+    mode: "add" | "edit";
+    returnFocus: HTMLElement;
+  } | null>(null);
+
+  /*
+    THE SERVER'S VERDICT, APPLIED WHERE IT ARRIVES.
+
+    A COMPLETED CONSULTATION HAS NOTHING LEFT TO COMPOSE, so the same response
+    that says so closes the editor and discards the unsent request. It is done
+    here rather than in an effect watching `canOrder` for two reasons: an effect
+    would fire a cascading render, and -- the one that matters clinically -- the
+    verdict is only ever known from a response. A rule keyed on "canOrder is not
+    true" would also fire while a load was still in flight, which is every tab
+    switch, and would destroy the draft on each one.
+
+    This is one of the four things allowed to clear a draft. Tab navigation is
+    not among them and never reaches here.
+  */
+  const applyResponse = useCallback(
+    (data: DoctorLabOrderResponse) => {
+      setOrders(data.orders);
+      setCanOrder(data.can_order);
+      if (!data.can_order) {
+        setEditor(null);
+        discard();
+      }
+    },
+    [discard],
+  );
 
   /* ---------------- load ---------------- */
   useEffect(() => {
@@ -156,9 +199,16 @@ export default function LaboratoryPanel({
 
   /* ---------------- mutations ---------------- */
   const place = useCallback(async () => {
-    if (!selected.length) return;
+    if (!draft.tests.length) return;
     setPlacing(true);
     setActionError(null);
+    /*
+      MINTED HERE, PER ATTEMPT, exactly as it always has been. The token is
+      deliberately NOT kept with the draft: laboratory has never retained one
+      between attempts, and changing that would change this endpoint's
+      idempotency behaviour rather than merely move where an unsent form is
+      held.
+    */
     const token =
       globalThis.crypto?.randomUUID?.() ??
       `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -169,20 +219,24 @@ export default function LaboratoryPanel({
           method: "POST",
           cache: "no-store",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(buildOrderPayload(selected, form, token)),
+          body: JSON.stringify(buildOrderPayload(draft.tests, draft.form, token)),
         },
       );
       const payload =
         (await response.json()) as ApiEnvelope<DoctorLabOrderResponse>;
       if (!response.ok || !payload.success) {
+        // The draft is KEPT: a refused order is work the doctor still has, and
+        // clearing it here would make a failed submission indistinguishable
+        // from a successful one.
         setActionError(
           messageFromPayload(payload, "The laboratory order could not be placed."),
         );
         return;
       }
       applyResponse(payload.data);
-      setSelected([]);
-      setForm(EMPTY_ORDER_FORM);
+      // Definitive success, and the ONLY place this panel discards a draft on
+      // the doctor's behalf.
+      discard();
       setQuery("");
       setResults([]);
     } catch {
@@ -190,7 +244,7 @@ export default function LaboratoryPanel({
     } finally {
       setPlacing(false);
     }
-  }, [appointmentId, applyResponse, form, selected]);
+  }, [appointmentId, applyResponse, discard, draft]);
 
   const cancel = useCallback(
     async (order: DoctorLabOrder) => {
@@ -230,12 +284,66 @@ export default function LaboratoryPanel({
   const searchTerm = query.trim();
   const visibleResults = searchTerm.length >= 2 ? results : [];
   const submittable = useMemo(
-    () => canSubmitOrder(selected, placing),
-    [selected, placing],
+    () => canSubmitOrder(draft.tests, placing),
+    [draft.tests, placing],
   );
+
+  /* Selecting a test opens the editor on the request it would join. */
+  const openWithTest = useCallback(
+    (test: LabTestOption, returnFocus: HTMLElement) => {
+      setEditor({
+        entry: { ...draft, tests: addTest(draft.tests, test) },
+        mode: "add",
+        returnFocus,
+      });
+    },
+    [draft],
+  );
+
+  const openStagedOrder = useCallback(
+    (returnFocus: HTMLElement) => {
+      setEditor({ entry: draft, mode: "edit", returnFocus });
+    },
+    [draft],
+  );
+
+  const saveEditor = useCallback(
+    (entry: LabOrderDraft) => {
+      setDraft(entry);
+      setEditor(null);
+    },
+    [setDraft],
+  );
+
+  /* The staged row's second line: how much, how urgent, and against what. */
+  const stagedContext = useMemo(() => {
+    const diagnosis = draft.form.diagnosis_id
+      ? (diagnoses.find((entry) => entry.id === draft.form.diagnosis_id)?.disease
+          ?.name ?? null)
+      : null;
+    return [
+      testCountLabel(draft.tests.length),
+      labPriorityLabel(draft.form.priority),
+      diagnosis,
+    ]
+      .filter((part): part is string => Boolean(part))
+      .join(" · ");
+  }, [diagnoses, draft.form.diagnosis_id, draft.form.priority, draft.tests.length]);
 
   return (
     <div className="flex flex-col gap-3">
+      {editor && canOrder !== false ? (
+        <LaboratoryOrderModal
+          entry={editor.entry}
+          mode={editor.mode}
+          diagnoses={diagnoses}
+          readOnly={canOrder !== true}
+          returnFocus={editor.returnFocus}
+          onSave={saveEditor}
+          onClose={() => setEditor(null)}
+        />
+      ) : null}
+
       {loadError ? (
         <p
           role="alert"
@@ -261,7 +369,7 @@ export default function LaboratoryPanel({
       ) : (
         <>
           {/* ---- Place an order ---- */}
-          {canOrder ? (
+          {canOrder === true ? (
             <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-2.5 py-2">
               <div className="flex items-center gap-2">
                 <h3 className="cl-meta font-bold uppercase tracking-[0.08em] text-slate-600">
@@ -277,6 +385,7 @@ export default function LaboratoryPanel({
                 type="search"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
+                aria-label="Search laboratory tests"
                 placeholder="Search laboratory tests by name or code…"
                 className="h-9 w-full rounded border border-slate-300 bg-white px-2.5 cl-body text-slate-900 outline-none placeholder:text-slate-500 focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600"
               />
@@ -288,13 +397,15 @@ export default function LaboratoryPanel({
               {visibleResults.length > 0 ? (
                 <ul className="max-h-44 overflow-y-auto rounded border border-slate-200 bg-white">
                   {visibleResults.map((test) => {
-                    const already = isSelected(selected, test.id);
+                    const already = isSelected(draft.tests, test.id);
                     return (
                       <li key={test.id}>
                         <button
                           type="button"
                           disabled={already}
-                          onClick={() => setSelected((s) => addTest(s, test))}
+                          onClick={(event) =>
+                            openWithTest(test, event.currentTarget)
+                          }
                           className="flex w-full items-baseline gap-2 border-b border-slate-100 px-2.5 py-1.5 text-left outline-none last:border-b-0 hover:bg-emerald-50/70 focus-visible:bg-emerald-50 disabled:cursor-not-allowed disabled:bg-slate-50"
                         >
                           <span className="min-w-0 flex-1 truncate cl-body font-semibold text-slate-900">
@@ -321,93 +432,50 @@ export default function LaboratoryPanel({
                 </p>
               ) : null}
 
-              {selected.length > 0 ? (
+              {/* ---- The staged request ---- */}
+              {draft.tests.length > 0 ? (
                 <>
-                  <ul className="flex flex-wrap gap-1.5">
-                    {selected.map((test) => (
-                      <li
-                        key={test.id}
-                        className="inline-flex items-center gap-1.5 rounded border border-emerald-300 bg-emerald-50 px-2 py-0.5 cl-secondary font-semibold text-emerald-900"
+                  <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+                    <div className="flex items-start gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate cl-strong font-semibold text-slate-900">
+                          {selectionSummary(draft.tests)}
+                        </p>
+                        <p className="truncate cl-secondary text-slate-700">
+                          {stagedContext}
+                        </p>
+                        {draft.form.clinical_notes.trim() ? (
+                          <p
+                            title={draft.form.clinical_notes}
+                            className="truncate cl-secondary text-slate-500"
+                          >
+                            {draft.form.clinical_notes}
+                          </p>
+                        ) : null}
+                      </div>
+                      <button
+                        type="button"
+                        aria-label="Edit the laboratory order"
+                        onClick={(event) => openStagedOrder(event.currentTarget)}
+                        className="shrink-0 rounded border border-sky-300 bg-sky-50 px-2 py-0.5 cl-secondary font-semibold text-sky-800 outline-none hover:bg-sky-100 focus-visible:ring-2 focus-visible:ring-sky-600"
                       >
-                        {testLabel(test)}
-                        <button
-                          type="button"
-                          aria-label={`Remove ${test.name}`}
-                          onClick={() =>
-                            setSelected((s) => removeTest(s, test.id))
-                          }
-                          className="cl-secondary font-bold text-emerald-700 outline-none hover:text-emerald-900 focus-visible:ring-1 focus-visible:ring-emerald-600"
-                        >
-                          ×
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    <label className="flex min-w-0 flex-col gap-0.5">
-                      <span className="cl-meta font-bold uppercase tracking-[0.07em] text-slate-600">
-                        Priority
-                      </span>
-                      <select
-                        value={form.priority}
-                        onChange={(event) =>
-                          setForm((f) => ({
-                            ...f,
-                            priority: event.target
-                              .value as LabOrderForm["priority"],
-                          }))
-                        }
-                        className="h-8 rounded border border-slate-300 bg-white px-2 cl-body font-semibold text-slate-800 outline-none focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600"
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Remove the laboratory order"
+                        onClick={discard}
+                        className="shrink-0 rounded border border-red-200 px-2 py-0.5 cl-secondary font-semibold text-red-700 outline-none hover:border-red-300 hover:bg-red-50 focus-visible:ring-2 focus-visible:ring-red-600"
                       >
-                        {LAB_PRIORITIES.map((priority) => (
-                          <option key={priority} value={priority}>
-                            {labPriorityLabel(priority)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label className="flex min-w-0 flex-col gap-0.5">
-                      <span className="cl-meta font-bold uppercase tracking-[0.07em] text-slate-600">
-                        Indication (diagnosis)
-                      </span>
-                      <select
-                        value={form.diagnosis_id ?? ""}
-                        onChange={(event) =>
-                          setForm((f) => ({
-                            ...f,
-                            diagnosis_id: event.target.value
-                              ? Number(event.target.value)
-                              : null,
-                          }))
-                        }
-                        className="h-8 rounded border border-slate-300 bg-white px-2 cl-body font-semibold text-slate-800 outline-none focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600"
-                      >
-                        <option value="">— none —</option>
-                        {/* Only THIS consultation's diagnoses. The server
-                            refuses any other, including the same patient's
-                            diagnosis from an earlier visit. */}
-                        {diagnoses.map((diagnosis) => (
-                          <option key={diagnosis.id} value={diagnosis.id}>
-                            {diagnosis.disease?.name ?? "Diagnosis"}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                        Remove
+                      </button>
+                    </div>
                   </div>
 
-                  <textarea
-                    value={form.clinical_notes}
-                    rows={2}
-                    placeholder="Clinical indication (optional)…"
-                    onChange={(event) =>
-                      setForm((f) => ({ ...f, clinical_notes: event.target.value }))
-                    }
-                    className="w-full resize-y rounded border border-slate-300 bg-white px-2.5 py-2 cl-body leading-[1.55] text-slate-900 caret-emerald-700 outline-none placeholder:text-slate-500 focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600"
-                  />
-
-                  <div className="flex justify-end">
+                  <div className="flex items-center justify-end gap-2">
+                    <span className="cl-meta text-slate-500">
+                      {testCountLabel(draft.tests.length)} · one request
+                    </span>
                     <button
                       type="button"
                       disabled={!submittable}
@@ -420,12 +488,19 @@ export default function LaboratoryPanel({
                 </>
               ) : null}
             </div>
-          ) : (
-            <p className="rounded-md border border-slate-300 bg-white px-3 py-2 cl-secondary leading-snug text-slate-700">
-              This consultation is completed. No new laboratory orders can be
-              placed.
-            </p>
-          )}
+          ) : canOrder === false ? (
+            <div className="rounded-md border border-red-200 bg-red-50/60 px-3 py-2">
+              <div className="flex items-center gap-2">
+                <span className="rounded border border-red-300 bg-white px-1.5 py-px cl-micro font-bold uppercase tracking-wide text-red-800">
+                  Read only
+                </span>
+                <p className="cl-secondary leading-snug text-red-900">
+                  This consultation is completed. Laboratory orders can be
+                  reviewed but no new order can be placed.
+                </p>
+              </div>
+            </div>
+          ) : null}
 
           {/* ---- Current orders ---- */}
           <div className="flex flex-col gap-1">

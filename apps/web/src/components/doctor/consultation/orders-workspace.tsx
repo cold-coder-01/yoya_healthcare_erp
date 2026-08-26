@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { ORDER_KINDS } from "@/lib/laboratory-format";
+import { isDraftableOrderKind } from "@/lib/order-draft-format";
 import type { ApiEnvelope } from "@/types/doctor";
 import type {
   DoctorDiagnosis,
@@ -12,13 +13,16 @@ import type {
 import LaboratoryPanel from "./laboratory-panel";
 import MedicationPanel from "./medication-panel";
 import RadiologyPanel from "./radiology-panel";
+import { useOrderDraftStore } from "./order-draft-context";
 
 /**
  * The ORDERS section of the active consultation.
  *
  * LABORATORY, RADIOLOGY AND MEDICATION ARE LIVE. Procedure is rendered as inert
  * text with no handler and no tab stop, because a control that looks pressable
- * and does nothing is worse than an honest label in a clinical tool.
+ * and does nothing is worse than an honest label in a clinical tool. It has no
+ * catalogue endpoint, no order endpoint and no model behind it, so it also has
+ * no draft slot and no indicator -- when it ships it inherits both.
  *
  * THIS COMPONENT OWNS THE TABS AND THE DIAGNOSIS LIST, AND NOTHING ELSE. Each
  * order kind's body lives in its own panel: they carry different fields,
@@ -28,10 +32,15 @@ import RadiologyPanel from "./radiology-panel";
  * prescription is a set of picked items each carrying its own dose, route,
  * frequency, duration and quantity.
  *
- * THE PANELS ARE MOUNTED ONE AT A TIME, so switching tabs re-reads that kind's
- * orders. That is the honest behaviour for a queue another department is
+ * THE PANELS ARE STILL MOUNTED ONE AT A TIME, so switching tabs re-reads that
+ * kind's orders. That is the honest behaviour for a queue another department is
  * working: a radiology status the doctor left ten minutes ago may well have
  * moved, and showing a stale badge would be worse than a brief spinner.
+ *
+ * WHAT SWITCHING TABS NO LONGER DOES IS DESTROY UNSENT WORK. Half-written
+ * orders live in the consultation's draft store, above this component, so
+ * unmounting a panel now costs a refetch of PLACED orders and nothing else.
+ * The mark beside a tab label is how the doctor can see that from here.
  */
 export default function OrdersWorkspace({
   appointmentId,
@@ -49,6 +58,7 @@ export default function OrdersWorkspace({
   */
   const [diagnoses, setDiagnoses] = useState<DoctorDiagnosis[]>([]);
   const [kind, setKind] = useState<string>("laboratory");
+  const { indicatorFor } = useOrderDraftStore();
 
   useEffect(() => {
     const controller = new AbortController();
@@ -78,31 +88,60 @@ export default function OrdersWorkspace({
     <div className="flex flex-col gap-3">
       {/* ---- Order kind sub-navigation ---- */}
       <div className="flex items-center gap-1 border-b border-slate-200">
-        {ORDER_KINDS.map((entry) =>
-          entry.live ? (
+        {ORDER_KINDS.map((entry) => {
+          if (!entry.live) {
+            return (
+              <span
+                key={entry.key}
+                title="Arrives in a later clinical slice"
+                className="cursor-default border-b-2 border-transparent px-2 py-1.5 cl-meta font-semibold uppercase tracking-[0.07em] text-slate-400"
+              >
+                {entry.label}
+              </span>
+            );
+          }
+
+          /*
+            THE MARK MEANS "UNSENT WORK IS WAITING HERE", never "this patient
+            has orders". Counting placed orders would light every tab of every
+            consultation and the mark would stop meaning anything. Amber, not
+            red: unfinished is not an error.
+          */
+          const indicator = isDraftableOrderKind(entry.key)
+            ? indicatorFor(entry.key)
+            : null;
+
+          return (
             <button
               key={entry.key}
               type="button"
               aria-current={kind === entry.key ? "page" : undefined}
               onClick={() => setKind(entry.key)}
-              className={`-mb-px border-b-2 px-2 py-1.5 cl-meta font-bold uppercase tracking-[0.07em] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-emerald-600 ${
+              className={`-mb-px flex items-center gap-1.5 border-b-2 px-2 py-1.5 cl-meta font-bold uppercase tracking-[0.07em] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-emerald-600 ${
                 kind === entry.key
                   ? "border-emerald-600 text-slate-900"
                   : "border-transparent text-slate-500 hover:text-slate-800"
               }`}
             >
               {entry.label}
+              {indicator?.dirty ? (
+                indicator.count > 0 ? (
+                  <span
+                    aria-label={`${indicator.count} not yet ordered`}
+                    className="inline-flex min-w-[1.1rem] items-center justify-center rounded-full border border-amber-300 bg-amber-100 px-1 cl-micro font-bold tabular-nums text-amber-900"
+                  >
+                    {indicator.count}
+                  </span>
+                ) : (
+                  <span
+                    aria-label="Unfinished order started"
+                    className="h-1.5 w-1.5 rounded-full bg-amber-500"
+                  />
+                )
+              ) : null}
             </button>
-          ) : (
-            <span
-              key={entry.key}
-              title="Arrives in a later clinical slice"
-              className="cursor-default border-b-2 border-transparent px-2 py-1.5 cl-meta font-semibold uppercase tracking-[0.07em] text-slate-400"
-            >
-              {entry.label}
-            </span>
-          ),
-        )}
+          );
+        })}
       </div>
 
       {kind === "radiology" ? (

@@ -225,6 +225,42 @@ export function updateStaged(
   );
 }
 
+/** The modal's dirty check compares only editable line values. */
+export function medicineEditorChanged(
+  openedWith: StagedMedicine,
+  current: StagedMedicine,
+) {
+  return (
+    openedWith.quantity !== current.quantity ||
+    openedWith.dosage !== current.dosage ||
+    openedWith.route !== current.route ||
+    openedWith.frequency !== current.frequency ||
+    openedWith.duration !== current.duration ||
+    openedWith.instructions !== current.instructions
+  );
+}
+
+/** Compact review line for a medicine waiting in the local prescription. */
+export function stagedRegimenSummary(entry: StagedMedicine) {
+  const parts: string[] = [];
+  if (entry.dosage) parts.push(entry.dosage);
+  const route = routeLabel(entry.route);
+  if (route) parts.push(route);
+  if (entry.frequency) parts.push(entry.frequency);
+  if (entry.duration) parts.push(entry.duration);
+  parts.push(`Qty ${entry.quantity}`);
+  return parts.join(" / ");
+}
+
+export const MED_STATUS_TONE: Record<string, string> = {
+  awaiting_pharmacy: "border-sky-300 bg-sky-50 text-sky-900",
+  ready_at_pharmacy: "border-amber-300 bg-amber-50 text-amber-900",
+  partially_dispensed: "border-orange-300 bg-orange-50 text-orange-900",
+  dispensed: "border-emerald-400 bg-emerald-50 text-emerald-900",
+  cancelled: "border-red-300 bg-red-50 text-red-800",
+  draft: "border-slate-300 bg-slate-100 text-slate-600",
+};
+
 /* ------------------------------------------------------------------ *
  * Validation
  * ------------------------------------------------------------------ */

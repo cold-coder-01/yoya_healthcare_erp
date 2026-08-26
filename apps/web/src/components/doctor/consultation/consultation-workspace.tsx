@@ -40,6 +40,7 @@ import DiagnosisWorkspace from "./diagnosis-workspace";
 import OrdersWorkspace from "./orders-workspace";
 import ConsultationNoteEditor from "./note-editor";
 import NoteEditorModal from "./note-editor-modal";
+import { ConsultationOrderDraftProvider } from "./order-draft-context";
 
 /**
  * The active consultation workspace.
@@ -516,6 +517,21 @@ export default function ConsultationWorkspace({
     : null;
 
   return (
+    /*
+      ---- Unsent order drafts ----
+
+      MOUNTED OUTSIDE EVERY SECTION CONDITIONAL, deliberately. The section body
+      below renders exactly one of ORDERS, DIAGNOSIS or the note, so anything
+      held inside those subtrees is destroyed by a section click -- and the
+      ORDERS tabs do the same again one level down. A half-written laboratory
+      request, imaging request or prescription belongs to this CONSULTATION, so
+      it is held here, where no navigation within the consultation can reach it.
+
+      Scoped by appointment twice over: this whole workspace is already mounted
+      with key={appointment_id} by the workstation, and the provider wipes its
+      own state if the appointment ever changes underneath it.
+    */
+    <ConsultationOrderDraftProvider appointmentId={appointmentId}>
     <section className="flex h-full min-h-[560px] min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm min-[1100px]:min-h-0">
       {/* ---- Identity: one dense line, not a card ---- */}
       <header className="shrink-0 border-b border-slate-200 bg-white px-3 py-2">
@@ -950,6 +966,7 @@ export default function ConsultationWorkspace({
         />
       ) : null}
     </section>
+    </ConsultationOrderDraftProvider>
   );
 }
 

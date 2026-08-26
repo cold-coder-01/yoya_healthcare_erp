@@ -33,6 +33,7 @@ import type {
 
 import {
   EMPTY_PRESCRIPTION_FORM,
+  MED_STATUS_TONE,
   buildPrescriptionPayload,
   canSubmitPrescription,
   dosageFormLabel,
@@ -41,11 +42,13 @@ import {
   medStatusLabel,
   medicineContext,
   medicineCountLabel,
+  medicineEditorChanged,
   medicineLabel,
   prescribedSummary,
   quantityError,
   routeLabel,
   stageMedicine,
+  stagedRegimenSummary,
   stagedErrors,
   unstageMedicine,
   updateStaged,
@@ -278,6 +281,43 @@ test("editing a staged row touches only that row", () => {
   assert.equal(edited[1].route, "oral");
   // The medicine itself is never rewritten by an edit.
   assert.equal(edited[1].medicine.id, CETIRIZINE.id);
+});
+
+test("the medication editor dirty check protects every editable field", () => {
+  const opened = staged();
+  assert.equal(medicineEditorChanged(opened, { ...opened }), false);
+  for (const patch of [
+    { dosage: "250mg" },
+    { route: "oral" },
+    { quantity: "60" },
+    { frequency: "nightly" },
+    { duration: "7 days" },
+    { instructions: "after food" },
+  ]) {
+    assert.equal(medicineEditorChanged(opened, { ...opened, ...patch }), true);
+  }
+});
+
+test("a staged medicine has one compact clinical review line", () => {
+  assert.equal(
+    stagedRegimenSummary(
+      staged({
+        route: "oral",
+        frequency: "twice daily",
+        duration: "5 days",
+        quantity: "10",
+      }),
+    ),
+    "500mg / Oral / twice daily / 5 days / Qty 10",
+  );
+});
+
+test("prescription status tones use the agreed semantic colours", () => {
+  assert.match(MED_STATUS_TONE.awaiting_pharmacy, /sky/);
+  assert.match(MED_STATUS_TONE.ready_at_pharmacy, /amber/);
+  assert.match(MED_STATUS_TONE.partially_dispensed, /orange/);
+  assert.match(MED_STATUS_TONE.dispensed, /emerald/);
+  assert.match(MED_STATUS_TONE.cancelled, /red/);
 });
 
 /* ------------------------------------------------------------------ *

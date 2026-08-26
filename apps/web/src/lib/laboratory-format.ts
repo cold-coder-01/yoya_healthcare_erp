@@ -84,6 +84,16 @@ export function orderTestSummary(order: DoctorLabOrder) {
   return order.tests.map((test) => test.name).join(" · ");
 }
 
+/** The same summary for a request still being composed. */
+export function selectionSummary(selected: { name: string }[]) {
+  return selected.map((test) => test.name).join(" · ");
+}
+
+/** "1 test" / "3 tests". */
+export function testCountLabel(count: number) {
+  return count === 1 ? "1 test" : `${count} tests`;
+}
+
 /* ------------------------------------------------------------------ *
  * Selection
  * ------------------------------------------------------------------ */

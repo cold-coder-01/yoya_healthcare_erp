@@ -1,35 +1,35 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { messageFromPayload } from "@/lib/api-error";
 import {
-  EMPTY_PRESCRIPTION_FORM,
+  MED_STATUS_TONE,
   buildPrescriptionPayload,
   canSubmitPrescription,
-  dosageFormLabel,
   fulfilment,
   medicineContext,
   medicineCountLabel,
   medicineLabel,
   prescribedSummary,
-  routeLabel,
   stageMedicine,
+  stagedRegimenSummary,
   stagedErrors,
   unstageMedicine,
-  updateStaged,
 } from "@/lib/medication-format";
+import { prescriptionToken } from "@/lib/order-draft-format";
 import type { ApiEnvelope } from "@/types/doctor";
 import type { DoctorDiagnosis } from "@/types/doctor-diagnosis";
 import type {
   DoctorPrescription,
   DoctorPrescriptionResponse,
   MedCatalogueResponse,
-  MedPrescriptionForm,
   MedicineOption,
   StagedMedicine,
 } from "@/types/doctor-medication";
-import { MED_ROUTES } from "@/types/doctor-medication";
+
+import MedicationEditorModal from "./medication-editor-modal";
+import { useMedOrderDraft } from "./order-draft-context";
 
 /**
  * The MEDICATION tab of the ORDERS section.
@@ -63,15 +63,6 @@ import { MED_ROUTES } from "@/types/doctor-medication";
  * would be paid for and then refused at the counter.
  */
 
-const STATUS_TONE: Record<string, string> = {
-  awaiting_pharmacy: "border-sky-300 bg-sky-50 text-sky-900",
-  ready_at_pharmacy: "border-sky-400 bg-sky-50 text-sky-900",
-  partially_dispensed: "border-amber-300 bg-amber-50 text-amber-900",
-  dispensed: "border-emerald-400 bg-emerald-50 text-emerald-900",
-  cancelled: "border-slate-300 bg-slate-100 text-slate-600",
-  draft: "border-slate-300 bg-slate-100 text-slate-600",
-};
-
 const FIELD_CLASS =
   "h-8 w-full rounded border border-slate-300 bg-white px-2 cl-body text-slate-900 outline-none placeholder:text-slate-500 focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600";
 
@@ -90,7 +81,14 @@ export default function MedicationPanel({
   diagnoses: DoctorDiagnosis[];
 }) {
   const [prescriptions, setPrescriptions] = useState<DoctorPrescription[]>([]);
-  const [canOrder, setCanOrder] = useState(false);
+  /*
+    NULL UNTIL THE SERVER HAS SAID. Prescribing permission is the server's
+    verdict, and "not yet known" is a third state that matters: a false starting
+    value would read as "this consultation is completed" for the duration of
+    every load, and the read-only rule below would discard the doctor's staged
+    prescription on every tab switch -- the exact loss this slice exists to stop.
+  */
+  const [canOrder, setCanOrder] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -102,30 +100,62 @@ export default function MedicationPanel({
   const [results, setResults] = useState<MedicineOption[]>([]);
   const [truncated, setTruncated] = useState(false);
   const [searching, setSearching] = useState(false);
-  const [staged, setStaged] = useState<StagedMedicine[]>([]);
-  const [form, setForm] = useState<MedPrescriptionForm>(
-    EMPTY_PRESCRIPTION_FORM,
-  );
+  /*
+    THE PRESCRIPTION BEING WRITTEN, owned by the consultation rather than by
+    this panel: its staged medicines, its header fields and its submission
+    token. Held here it died on every tab switch.
+  */
+  const { draft, setDraft, discard } = useMedOrderDraft();
+  const staged = draft.staged;
+  const form = draft.form;
   const [showErrors, setShowErrors] = useState(false);
+  const [editor, setEditor] = useState<{
+    entry: StagedMedicine;
+    mode: "add" | "edit";
+    returnFocus: HTMLElement;
+  } | null>(null);
 
   /*
-    THE TOKEN SURVIVES A FAILED ATTEMPT, ON PURPOSE.
+    THE TOKEN SURVIVES A FAILED ATTEMPT AND, NOW, A TAB SWITCH.
 
-    It is minted once for a submission and held in a ref until that submission
+    It is minted once for a submission and kept until that submission
     definitively succeeds. A retry after a dropped response therefore carries
     the SAME token, which is the whole point: if the first attempt actually
     reached the server, the retry returns that prescription instead of writing a
     second one with a second pharmacy dispense behind it.
 
-    Server-side uniqueness is what actually enforces this. The disabled button
-    below only stops the trivial double-click.
+    IT USED TO LIVE IN A REF ON THIS COMPONENT, which meant the ORDERS tabs
+    destroyed it -- a doctor whose Prescribe failed, who looked at the lab tab
+    while deciding what to do, and who then retried, was sending a NEW token for
+    the SAME prescription. It now travels with the draft it identifies. The
+    token's meaning to the server is unchanged, and server-side uniqueness is
+    still what actually enforces this; the disabled button below only stops the
+    trivial double-click.
   */
-  const tokenRef = useRef<string | null>(null);
 
-  const applyResponse = useCallback((data: DoctorPrescriptionResponse) => {
-    setPrescriptions(data.prescriptions);
-    setCanOrder(data.can_order);
-  }, []);
+  /*
+    THE SERVER'S VERDICT, APPLIED WHERE IT ARRIVES.
+
+    A COMPLETED CONSULTATION HAS NOTHING LEFT TO PRESCRIBE, so the same response
+    that says so closes the editor and discards the unsent prescription. Not an
+    effect watching `canOrder`: that would cascade a render, and a rule keyed on
+    "canOrder is not true" would also fire while a load was in flight -- which
+    is every tab switch -- and destroy the prescription on each one.
+
+    This is one of the four things allowed to clear a draft. Tab navigation is
+    not among them and never reaches here.
+  */
+  const applyResponse = useCallback(
+    (data: DoctorPrescriptionResponse) => {
+      setPrescriptions(data.prescriptions);
+      setCanOrder(data.can_order);
+      if (!data.can_order) {
+        setEditor(null);
+        discard();
+      }
+    },
+    [discard],
+  );
 
   /* ---------------- load ---------------- */
   useEffect(() => {
@@ -211,7 +241,13 @@ export default function MedicationPanel({
 
     setPlacing(true);
     setActionError(null);
-    if (!tokenRef.current) tokenRef.current = newKey();
+    /*
+      Minted on the first attempt and reused on every later one. Written back
+      into the draft immediately, so the token outlives a failure, a tab switch
+      and the two together.
+    */
+    const token = prescriptionToken(draft, newKey);
+    setDraft((current) => ({ ...current, token }));
 
     try {
       const response = await fetch(
@@ -220,26 +256,27 @@ export default function MedicationPanel({
           method: "POST",
           cache: "no-store",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(
-            buildPrescriptionPayload(staged, form, tokenRef.current),
-          ),
+          body: JSON.stringify(buildPrescriptionPayload(staged, form, token)),
         },
       );
       const payload =
         (await response.json()) as ApiEnvelope<DoctorPrescriptionResponse>;
       if (!response.ok || !payload.success) {
-        // The token is KEPT so a retry is still deduplicated server-side.
+        // The draft AND its token are KEPT, so the doctor still has the
+        // prescription they wrote and a retry is still deduplicated
+        // server-side.
         setActionError(
           messageFromPayload(payload, "The prescription could not be written."),
         );
         return;
       }
       applyResponse(payload.data);
-      // Definitive success: this submission is over, so the next one is a new
-      // submission and needs a new token.
-      tokenRef.current = null;
-      setStaged([]);
-      setForm(EMPTY_PRESCRIPTION_FORM);
+      /*
+        Definitive success: this submission is over, so the whole draft goes --
+        staged medicines, header fields and the token with them. The next
+        prescription is a new submission and needs a new token.
+      */
+      discard();
       setShowErrors(false);
       setQuery("");
       setResults([]);
@@ -248,7 +285,7 @@ export default function MedicationPanel({
     } finally {
       setPlacing(false);
     }
-  }, [appointmentId, applyResponse, form, staged]);
+  }, [appointmentId, applyResponse, discard, draft, form, setDraft, staged]);
 
   const cancel = useCallback(
     async (prescription: DoctorPrescription) => {
@@ -293,8 +330,52 @@ export default function MedicationPanel({
     [staged, placing],
   );
 
+  const openNewMedicine = useCallback(
+    (medicine: MedicineOption, returnFocus: HTMLElement) => {
+      const [entry] = stageMedicine([], medicine, newKey());
+      setEditor({ entry, mode: "add", returnFocus });
+    },
+    [],
+  );
+
+  const openStagedMedicine = useCallback(
+    (entry: StagedMedicine, returnFocus: HTMLElement) => {
+      setEditor({ entry, mode: "edit", returnFocus });
+    },
+    [],
+  );
+
+  const saveEditor = useCallback(
+    (entry: StagedMedicine) => {
+      setDraft((current) => ({
+        ...current,
+        staged:
+          editor?.mode === "edit"
+            ? current.staged.map((item) =>
+                item.key === entry.key ? entry : item,
+              )
+            : [...current.staged, entry],
+      }));
+      setShowErrors(false);
+      setEditor(null);
+    },
+    [editor?.mode, setDraft],
+  );
+
   return (
     <div className="flex flex-col gap-3">
+      {editor && canOrder !== false ? (
+        <MedicationEditorModal
+          key={editor.entry.key}
+          entry={editor.entry}
+          mode={editor.mode}
+          readOnly={canOrder !== true}
+          returnFocus={editor.returnFocus}
+          onSave={saveEditor}
+          onClose={() => setEditor(null)}
+        />
+      ) : null}
+
       {loadError ? (
         <p
           role="alert"
@@ -320,7 +401,7 @@ export default function MedicationPanel({
       ) : (
         <>
           {/* ---- Write a prescription ---- */}
-          {canOrder ? (
+          {canOrder === true ? (
             <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-2.5 py-2">
               <div className="flex items-center gap-2">
                 <h3 className="cl-meta font-bold uppercase tracking-[0.08em] text-slate-600">
@@ -357,10 +438,8 @@ export default function MedicationPanel({
                       <li key={medicine.id}>
                         <button
                           type="button"
-                          onClick={() =>
-                            setStaged((s) =>
-                              stageMedicine(s, medicine, newKey()),
-                            )
+                          onClick={(event) =>
+                            openNewMedicine(medicine, event.currentTarget)
                           }
                           className="flex w-full items-baseline gap-2 border-b border-slate-100 px-2.5 py-1.5 text-left outline-none last:border-b-0 hover:bg-emerald-50/70 focus-visible:bg-emerald-50"
                         >
@@ -401,159 +480,52 @@ export default function MedicationPanel({
                   <ul className="flex flex-col gap-2">
                     {staged.map((entry) => {
                       const error = showErrors ? errors[entry.key] : undefined;
-                      const form_ = dosageFormLabel(entry.medicine.dosage_form);
                       return (
                         <li
                           key={entry.key}
-                          className="rounded-md border border-slate-200 bg-white px-2.5 py-2"
+                          className="rounded-md border border-slate-200 bg-white px-3 py-2"
                         >
-                          <div className="flex items-baseline gap-2">
-                            <span className="min-w-0 flex-1 truncate cl-strong font-semibold text-slate-900">
-                              {medicineLabel(entry.medicine)}
-                            </span>
-                            {form_ ? (
-                              <span className="shrink-0 cl-meta text-slate-500">
-                                {form_}
-                              </span>
-                            ) : null}
+                          <div className="flex items-start gap-3">
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate cl-strong font-semibold text-slate-900">
+                                {medicineLabel(entry.medicine)}
+                              </p>
+                              <p className="truncate cl-secondary text-slate-700">
+                                {stagedRegimenSummary(entry)}
+                              </p>
+                              {entry.instructions ? (
+                                <p title={entry.instructions} className="truncate cl-secondary text-slate-500">
+                                  {entry.instructions}
+                                </p>
+                              ) : null}
+                            </div>
+                            <button
+                              type="button"
+                              aria-label={`Edit ${entry.medicine.name}`}
+                              onClick={(event) =>
+                                openStagedMedicine(entry, event.currentTarget)
+                              }
+                              className="shrink-0 rounded border border-sky-300 bg-sky-50 px-2 py-0.5 cl-secondary font-semibold text-sky-800 outline-none hover:bg-sky-100 focus-visible:ring-2 focus-visible:ring-sky-600"
+                            >
+                              Edit
+                            </button>
                             <button
                               type="button"
                               aria-label={`Remove ${entry.medicine.name}`}
                               onClick={() =>
-                                setStaged((s) => unstageMedicine(s, entry.key))
+                                setDraft((current) => ({
+                                  ...current,
+                                  staged: unstageMedicine(
+                                    current.staged,
+                                    entry.key,
+                                  ),
+                                }))
                               }
-                              className="shrink-0 rounded border border-slate-300 px-1.5 py-px cl-meta font-semibold text-slate-600 outline-none hover:border-red-300 hover:bg-red-50 hover:text-red-800 focus-visible:ring-2 focus-visible:ring-red-600"
+                              className="shrink-0 rounded border border-red-200 px-2 py-0.5 cl-secondary font-semibold text-red-700 outline-none hover:border-red-300 hover:bg-red-50 focus-visible:ring-2 focus-visible:ring-red-600"
                             >
                               Remove
                             </button>
                           </div>
-
-                          <div className="mt-1.5 grid grid-cols-2 gap-1.5 sm:grid-cols-3">
-                            <label className="flex min-w-0 flex-col gap-0.5">
-                              <span className="cl-meta font-bold uppercase tracking-[0.07em] text-slate-600">
-                                Dose
-                              </span>
-                              <input
-                                value={entry.dosage}
-                                placeholder="500mg"
-                                onChange={(event) =>
-                                  setStaged((s) =>
-                                    updateStaged(s, entry.key, {
-                                      dosage: event.target.value,
-                                    }),
-                                  )
-                                }
-                                className={FIELD_CLASS}
-                              />
-                            </label>
-
-                            <label className="flex min-w-0 flex-col gap-0.5">
-                              <span className="cl-meta font-bold uppercase tracking-[0.07em] text-slate-600">
-                                Route
-                              </span>
-                              <select
-                                value={entry.route}
-                                onChange={(event) =>
-                                  setStaged((s) =>
-                                    updateStaged(s, entry.key, {
-                                      route: event.target.value,
-                                    }),
-                                  )
-                                }
-                                className={`${FIELD_CLASS} font-semibold`}
-                              >
-                                <option value="">— from catalogue —</option>
-                                {MED_ROUTES.map((route) => (
-                                  <option key={route} value={route}>
-                                    {routeLabel(route)}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-
-                            <label className="flex min-w-0 flex-col gap-0.5">
-                              <span className="cl-meta font-bold uppercase tracking-[0.07em] text-slate-600">
-                                Quantity
-                              </span>
-                              <input
-                                value={entry.quantity}
-                                inputMode="decimal"
-                                required
-                                aria-invalid={error ? true : undefined}
-                                aria-describedby={
-                                  error ? `qty-error-${entry.key}` : undefined
-                                }
-                                placeholder="e.g. 30"
-                                onChange={(event) =>
-                                  setStaged((s) =>
-                                    updateStaged(s, entry.key, {
-                                      quantity: event.target.value,
-                                    }),
-                                  )
-                                }
-                                className={`${FIELD_CLASS} ${
-                                  error
-                                    ? "border-red-400 focus-visible:border-red-500 focus-visible:ring-red-500"
-                                    : ""
-                                }`}
-                              />
-                            </label>
-
-                            <label className="flex min-w-0 flex-col gap-0.5">
-                              <span className="cl-meta font-bold uppercase tracking-[0.07em] text-slate-600">
-                                Frequency
-                              </span>
-                              <input
-                                value={entry.frequency}
-                                placeholder="twice daily"
-                                onChange={(event) =>
-                                  setStaged((s) =>
-                                    updateStaged(s, entry.key, {
-                                      frequency: event.target.value,
-                                    }),
-                                  )
-                                }
-                                className={FIELD_CLASS}
-                              />
-                            </label>
-
-                            <label className="flex min-w-0 flex-col gap-0.5">
-                              <span className="cl-meta font-bold uppercase tracking-[0.07em] text-slate-600">
-                                Duration
-                              </span>
-                              <input
-                                value={entry.duration}
-                                placeholder="5 days"
-                                onChange={(event) =>
-                                  setStaged((s) =>
-                                    updateStaged(s, entry.key, {
-                                      duration: event.target.value,
-                                    }),
-                                  )
-                                }
-                                className={FIELD_CLASS}
-                              />
-                            </label>
-
-                            <label className="flex min-w-0 flex-col gap-0.5 col-span-2 sm:col-span-1">
-                              <span className="cl-meta font-bold uppercase tracking-[0.07em] text-slate-600">
-                                Instructions
-                              </span>
-                              <input
-                                value={entry.instructions}
-                                placeholder="after food"
-                                onChange={(event) =>
-                                  setStaged((s) =>
-                                    updateStaged(s, entry.key, {
-                                      instructions: event.target.value,
-                                    }),
-                                  )
-                                }
-                                className={FIELD_CLASS}
-                              />
-                            </label>
-                          </div>
-
                           {error ? (
                             <p
                               id={`qty-error-${entry.key}`}
@@ -577,11 +549,14 @@ export default function MedicationPanel({
                       <select
                         value={form.diagnosis_id ?? ""}
                         onChange={(event) =>
-                          setForm((f) => ({
-                            ...f,
-                            diagnosis_id: event.target.value
-                              ? Number(event.target.value)
-                              : null,
+                          setDraft((current) => ({
+                            ...current,
+                            form: {
+                              ...current.form,
+                              diagnosis_id: event.target.value
+                                ? Number(event.target.value)
+                                : null,
+                            },
                           }))
                         }
                         className="h-8 rounded border border-slate-300 bg-white px-2 cl-body font-semibold text-slate-800 outline-none focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600"
@@ -606,7 +581,10 @@ export default function MedicationPanel({
                         value={form.notes}
                         placeholder="Optional…"
                         onChange={(event) =>
-                          setForm((f) => ({ ...f, notes: event.target.value }))
+                          setDraft((current) => ({
+                            ...current,
+                            form: { ...current.form, notes: event.target.value },
+                          }))
                         }
                         className={FIELD_CLASS}
                       />
@@ -629,12 +607,19 @@ export default function MedicationPanel({
                 </>
               ) : null}
             </div>
-          ) : (
-            <p className="rounded-md border border-slate-300 bg-white px-3 py-2 cl-secondary leading-snug text-slate-700">
-              This consultation is completed. No new prescriptions can be
-              written.
-            </p>
-          )}
+          ) : canOrder === false ? (
+            <div className="rounded-md border border-red-200 bg-red-50/60 px-3 py-2">
+              <div className="flex items-center gap-2">
+                <span className="rounded border border-red-300 bg-white px-1.5 py-px cl-micro font-bold uppercase tracking-wide text-red-800">
+                  Read only
+                </span>
+                <p className="cl-secondary leading-snug text-red-900">
+                  This consultation is completed. Medication details can be
+                  reviewed but not changed.
+                </p>
+              </div>
+            </div>
+          ) : null}
 
           {/* ---- Current prescriptions ---- */}
           <div className="flex flex-col gap-1">
@@ -671,7 +656,8 @@ export default function MedicationPanel({
                             much has been handed over. */}
                         <span
                           className={`shrink-0 rounded border px-1.5 py-px cl-meta font-semibold uppercase tracking-wide ${
-                            STATUS_TONE[prescription.status] ?? STATUS_TONE.draft
+                            MED_STATUS_TONE[prescription.status] ??
+                            MED_STATUS_TONE.draft
                           }`}
                         >
                           {prescription.status_label}

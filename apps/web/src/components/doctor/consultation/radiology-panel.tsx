@@ -3,19 +3,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { messageFromPayload } from "@/lib/api-error";
+import type { RadOrderDraft } from "@/lib/order-draft-format";
 import {
-  EMPTY_ORDER_FORM,
   addExam,
   buildOrderPayload,
   canSubmitOrder,
   examContext,
-  examLabel,
+  examCountLabel,
   isSelected,
   orderExamSummary,
   orderNeedsContrast,
   radPriorityLabel,
-  removeExam,
   selectionNeedsContrast,
+  selectionSummary,
 } from "@/lib/radiology-format";
 import type { ApiEnvelope } from "@/types/doctor";
 import type { DoctorDiagnosis } from "@/types/doctor-diagnosis";
@@ -24,9 +24,10 @@ import type {
   DoctorRadOrderResponse,
   RadCatalogueResponse,
   RadExamOption,
-  RadOrderForm,
 } from "@/types/doctor-radiology";
-import { RAD_PRIORITIES } from "@/types/doctor-radiology";
+
+import { useRadOrderDraft } from "./order-draft-context";
+import RadiologyOrderModal from "./radiology-order-modal";
 
 /**
  * The RADIOLOGY tab of the ORDERS section.
@@ -47,6 +48,11 @@ import { RAD_PRIORITIES } from "@/types/doctor-radiology";
  *
  * NO REPORT IS SHOWN HERE. A completed study says "Result available" and
  * nothing more; reading the report is a later slice with its own screen.
+ *
+ * THE UNSENT ORDER IS NOT THIS COMPONENT'S TO LOSE. Selecting a study opens a
+ * centred editor and Save commits the request to the CONSULTATION's draft
+ * store, above the ORDERS tabs, so moving to Medication and back returns the
+ * half-written request exactly as it was left.
  */
 
 const STATUS_TONE: Record<string, string> = {
@@ -67,7 +73,13 @@ export default function RadiologyPanel({
   diagnoses: DoctorDiagnosis[];
 }) {
   const [orders, setOrders] = useState<DoctorRadOrder[]>([]);
-  const [canOrder, setCanOrder] = useState(false);
+  /*
+    NULL UNTIL THE SERVER HAS SAID. "Not yet known" is a third state that
+    matters: a false starting value would read as "this consultation is
+    completed" for the duration of every load, and the read-only rule below
+    would discard the doctor's draft on every tab switch.
+  */
+  const [canOrder, setCanOrder] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -79,13 +91,38 @@ export default function RadiologyPanel({
   const [results, setResults] = useState<RadExamOption[]>([]);
   const [truncated, setTruncated] = useState(false);
   const [searching, setSearching] = useState(false);
-  const [selected, setSelected] = useState<RadExamOption[]>([]);
-  const [form, setForm] = useState<RadOrderForm>(EMPTY_ORDER_FORM);
 
-  const applyResponse = useCallback((data: DoctorRadOrderResponse) => {
-    setOrders(data.orders);
-    setCanOrder(data.can_order);
-  }, []);
+  /* The unsent request, owned by the consultation rather than by this panel. */
+  const { draft, setDraft, discard } = useRadOrderDraft();
+  const [editor, setEditor] = useState<{
+    entry: RadOrderDraft;
+    mode: "add" | "edit";
+    returnFocus: HTMLElement;
+  } | null>(null);
+
+  /*
+    THE SERVER'S VERDICT, APPLIED WHERE IT ARRIVES.
+
+    A COMPLETED CONSULTATION HAS NOTHING LEFT TO COMPOSE, so the same response
+    that says so closes the editor and discards the unsent request. Not an
+    effect watching `canOrder`: that would cascade a render, and a rule keyed on
+    "canOrder is not true" would also fire while a load was in flight -- which
+    is every tab switch -- and destroy the draft on each one.
+
+    This is one of the four things allowed to clear a draft. Tab navigation is
+    not among them and never reaches here.
+  */
+  const applyResponse = useCallback(
+    (data: DoctorRadOrderResponse) => {
+      setOrders(data.orders);
+      setCanOrder(data.can_order);
+      if (!data.can_order) {
+        setEditor(null);
+        discard();
+      }
+    },
+    [discard],
+  );
 
   /* ---------------- load ---------------- */
   useEffect(() => {
@@ -162,9 +199,16 @@ export default function RadiologyPanel({
 
   /* ---------------- mutations ---------------- */
   const place = useCallback(async () => {
-    if (!selected.length) return;
+    if (!draft.exams.length) return;
     setPlacing(true);
     setActionError(null);
+    /*
+      MINTED HERE, PER ATTEMPT, exactly as it always has been. The token is
+      deliberately NOT kept with the draft: radiology has never retained one
+      between attempts, and changing that would change this endpoint's
+      idempotency behaviour rather than merely move where an unsent form is
+      held.
+    */
     const token =
       globalThis.crypto?.randomUUID?.() ??
       `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -175,20 +219,22 @@ export default function RadiologyPanel({
           method: "POST",
           cache: "no-store",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(buildOrderPayload(selected, form, token)),
+          body: JSON.stringify(buildOrderPayload(draft.exams, draft.form, token)),
         },
       );
       const payload =
         (await response.json()) as ApiEnvelope<DoctorRadOrderResponse>;
       if (!response.ok || !payload.success) {
+        // The draft is KEPT: a refused order is work the doctor still has.
         setActionError(
           messageFromPayload(payload, "The radiology order could not be placed."),
         );
         return;
       }
       applyResponse(payload.data);
-      setSelected([]);
-      setForm(EMPTY_ORDER_FORM);
+      // Definitive success, and the ONLY place this panel discards a draft on
+      // the doctor's behalf.
+      discard();
       setQuery("");
       setResults([]);
     } catch {
@@ -196,7 +242,7 @@ export default function RadiologyPanel({
     } finally {
       setPlacing(false);
     }
-  }, [appointmentId, applyResponse, form, selected]);
+  }, [appointmentId, applyResponse, discard, draft]);
 
   const cancel = useCallback(
     async (order: DoctorRadOrder) => {
@@ -236,16 +282,70 @@ export default function RadiologyPanel({
   const searchTerm = query.trim();
   const visibleResults = searchTerm.length >= 2 ? results : [];
   const submittable = useMemo(
-    () => canSubmitOrder(selected, placing),
-    [selected, placing],
+    () => canSubmitOrder(draft.exams, placing),
+    [draft.exams, placing],
   );
   const contrastPending = useMemo(
-    () => selectionNeedsContrast(selected),
-    [selected],
+    () => selectionNeedsContrast(draft.exams),
+    [draft.exams],
   );
+
+  /* Selecting a study opens the editor on the request it would join. */
+  const openWithExam = useCallback(
+    (exam: RadExamOption, returnFocus: HTMLElement) => {
+      setEditor({
+        entry: { ...draft, exams: addExam(draft.exams, exam) },
+        mode: "add",
+        returnFocus,
+      });
+    },
+    [draft],
+  );
+
+  const openStagedOrder = useCallback(
+    (returnFocus: HTMLElement) => {
+      setEditor({ entry: draft, mode: "edit", returnFocus });
+    },
+    [draft],
+  );
+
+  const saveEditor = useCallback(
+    (entry: RadOrderDraft) => {
+      setDraft(entry);
+      setEditor(null);
+    },
+    [setDraft],
+  );
+
+  /* The staged row's second line: how much, how urgent, and against what. */
+  const stagedContext = useMemo(() => {
+    const diagnosis = draft.form.diagnosis_id
+      ? (diagnoses.find((entry) => entry.id === draft.form.diagnosis_id)?.disease
+          ?.name ?? null)
+      : null;
+    return [
+      examCountLabel(draft.exams.length),
+      radPriorityLabel(draft.form.priority),
+      diagnosis,
+    ]
+      .filter((part): part is string => Boolean(part))
+      .join(" · ");
+  }, [diagnoses, draft.form.diagnosis_id, draft.form.priority, draft.exams.length]);
 
   return (
     <div className="flex flex-col gap-3">
+      {editor && canOrder !== false ? (
+        <RadiologyOrderModal
+          entry={editor.entry}
+          mode={editor.mode}
+          diagnoses={diagnoses}
+          readOnly={canOrder !== true}
+          returnFocus={editor.returnFocus}
+          onSave={saveEditor}
+          onClose={() => setEditor(null)}
+        />
+      ) : null}
+
       {loadError ? (
         <p
           role="alert"
@@ -271,7 +371,7 @@ export default function RadiologyPanel({
       ) : (
         <>
           {/* ---- Place an order ---- */}
-          {canOrder ? (
+          {canOrder === true ? (
             <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-2.5 py-2">
               <div className="flex items-center gap-2">
                 <h3 className="cl-meta font-bold uppercase tracking-[0.08em] text-slate-600">
@@ -287,6 +387,7 @@ export default function RadiologyPanel({
                 type="search"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
+                aria-label="Search radiology studies"
                 placeholder="Search studies by name, code or body part…"
                 className="h-9 w-full rounded border border-slate-300 bg-white px-2.5 cl-body text-slate-900 outline-none placeholder:text-slate-500 focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600"
               />
@@ -298,14 +399,16 @@ export default function RadiologyPanel({
               {visibleResults.length > 0 ? (
                 <ul className="max-h-44 overflow-y-auto rounded border border-slate-200 bg-white">
                   {visibleResults.map((exam) => {
-                    const already = isSelected(selected, exam.id);
+                    const already = isSelected(draft.exams, exam.id);
                     const context = examContext(exam);
                     return (
                       <li key={exam.id}>
                         <button
                           type="button"
                           disabled={already}
-                          onClick={() => setSelected((s) => addExam(s, exam))}
+                          onClick={(event) =>
+                            openWithExam(exam, event.currentTarget)
+                          }
                           className="flex w-full items-baseline gap-2 border-b border-slate-100 px-2.5 py-1.5 text-left outline-none last:border-b-0 hover:bg-emerald-50/70 focus-visible:bg-emerald-50 disabled:cursor-not-allowed disabled:bg-slate-50"
                         >
                           <span className="min-w-0 flex-1 truncate cl-body font-semibold text-slate-900">
@@ -344,29 +447,9 @@ export default function RadiologyPanel({
                 </p>
               ) : null}
 
-              {selected.length > 0 ? (
+              {/* ---- The staged request ---- */}
+              {draft.exams.length > 0 ? (
                 <>
-                  <ul className="flex flex-wrap gap-1.5">
-                    {selected.map((exam) => (
-                      <li
-                        key={exam.id}
-                        className="inline-flex items-center gap-1.5 rounded border border-emerald-300 bg-emerald-50 px-2 py-0.5 cl-secondary font-semibold text-emerald-900"
-                      >
-                        {examLabel(exam)}
-                        <button
-                          type="button"
-                          aria-label={`Remove ${exam.name}`}
-                          onClick={() =>
-                            setSelected((s) => removeExam(s, exam.id))
-                          }
-                          className="cl-secondary font-bold text-emerald-700 outline-none hover:text-emerald-900 focus-visible:ring-1 focus-visible:ring-emerald-600"
-                        >
-                          ×
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-
                   {contrastPending ? (
                     <p className="rounded border border-violet-300 bg-violet-50 px-2 py-1 cl-meta leading-snug text-violet-900">
                       A selected study requires contrast. Confirm the patient&apos;s
@@ -374,87 +457,52 @@ export default function RadiologyPanel({
                     </p>
                   ) : null}
 
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    <label className="flex min-w-0 flex-col gap-0.5">
-                      <span className="cl-meta font-bold uppercase tracking-[0.07em] text-slate-600">
-                        Priority
-                      </span>
-                      <select
-                        value={form.priority}
-                        onChange={(event) =>
-                          setForm((f) => ({
-                            ...f,
-                            priority: event.target
-                              .value as RadOrderForm["priority"],
-                          }))
-                        }
-                        className="h-8 rounded border border-slate-300 bg-white px-2 cl-body font-semibold text-slate-800 outline-none focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600"
+                  <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+                    <div className="flex items-start gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate cl-strong font-semibold text-slate-900">
+                          {selectionSummary(draft.exams)}
+                        </p>
+                        <p className="truncate cl-secondary text-slate-700">
+                          {stagedContext}
+                        </p>
+                        {draft.form.clinical_indication.trim() ||
+                        draft.form.instructions.trim() ? (
+                          <p
+                            title={
+                              draft.form.clinical_indication.trim() ||
+                              draft.form.instructions
+                            }
+                            className="truncate cl-secondary text-slate-500"
+                          >
+                            {draft.form.clinical_indication.trim() ||
+                              draft.form.instructions}
+                          </p>
+                        ) : null}
+                      </div>
+                      <button
+                        type="button"
+                        aria-label="Edit the radiology order"
+                        onClick={(event) => openStagedOrder(event.currentTarget)}
+                        className="shrink-0 rounded border border-sky-300 bg-sky-50 px-2 py-0.5 cl-secondary font-semibold text-sky-800 outline-none hover:bg-sky-100 focus-visible:ring-2 focus-visible:ring-sky-600"
                       >
-                        {RAD_PRIORITIES.map((priority) => (
-                          <option key={priority} value={priority}>
-                            {radPriorityLabel(priority)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label className="flex min-w-0 flex-col gap-0.5">
-                      <span className="cl-meta font-bold uppercase tracking-[0.07em] text-slate-600">
-                        Indication (diagnosis)
-                      </span>
-                      <select
-                        value={form.diagnosis_id ?? ""}
-                        onChange={(event) =>
-                          setForm((f) => ({
-                            ...f,
-                            diagnosis_id: event.target.value
-                              ? Number(event.target.value)
-                              : null,
-                          }))
-                        }
-                        className="h-8 rounded border border-slate-300 bg-white px-2 cl-body font-semibold text-slate-800 outline-none focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600"
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Remove the radiology order"
+                        onClick={discard}
+                        className="shrink-0 rounded border border-red-200 px-2 py-0.5 cl-secondary font-semibold text-red-700 outline-none hover:border-red-300 hover:bg-red-50 focus-visible:ring-2 focus-visible:ring-red-600"
                       >
-                        <option value="">— none —</option>
-                        {/* Only THIS consultation's diagnoses. The server
-                            refuses any other, including the same patient's
-                            diagnosis from an earlier visit. */}
-                        {diagnoses.map((diagnosis) => (
-                          <option key={diagnosis.id} value={diagnosis.id}>
-                            {diagnosis.disease?.name ?? "Diagnosis"}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                        Remove
+                      </button>
+                    </div>
                   </div>
 
-                  <textarea
-                    value={form.clinical_indication}
-                    rows={2}
-                    placeholder="Clinical indication (optional)…"
-                    onChange={(event) =>
-                      setForm((f) => ({
-                        ...f,
-                        clinical_indication: event.target.value,
-                      }))
-                    }
-                    className="w-full resize-y rounded border border-slate-300 bg-white px-2.5 py-2 cl-body leading-[1.55] text-slate-900 caret-emerald-700 outline-none placeholder:text-slate-500 focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600"
-                  />
-
-                  {/* Radiology has a second free-text field laboratory does
-                      not: preparation the department needs before the patient
-                      arrives. Kept separate from the indication rather than
-                      merged, because they are read by different people. */}
-                  <textarea
-                    value={form.instructions}
-                    rows={2}
-                    placeholder="Preparation / instructions for the imaging department (optional)…"
-                    onChange={(event) =>
-                      setForm((f) => ({ ...f, instructions: event.target.value }))
-                    }
-                    className="w-full resize-y rounded border border-slate-300 bg-white px-2.5 py-2 cl-body leading-[1.55] text-slate-900 caret-emerald-700 outline-none placeholder:text-slate-500 focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600"
-                  />
-
-                  <div className="flex justify-end">
+                  <div className="flex items-center justify-end gap-2">
+                    <span className="cl-meta text-slate-500">
+                      {examCountLabel(draft.exams.length)} · one request
+                    </span>
                     <button
                       type="button"
                       disabled={!submittable}
@@ -467,12 +515,19 @@ export default function RadiologyPanel({
                 </>
               ) : null}
             </div>
-          ) : (
-            <p className="rounded-md border border-slate-300 bg-white px-3 py-2 cl-secondary leading-snug text-slate-700">
-              This consultation is completed. No new radiology orders can be
-              placed.
-            </p>
-          )}
+          ) : canOrder === false ? (
+            <div className="rounded-md border border-red-200 bg-red-50/60 px-3 py-2">
+              <div className="flex items-center gap-2">
+                <span className="rounded border border-red-300 bg-white px-1.5 py-px cl-micro font-bold uppercase tracking-wide text-red-800">
+                  Read only
+                </span>
+                <p className="cl-secondary leading-snug text-red-900">
+                  This consultation is completed. Radiology orders can be
+                  reviewed but no new order can be placed.
+                </p>
+              </div>
+            </div>
+          ) : null}
 
           {/* ---- Current orders ---- */}
           <div className="flex flex-col gap-1">

@@ -118,6 +118,16 @@ export function orderExamSummary(order: DoctorRadOrder) {
   return order.exams.map((exam) => exam.name).join(" · ");
 }
 
+/** The same summary for a request still being composed. */
+export function selectionSummary(selected: { name: string }[]) {
+  return selected.map((exam) => exam.name).join(" · ");
+}
+
+/** "1 study" / "3 studies". */
+export function examCountLabel(count: number) {
+  return count === 1 ? "1 study" : `${count} studies`;
+}
+
 /**
  * True when any study in the order needs contrast.
  *
