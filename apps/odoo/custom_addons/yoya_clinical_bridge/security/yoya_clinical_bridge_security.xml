@@ -685,5 +685,182 @@
             <field name="perm_unlink" eval="True"/>
         </record>
 
+        <!-- ============================================================
+             hospital.prescription / .line / hospital.pharmacy.dispense
+             ============================================================
+
+             THE STATE THIS INHERITS, AND IT IS THE WORST OF THE THREE.
+             hospital_management ships ACL rows for the prescription models and
+             hospital_pharmacy ships them for the dispense models, and between
+             them there was not one record rule on any of the four, so every
+             Hospital Doctor could read AND WRITE every prescription in the
+             hospital, and read every dispense. A doctor in one department could
+             open, and alter, the complete medication history of a patient they
+             have never seen.
+
+             The rules below give the DOCTOR the same scope their laboratory and
+             radiology orders already have, so one clinician's view of what they
+             prescribed and what they ordered cannot drift apart.
+
+             CONSULTATION IS ABSENT FROM THESE DOMAINS, DELIBERATELY.
+             hospital.prescription has no consultation_id yet; Slice 6B adds it
+             in this module. Referencing a field that does not exist would make
+             this file fail to load, so the domains below use the two anchors
+             that DO exist: the prescribing physician and the visit's doctor.
+             They are written as an explicit '|' chain rather than a two-term
+             shortcut precisely so 6B extends them by adding one leaf and one
+             '|', in the shape rule_laboratory_request_doctor already shows.
+
+             WHAT IS DELIBERATELY LEFT ALONE. Nurse, Receptionist, Accountant
+             and the DPO get no rule here, so their access is exactly what it
+             was: a rule attached to a group can only ever NARROW that group,
+             and narrowing the front office, the finance desk or the compliance
+             role is a separate decision belonging to whoever owns those screens.
+             This slice tightens the one role it is about to expose an API for.
+
+             THE PHARMACIST IS GIVEN AN EXPLICIT UNRESTRICTED RULE even though
+             omitting it would have the same effect today, for the reason the
+             laboratory block states: the counter works a cross-patient queue,
+             and a future global rule must not be able to take it away quietly.
+        -->
+
+        <record id="rule_prescription_doctor" model="ir.rule">
+            <field name="name">Prescription: my prescriptions and my visits (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_prescription"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!--
+                Two ways a prescription is legitimately this doctor's: they
+                prescribed it, or it belongs to a visit assigned to them. Slice
+                6B adds the third, ('consultation_id.doctor_id.user_id', '=',
+                user.id), which is what will make a prescription readable in the
+                same transaction that creates it from a consultation.
+            -->
+            <field name="domain_force">
+                ['|',
+                    ('physician_id.user_id', '=', user.id),
+                    ('appointment_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_prescription_line_doctor" model="ir.rule">
+            <field name="name">Prescription Line: follows the prescription (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_prescription_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!-- Lines carry no patient of their own, so they inherit the
+                 prescription's scope rather than defining a second one that
+                 could drift away from it. -->
+            <field name="domain_force">
+                ['|',
+                    ('prescription_id.physician_id.user_id', '=', user.id),
+                    ('prescription_id.appointment_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_pharmacy_dispense_doctor" model="ir.rule">
+            <field name="name">Pharmacy Dispense: for my prescriptions and my visits (doctor)</field>
+            <field name="model_id" ref="hospital_pharmacy.model_hospital_pharmacy_dispense"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!--
+                READ ONLY, AND THAT IS NOT AN OVERSIGHT. hospital_pharmacy's ACL
+                now grants Hospital Doctor read and nothing else on the dispense,
+                so this rule decides WHICH dispenses a doctor may see and never
+                grants an operation. Setting perm_write here would not widen the
+                ACL, but it would state a permission this system has just
+                decided the doctor must not have, and the next reader would
+                believe it.
+
+                The dispense's own physician_id is copied from the prescription
+                at creation, so the two branches mirror the prescription rule.
+            -->
+            <field name="domain_force">
+                ['|', '|',
+                    ('physician_id.user_id', '=', user.id),
+                    ('appointment_id.doctor_id.user_id', '=', user.id),
+                    ('prescription_id.physician_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_pharmacy_dispense_line_doctor" model="ir.rule">
+            <field name="name">Pharmacy Dispense Line: follows the dispense (doctor)</field>
+            <field name="model_id" ref="hospital_pharmacy.model_hospital_pharmacy_dispense_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">
+                ['|', '|',
+                    ('dispense_id.physician_id.user_id', '=', user.id),
+                    ('dispense_id.appointment_id.doctor_id.user_id', '=', user.id),
+                    ('dispense_id.prescription_id.physician_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_prescription_operations" model="ir.rule">
+            <field name="name">Prescription: all (pharmacist / manager / system administrator)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_prescription"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_pharmacist')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <!-- The counter works a cross-patient queue; scoping it would break
+                 the pharmacy. Manager and administrator are named here for the
+                 usual reason: group_hospital_manager IMPLIES group_hospital_
+                 doctor, so without this rule the doctor scope above would
+                 silently become a manager's ceiling, and group_hospital_
+                 system_administrator implies manager in turn. -->
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_prescription_line_operations" model="ir.rule">
+            <field name="name">Prescription Line: all (pharmacist / manager / system administrator)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_prescription_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_pharmacist')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_pharmacy_dispense_operations" model="ir.rule">
+            <field name="name">Pharmacy Dispense: all (pharmacist / manager / system administrator)</field>
+            <field name="model_id" ref="hospital_pharmacy.model_hospital_pharmacy_dispense"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_pharmacist')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_pharmacy_dispense_line_operations" model="ir.rule">
+            <field name="name">Pharmacy Dispense Line: all (pharmacist / manager / system administrator)</field>
+            <field name="model_id" ref="hospital_pharmacy.model_hospital_pharmacy_dispense_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_pharmacist')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
     </data>
 </odoo>

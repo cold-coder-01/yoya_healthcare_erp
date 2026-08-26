@@ -36,7 +36,7 @@ imaging orders and results rather than the whole hospital's.
 This module never modifies ``hospital_management``, ``hospital_billing`` or
 ``hospital_radiology``.
 """,
-    "version": "18.0.1.4.0",
+    "version": "18.0.1.5.0",
     "category": "Healthcare",
     "author": "YOYA Healthcare",
     "license": "LGPL-3",
@@ -50,6 +50,12 @@ This module never modifies ``hospital_management``, ``hospital_billing`` or
         # relying on one for a load-order guarantee is how an unrelated edit
         # over there turns into a ParseError over here.
         "hospital_radiology",
+        # Same reasoning as hospital_radiology above, one slice later: Slice 6A
+        # adds record rules that reference hospital_pharmacy's model_ids by
+        # external id, and hospital_billing's hard dependency on it is a fact
+        # about ANOTHER module's manifest. Named explicitly so the load order
+        # this file needs is one this file asks for.
+        "hospital_pharmacy",
     ],
     # Access rows before record rules, matching yoya_reception_bridge: the ACL
     # decides WHETHER a group may touch the model at all, the rules decide WHICH

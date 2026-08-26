@@ -132,6 +132,39 @@ class HospitalPharmacyDispense(models.Model):
             dispense._consume_pharmacy_inventory_increment()
         return result
 
+    def action_cancel(self):
+        """Stock that has left the shelf blocks cancellation. THE STOCK HALF OF
+        A THREE-MODULE GUARD.
+
+        hospital_pharmacy refuses to cancel a dispense that reached `partial` or
+        `dispensed`, on clinical grounds; hospital_billing refuses one whose
+        charges record delivered quantity, on financial grounds. Both of those
+        already cover every path that reaches consumed stock today, because
+        consumption only ever runs inside action_mark_dispensed() after billing
+        has recorded delivery in the same transaction.
+
+        This exists so the invariant does not DEPEND on that coincidence, and
+        does not depend on hospital_billing being installed at all -- it is not
+        a dependency of this module, and hospital_pharmacy + hospital_inventory
+        without it is an installable combination. Stock consumption is this
+        module's fact; refusing to pretend it did not happen is this module's
+        job. Nothing here reverses a consumption, and this phase ships no
+        workflow that can.
+        """
+        for dispense in self:
+            consumed = [
+                "%s -- %.3f consumed" % (line.medicine_id.display_name, line.inventory_consumed_quantity)
+                for line in dispense.line_ids
+                if float_compare(line.inventory_consumed_quantity or 0.0, 0.0, precision_digits=QTY_PRECISION) > 0
+            ]
+            if consumed:
+                raise UserError(
+                    "Pharmacy dispense %s has already consumed stock and cannot be cancelled.\n\n%s\n\n"
+                    "Returning consumed stock requires a credit/reversal workflow, which is outside this phase. "
+                    "No dispense state, charge or stock movement was changed." % (dispense.name, "\n".join("  - %s" % c for c in consumed))
+                )
+        return super().action_cancel()
+
     def _inventory_increment_lines(self):
         self.ensure_one()
         line_vals = []

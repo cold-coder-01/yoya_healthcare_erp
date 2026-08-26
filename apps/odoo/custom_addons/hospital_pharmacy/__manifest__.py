@@ -1,7 +1,7 @@
 {
     "name": "Hospital Pharmacy",
     "summary": "Pharmacy medicine catalog and prescription dispensing workflow for Ethiopian Hospital ERP",
-    "version": "18.0.1.0.0",
+    "version": "18.0.1.1.0",
     "category": "Healthcare",
     "author": "Ethiopian Hospital ERP",
     "license": "LGPL-3",

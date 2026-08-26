@@ -3,7 +3,19 @@
 from odoo import api, fields, models
 from odoo.exceptions import UserError, ValidationError
 
-from .charge_line import AMOUNT_TOLERANCE, OPERATIONAL_INTAKE_GROUPS
+# Imported from the module that owns the transition table rather than restated.
+# hospital_billing hard-depends on hospital_pharmacy, and a private copy of the
+# cancellable-state tuple here is exactly how the charge cleanup below would one
+# day run for a transition the base model had stopped allowing.
+from odoo.addons.hospital_pharmacy.models.pharmacy_dispense import (
+    DISPENSE_CANCELLABLE_STATES,
+)
+
+from .charge_line import (
+    AMOUNT_TOLERANCE,
+    FROZEN_CHARGE_STATES,
+    OPERATIONAL_INTAKE_GROUPS,
+)
 
 
 PHARMACY_EVENT = "pharmacy_dispense"
@@ -248,6 +260,16 @@ class HospitalPharmacyDispenseBilling(models.Model):
         return True
 
     def action_mark_ready(self):
+        # RE-ASSERTED HERE, AND IN THE TWO OVERRIDES BELOW, BECAUSE THIS LAYER
+        # ACTS BEFORE super(). hospital_pharmacy owns the authorization rule and
+        # states it once in _assert_pharmacy_operator(); but these overrides
+        # raise charges and cancel charges on the way DOWN to it, so leaving the
+        # only check inside super() would mean an unauthorized RPC call created
+        # and activated medication charges before being refused. The transaction
+        # would roll them back -- correctness is not at stake -- yet the refusal
+        # would arrive as an opaque access error on a state write, and a future
+        # nested savepoint could make the rollback less complete than it looks.
+        self._assert_pharmacy_operator("mark a pharmacy dispense ready")
         self._ensure_pharmacy_billing()
         return super().action_mark_ready()
 
@@ -276,6 +298,7 @@ class HospitalPharmacyDispenseBilling(models.Model):
         return clearance
 
     def action_mark_dispensed(self):
+        self._assert_pharmacy_operator("validate a pharmacy dispense")
         for dispense in self.filtered(lambda d: d.state in ("ready", "partial")):
             dispense._assert_financially_cleared_for_dispense(persist=True)
         result = super().action_mark_dispensed()
@@ -296,6 +319,142 @@ class HospitalPharmacyDispenseBilling(models.Model):
                 engine.mark_charge_delivered(charge, qty_delivered=target)
                 line.sudo().write({"billing_delivered_quantity": target})
         return result
+
+    def _delivered_medication_details(self):
+        """What on this dispense says medication has already been handed over.
+
+        TWO WITNESSES, BOTH READ, because they are written at different moments
+        and either can be the only one present. `billing_delivered_quantity` is
+        this module's own per-line high-water mark, written after delivery
+        succeeds; the charge's `qty_delivered` / `delivery_state` is the engine's
+        record of the same event. A line whose charge link was never written back
+        would show the first and not the second; a charge delivered through some
+        other path would show the second and not the first.
+        """
+        self.ensure_one()
+        details = []
+        for line in self.line_ids:
+            if (line.billing_delivered_quantity or 0.0) > QTY_TOLERANCE:
+                details.append(
+                    "%s -- %.3f already delivered"
+                    % (line.medicine_id.display_name, line.billing_delivered_quantity)
+                )
+        for charge in self._pharmacy_charges():
+            if charge.charge_state in FROZEN_CHARGE_STATES:
+                continue
+            if charge.qty_delivered > QTY_TOLERANCE or charge.delivery_state in (
+                "delivered", "partially_delivered"
+            ):
+                details.append(
+                    "%s -- charge %s records %.3f delivered"
+                    % (charge.description, charge.name, charge.qty_delivered)
+                )
+        return details
+
+    def action_cancel(self):
+        """Cancel the medication charges. Never deletes.
+
+        THE LEAK THIS CLOSES. Charges are raised and ACTIVATED at Mark Ready, so
+        from `ready` onward the patient owes for medication that has not been
+        handed over. The base model's action_cancel() moved the dispense to
+        `cancelled` and stopped there, leaving every charge live and payable: the
+        medication was never dispensed, the patient still owed for it, and
+        because hospital.appointment._is_active_service_clearance_pending() is
+        driven by encounter-wide live clearance rather than by any clinical
+        model, the visit sat in the cashier's SERVICE PAYMENTS lane indefinitely
+        with nothing left to deliver. Laboratory has had this override since its
+        own slice and radiology received it in Slice 5; pharmacy is the third
+        module in the same position and never received it at all.
+
+        THE SAME SHAPE AS radiology_billing.action_cancel(), deliberately, so
+        one cancellation semantic covers the three ancillary services rather
+        than three that drift.
+
+        THE DELIVERED GUARD MATTERS MORE HERE THAN ANYWHERE ELSE. Radiology
+        delivers all-or-nothing at result release, so its guard protects an edge
+        case. Pharmacy's `partial` state is ROUTINE -- the ordinary outcome of
+        prescribing thirty tablets to a counter holding ten -- and a partially
+        dispensed record has real medication in the patient's hand, a real
+        receivable behind it and real stock consumed for it. Cancelling that
+        charge would erase a receivable for medication that was genuinely
+        supplied. It refuses loudly instead; a credit/reversal workflow is
+        outside this phase.
+
+        THE GUARD RUNS BEFORE ANY CHARGE IS TOUCHED, per dispense, so a refusal
+        leaves the charges exactly as it found them rather than half-cancelled.
+        engine.cancel_charge() would refuse a delivered charge on its own -- but
+        only when it reached one, having already cancelled the lines before it.
+
+        THE CHARGE CLEANUP IS IDEMPOTENT, which is the half that matters on a
+        retry: engine.cancel_charge() returns early on an already-frozen charge,
+        the explicit skip above it never even calls in, and the state filter
+        passes over a dispense that is already cancelled. A repeated call can
+        neither double-cancel a charge nor resurrect one. The TRANSITION is not
+        made idempotent and is not the place to try: the base model owns the
+        transition table and simply does nothing for a dispense outside
+        DISPENSE_CANCELLABLE_STATES.
+        """
+        self._assert_pharmacy_operator("cancel a pharmacy dispense")
+        engine = self.env["hospital.billing.engine"].sudo()
+        for dispense in self.filtered(
+            lambda record: record.state in DISPENSE_CANCELLABLE_STATES
+        ):
+            delivered = dispense._delivered_medication_details()
+            if delivered:
+                raise UserError(
+                    "Pharmacy dispense %s has already delivered medication and "
+                    "cannot be cancelled.\n\n%s\n\nReversing a delivered charge "
+                    "requires a credit/reversal workflow, which is outside this "
+                    "phase. No dispense state, charge, receipt, accounting entry "
+                    "or stock movement was changed."
+                    % (dispense.name, "\n".join("  - %s" % d for d in delivered))
+                )
+            for charge in dispense._pharmacy_charges():
+                if charge.charge_state in FROZEN_CHARGE_STATES:
+                    continue
+                engine.cancel_charge(
+                    charge, reason="Pharmacy dispense %s cancelled" % dispense.name
+                )
+        return super().action_cancel()
+
+    def action_reset_to_draft(self):
+        """Reopening is refused once the medication charges have been cancelled.
+
+        THE PATH THIS CLOSES, AND THIS SLICE IS WHAT OPENED IT. Before the
+        cancellation cleanup above, a cancelled dispense still carried LIVE
+        charges, so reopening it and marking it ready again reused them and the
+        patient still owed the money. Now those charges are cancelled -- and
+        hospital.billing.engine.create_or_update_charge() searches by source_key
+        and returns a frozen charge UNTOUCHED, while activate_charge() only ever
+        promotes a draft. So a reopened dispense would sail through Mark Ready
+        and come to rest in `ready` bound to a cancelled charge: nothing payable,
+        nothing for the cashier to collect, financial clearance trivially
+        satisfied because _assert_financially_cleared_for_dispense() sums only
+        charges in LIVE_CHARGE_STATES -- and medication handed over free. It
+        would then fail at the very end, when mark_charge_delivered() refuses a
+        frozen charge, rolling back with an error naming neither the reopen nor
+        the cancelled charge.
+
+        Refusing the reopen is the smallest fix that holds the invariant. The
+        alternative -- minting a replacement charge on a new source_key -- is a
+        re-billing mechanism, and re-billing a cancelled episode is precisely
+        the credit/reversal design this phase defers. A withdrawn dispense is
+        re-prescribed, not reopened.
+        """
+        self._assert_pharmacy_operator("reopen a cancelled pharmacy dispense")
+        for dispense in self.filtered(lambda record: record.state == "cancelled"):
+            frozen = dispense._pharmacy_charges().filtered(
+                lambda charge: charge.charge_state in FROZEN_CHARGE_STATES
+            )
+            if frozen:
+                raise UserError(
+                    "Pharmacy dispense %s cannot be reopened: its medication "
+                    "charges (%s) were cancelled with it and cannot be revived. "
+                    "Reopening would leave the dispense billable to nobody. Ask "
+                    "the prescriber for a new prescription."
+                    % (dispense.name, ", ".join(frozen.mapped("name")))
+                )
+        return super().action_reset_to_draft()
 
     def action_record_manual_payment(self):
         self.ensure_one()
