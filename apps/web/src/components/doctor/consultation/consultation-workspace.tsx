@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { messageFromPayload } from "@/lib/api-error";
 import { formatHospitalTime } from "@/lib/clinical-format";
 import {
+  NOTE_FIELDS,
   buildSavePayload,
   draftFromConsultation,
   hasUnsavedChanges,
@@ -38,6 +39,7 @@ import DoctorVitalsGrid from "../doctor-vitals-grid";
 import DiagnosisWorkspace from "./diagnosis-workspace";
 import OrdersWorkspace from "./orders-workspace";
 import ConsultationNoteEditor from "./note-editor";
+import NoteEditorModal from "./note-editor-modal";
 
 /**
  * The active consultation workspace.
@@ -66,13 +68,13 @@ function Stat({ label, value }: { label: string; value: string }) {
   const [reading, ...unit] = value.split(" ");
   return (
     <div className="flex min-w-0 items-baseline gap-1.5">
-      <span className="shrink-0 text-[9px] font-bold uppercase tracking-[0.07em] text-slate-400">
+      <span className="shrink-0 cl-micro font-bold uppercase tracking-[0.07em] text-slate-400">
         {label}
       </span>
-      <span className="truncate text-[12.5px] font-bold leading-none tabular-nums text-slate-800">
+      <span className="truncate cl-body font-bold leading-none tabular-nums text-slate-800">
         {reading}
         {unit.length ? (
-          <span className="ml-0.5 text-[9px] font-semibold text-slate-400">
+          <span className="ml-0.5 cl-micro font-semibold text-slate-400">
             {unit.join(" ")}
           </span>
         ) : null}
@@ -156,9 +158,23 @@ export default function ConsultationWorkspace({
     deliberately rather than scrolls past on the way to the history.
   */
   const [contextOpen, setContextOpen] = useState(false);
+  /*
+    WHICH note section is open in the focused editor, or null for none.
+
+    Held HERE rather than inside the note surface because the modal writes
+    through the same draft, the same version token and the same save path as the
+    command bar. A second copy of that state inside the editor is exactly how a
+    second persistence mechanism gets built by accident.
+  */
+  const [openSection, setOpenSection] =
+    useState<ConsultationNarrativeField | null>(null);
+  /*
+    The card that opened the modal. Focus goes back to it on close, so a
+    keyboard user resumes where they were instead of at the top of the document.
+  */
+  const noteOriginRef = useRef<HTMLButtonElement | null>(null);
   /** Client-side, presentation only: when this tab last saw a save succeed. */
   const [savedAt, setSavedAt] = useState<string | null>(null);
-  const [savedPulse, setSavedPulse] = useState(false);
 
   /*
     COMPLETION IS TRACKED SEPARATELY FROM SAVING, and deliberately so.
@@ -260,22 +276,35 @@ export default function ConsultationWorkspace({
     return () => controller.abort();
   }, [appointmentId, applyServerRecord, applyCompletionVerdict]);
 
-  /*
-    The per-field ✓ fades after a few seconds. Leaving every field permanently
-    green would make "saved" the resting state of the whole form and therefore
-    meaningless -- the indicator has to be an event, not a decoration.
-  */
-  useEffect(() => {
-    if (!savedPulse) return;
-    const timer = setTimeout(() => setSavedPulse(false), 2600);
-    return () => clearTimeout(timer);
-  }, [savedPulse]);
-
   const dirty = useMemo(
     () => hasUnsavedChanges(draft, baseline),
     [draft, baseline],
   );
   const editable = Boolean(consultation?.editable);
+
+  /* ---------------- focused note editor ---------------- */
+  const openNoteSection = useCallback(
+    (field: ConsultationNarrativeField, origin: HTMLButtonElement) => {
+      noteOriginRef.current = origin;
+      setOpenSection(field);
+    },
+    [],
+  );
+
+  const closeNoteSection = useCallback(() => {
+    setOpenSection(null);
+    /*
+      Focus returns on the NEXT frame: the card is still behind the modal at
+      this point in the commit, and focusing an element that is about to be
+      re-rendered loses the ring. requestAnimationFrame is enough -- the card
+      is never unmounted, only re-rendered with a new preview.
+    */
+    const origin = noteOriginRef.current;
+    noteOriginRef.current = null;
+    if (origin) {
+      requestAnimationFrame(() => origin.focus());
+    }
+  }, []);
 
   const onFieldChange = useCallback(
     (field: ConsultationNarrativeField, value: string) => {
@@ -283,20 +312,29 @@ export default function ConsultationWorkspace({
       // A previous outcome must not sit next to text that has since changed:
       // "Saved" above an edited paragraph is a false statement.
       setStatus((current) => (current === "saved" ? "idle" : current));
-      setSavedPulse(false);
     },
     [],
   );
 
   /* ---------------- save ---------------- */
-  const save = useCallback(async () => {
-    if (!consultation || !editable) return;
+  /*
+    RETURNS WHETHER THE WRITE LANDED. The command-bar button ignores the value
+    and reads the status banner exactly as it always did; the note modal needs
+    it, because it must close ONLY on success. A modal that closed on a refused
+    save -- a version conflict, most of all -- would tell the doctor their
+    paragraph was stored when the server had rejected it.
+
+    A save with nothing to send counts as success: there is no unsaved text
+    left, which is the question the caller is really asking.
+  */
+  const save = useCallback(async (): Promise<boolean> => {
+    if (!consultation || !editable) return false;
 
     const payload = buildSavePayload(consultation.version, draft, baseline);
     if (isEmptySave(payload)) {
       setStatus("saved");
       setStatusMessage("No changes to save.");
-      return;
+      return true;
     }
 
     setStatus("saving");
@@ -329,7 +367,7 @@ export default function ConsultationWorkspace({
         setStatusMessage(
           messageFromPayload(body, "Unable to save the consultation note."),
         );
-        return;
+        return false;
       }
 
       /*
@@ -349,10 +387,11 @@ export default function ConsultationWorkspace({
       setStatus("saved");
       setStatusMessage(null);
       setSavedAt(new Date().toISOString());
-      setSavedPulse(true);
+      return true;
     } catch {
       setStatus("error");
       setStatusMessage("Unable to reach the consultation service.");
+      return false;
     }
   }, [
     appointmentId,
@@ -467,6 +506,14 @@ export default function ConsultationWorkspace({
 
   const { patient, triage, medical_alerts: alerts, visit, encounter } = detail;
   const problem = status === "conflict" || status === "error";
+  /*
+    The open section's descriptor, or null. Resolved from NOTE_FIELDS -- the
+    same list the save payload is built from -- so a section can never be opened
+    for a field the save path does not know about.
+  */
+  const openField = openSection
+    ? (NOTE_FIELDS.find((field) => field.key === openSection) ?? null)
+    : null;
 
   return (
     <section className="flex h-full min-h-[560px] min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm min-[1100px]:min-h-0">
@@ -476,16 +523,16 @@ export default function ConsultationWorkspace({
           <div className="flex min-w-0 items-center gap-2">
             <span
               aria-hidden
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-[12px] font-bold text-emerald-800"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-100 cl-body font-bold text-emerald-800"
             >
               {patient.name.trim().charAt(0).toUpperCase() || "?"}
             </span>
-            <h2 className="shrink-0 truncate text-[15px] font-bold leading-tight tracking-tight text-slate-950">
+            <h2 className="shrink-0 truncate cl-head font-bold leading-tight tracking-tight text-slate-950">
               {patient.name}
             </h2>
             {/* Codes on the SAME line as the name. They are reference detail a
                 doctor checks, not a second heading. */}
-            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-[11px] leading-tight text-slate-500">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 cl-secondary leading-tight text-slate-500">
               <span aria-hidden className="text-slate-300">|</span>
               <span className="font-mono font-semibold text-slate-700">
                 {patient.mrn ?? "No chart no."}
@@ -511,7 +558,7 @@ export default function ConsultationWorkspace({
 
           <div className="flex shrink-0 items-center gap-1.5">
             {loading ? (
-              <span className="text-[10px] text-slate-500">Updating…</span>
+              <span className="cl-meta text-slate-500">Updating…</span>
             ) : null}
             <StageBadge stage={visit.queue_stage} />
             <PriorityBadge priority={triage.priority} />
@@ -527,17 +574,17 @@ export default function ConsultationWorkspace({
       {alerts.length > 0 ? (
         <div className="shrink-0 border-b border-red-200 bg-red-50/70 px-3 py-1.5">
           <ul className="flex flex-wrap items-center gap-1.5">
-            <li className="text-[9px] font-bold uppercase tracking-[0.07em] text-red-700">
+            <li className="cl-micro font-bold uppercase tracking-[0.07em] text-red-700">
               Alerts
             </li>
             {alerts.map((alert) => (
               <li
                 key={alert.id}
-                className="inline-flex items-center gap-1 rounded border border-red-300 bg-white px-1.5 py-0.5 text-[10.5px] font-semibold text-red-900"
+                className="inline-flex items-center gap-1 rounded border border-red-300 bg-white px-1.5 py-0.5 cl-meta font-semibold text-red-900"
               >
                 {alert.name}
                 {alert.severity ? (
-                  <span className="text-[9px] font-bold uppercase tracking-wide text-red-500">
+                  <span className="cl-micro font-bold uppercase tracking-wide text-red-500">
                     {doctorLabel(alert.severity)}
                   </span>
                 ) : null}
@@ -556,7 +603,7 @@ export default function ConsultationWorkspace({
               type="button"
               aria-current={section === entry.key ? "page" : undefined}
               onClick={() => onSectionChange(entry.key)}
-              className={`-mb-px border-b-2 px-1.5 py-1.5 text-[10.5px] font-bold uppercase tracking-[0.07em] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-emerald-600 ${
+              className={`-mb-px border-b-2 px-1.5 py-1.5 cl-meta font-bold uppercase tracking-[0.07em] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-emerald-600 ${
                 section === entry.key
                   ? "border-emerald-600 text-slate-900"
                   : "border-transparent text-slate-500 hover:text-slate-800"
@@ -571,7 +618,7 @@ export default function ConsultationWorkspace({
             <span
               key={entry.key}
               title="Arrives in a later clinical slice"
-              className="cursor-default border-b-2 border-transparent px-1.5 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-slate-400"
+              className="cursor-default border-b-2 border-transparent px-1.5 py-1.5 cl-meta font-semibold uppercase tracking-[0.07em] text-slate-400"
             >
               {entry.label}
             </span>
@@ -587,7 +634,7 @@ export default function ConsultationWorkspace({
               doctor's own presenting complaint is a separate editable field
               below: it is seeded from this once and then diverges, so showing
               both is what makes the copy visible rather than mysterious. */}
-          <p className="min-w-0 flex-1 truncate text-[11.5px] leading-snug text-slate-700">
+          <p className="min-w-0 flex-1 truncate cl-secondary leading-snug text-slate-700">
             <span className="font-bold uppercase tracking-[0.06em] text-slate-400">
               Triage ·{" "}
             </span>
@@ -599,7 +646,7 @@ export default function ConsultationWorkspace({
             type="button"
             onClick={() => setContextOpen((open) => !open)}
             aria-expanded={contextOpen}
-            className="shrink-0 rounded border border-slate-200 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-500 outline-none transition-colors hover:border-slate-300 hover:bg-slate-50 hover:text-slate-700 focus-visible:ring-2 focus-visible:ring-emerald-600"
+            className="shrink-0 rounded border border-slate-200 px-1.5 py-0.5 cl-micro font-bold uppercase tracking-wide text-slate-500 outline-none transition-colors hover:border-slate-300 hover:bg-slate-50 hover:text-slate-700 focus-visible:ring-2 focus-visible:ring-emerald-600"
           >
             {contextOpen ? "Hide nursing detail" : "Nursing detail"}
           </button>
@@ -615,7 +662,7 @@ export default function ConsultationWorkspace({
                 previous={detail.previous_vitals}
               />
               {triage.notes ? (
-                <p className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] leading-relaxed text-slate-600">
+                <p className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 cl-secondary leading-relaxed text-slate-600">
                   <span className="font-bold uppercase tracking-[0.06em] text-slate-400">
                     Triage notes ·{" "}
                   </span>
@@ -642,13 +689,13 @@ export default function ConsultationWorkspace({
           */
           <DiagnosisWorkspace key={appointmentId} appointmentId={appointmentId} />
         ) : noteLoading && !consultation ? (
-          <p className="py-8 text-center text-xs text-slate-500">
+          <p className="py-8 text-center cl-body text-slate-500">
             Loading consultation note…
           </p>
         ) : loadError && !consultation ? (
           <p
             role="alert"
-            className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] leading-snug text-amber-900"
+            className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 cl-secondary leading-snug text-amber-900"
           >
             {loadError}
           </p>
@@ -656,10 +703,10 @@ export default function ConsultationWorkspace({
           <>
             {!editable && consultation ? (
               <div className="mb-2.5 rounded-md border border-slate-300 bg-slate-50 px-3 py-2">
-                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-700">
+                <p className="cl-secondary font-bold uppercase tracking-wide text-slate-700">
                   Consultation completed
                 </p>
-                <p className="mt-0.5 text-[11px] leading-snug text-slate-600">
+                <p className="mt-0.5 cl-secondary leading-snug text-slate-600">
                   The clinical note and its diagnoses are locked. Orders already
                   placed continue under their own workflow.
                   {consultation.completed_at
@@ -671,9 +718,8 @@ export default function ConsultationWorkspace({
             <ConsultationNoteEditor
               draft={draft}
               baseline={baseline}
-              disabled={!editable || status === "saving"}
-              savedPulse={savedPulse}
-              onChange={onFieldChange}
+              readOnly={!editable}
+              onOpenSection={openNoteSection}
             />
           </>
         )}
@@ -709,14 +755,14 @@ export default function ConsultationWorkspace({
         {completeError ? (
           <div
             role="alert"
-            className="mb-2 rounded-md border border-red-300 bg-white px-2.5 py-1.5 text-[11px] leading-snug text-red-900"
+            className="mb-2 rounded-md border border-red-300 bg-white px-2.5 py-1.5 cl-secondary leading-snug text-red-900"
           >
             <p className="font-semibold">Consultation not completed</p>
             <p className="mt-0.5 text-red-800">{completeError}</p>
             <button
               type="button"
               onClick={reload}
-              className="mt-1.5 rounded border border-red-400 bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-800 outline-none transition-colors hover:bg-red-50 focus-visible:ring-2 focus-visible:ring-red-600"
+              className="mt-1.5 rounded border border-red-400 bg-white px-2 py-0.5 cl-meta font-bold uppercase tracking-wide text-red-800 outline-none transition-colors hover:bg-red-50 focus-visible:ring-2 focus-visible:ring-red-600"
             >
               Reload the note
             </button>
@@ -735,7 +781,7 @@ export default function ConsultationWorkspace({
             {blockers.map((blocker) => (
               <li
                 key={blocker.code}
-                className="flex items-start gap-1.5 text-[11px] leading-snug text-slate-700"
+                className="flex items-start gap-1.5 cl-secondary leading-snug text-slate-700"
               >
                 <span aria-hidden className="mt-px text-slate-400">
                   •
@@ -749,7 +795,7 @@ export default function ConsultationWorkspace({
         {statusMessage && problem ? (
           <div
             role="alert"
-            className="mb-2 rounded-md border border-red-300 bg-white px-2.5 py-1.5 text-[11px] leading-snug text-red-900"
+            className="mb-2 rounded-md border border-red-300 bg-white px-2.5 py-1.5 cl-secondary leading-snug text-red-900"
           >
             <p className="font-semibold">
               {status === "conflict" ? "Save refused — the note changed" : "Save failed"}
@@ -759,7 +805,7 @@ export default function ConsultationWorkspace({
               <button
                 type="button"
                 onClick={reload}
-                className="mt-1.5 rounded border border-red-400 bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-800 outline-none transition-colors hover:bg-red-50 focus-visible:ring-2 focus-visible:ring-red-600"
+                className="mt-1.5 rounded border border-red-400 bg-white px-2 py-0.5 cl-meta font-bold uppercase tracking-wide text-red-800 outline-none transition-colors hover:bg-red-50 focus-visible:ring-2 focus-visible:ring-red-600"
               >
                 Reload the note
               </button>
@@ -768,7 +814,7 @@ export default function ConsultationWorkspace({
         ) : null}
 
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="flex min-w-0 items-center gap-1.5 text-[11px] leading-snug">
+          <p className="flex min-w-0 items-center gap-1.5 cl-secondary leading-snug">
             {status === "saving" ? (
               <>
                 <Spinner className="h-3 w-3 text-slate-500" />
@@ -820,7 +866,7 @@ export default function ConsultationWorkspace({
               type="button"
               onClick={save}
               disabled={!editable || !dirty || status === "saving" || noteLoading}
-              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-emerald-700 bg-white px-3.5 text-[11.5px] font-bold uppercase tracking-[0.06em] text-emerald-800 shadow-sm outline-none transition-colors hover:bg-emerald-50 focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none"
+              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-emerald-700 bg-white px-3.5 cl-secondary font-bold uppercase tracking-[0.06em] text-emerald-800 shadow-sm outline-none transition-colors hover:bg-emerald-50 focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none"
             >
               {status === "saving" ? (
                 <>
@@ -858,7 +904,7 @@ export default function ConsultationWorkspace({
                       ? blockers[0].message
                       : undefined
                 }
-                className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-emerald-700 px-4 text-[11.5px] font-bold uppercase tracking-[0.06em] text-white shadow-sm outline-none transition-colors hover:bg-emerald-800 focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none"
+                className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-emerald-700 px-4 cl-secondary font-bold uppercase tracking-[0.06em] text-white shadow-sm outline-none transition-colors hover:bg-emerald-800 focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none"
               >
                 {completeStatus === "completing" ? (
                   <>
@@ -873,6 +919,36 @@ export default function ConsultationWorkspace({
           </div>
         </div>
       </footer>
+
+      {/*
+        ---- Focused note editor ----
+
+        RENDERED LAST, INSIDE THE WORKSPACE, AND POSITIONED `fixed`. It escapes
+        this section's `overflow-hidden` because a fixed element is laid out
+        against the viewport, so no portal is needed and the modal still sits
+        inside the React tree that owns the draft it edits.
+
+        Its z-index deliberately clears the Doctor Desk chrome: while a section
+        is open it IS the task, and a half-covered navigation bar invites a
+        click that would abandon a paragraph.
+      */}
+      {openField ? (
+        <NoteEditorModal
+          /* Keyed on the section so switching fields remounts the editor --
+             which re-seeds its "opened with" baseline and re-runs autofocus. */
+          key={openField.key}
+          label={openField.label}
+          hint={openField.placeholder}
+          value={draft[openField.key]}
+          context={`${patient.name}${visit.appointment_code ? ` · ${visit.appointment_code}` : ""}`}
+          readOnly={!editable}
+          busy={status === "saving"}
+          errorMessage={problem ? statusMessage : null}
+          onChange={(next) => onFieldChange(openField.key, next)}
+          onSave={save}
+          onClose={closeNoteSection}
+        />
+      ) : null}
     </section>
   );
 }
@@ -906,11 +982,11 @@ function CompletionConfirm({
       aria-label="Confirm consultation completion"
       className="mb-2 rounded-md border border-emerald-300 bg-white px-3 py-2.5 shadow-sm"
     >
-      <p className="text-[11.5px] font-bold uppercase tracking-wide text-emerald-900">
+      <p className="cl-secondary font-bold uppercase tracking-wide text-emerald-900">
         Complete this consultation?
       </p>
 
-      <ul className="mt-1.5 space-y-0.5 text-[11px] leading-snug text-slate-700">
+      <ul className="mt-1.5 space-y-0.5 cl-secondary leading-snug text-slate-700">
         <li>The clinical note is locked and can no longer be edited.</li>
         <li>Diagnoses become read-only.</li>
         <li>No further orders can be placed from this consultation.</li>
@@ -922,7 +998,7 @@ function CompletionConfirm({
           {warnings.map((warning) => (
             <li
               key={warning.code}
-              className="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] leading-snug text-amber-900"
+              className="rounded border border-amber-300 bg-amber-50 px-2 py-1 cl-secondary leading-snug text-amber-900"
             >
               {warning.message}
             </li>
@@ -935,7 +1011,7 @@ function CompletionConfirm({
           type="button"
           onClick={onCancel}
           disabled={busy}
-          className="inline-flex h-7 items-center rounded-md border border-slate-300 bg-white px-3 text-[11px] font-bold uppercase tracking-wide text-slate-700 outline-none transition-colors hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-slate-500 disabled:cursor-not-allowed disabled:text-slate-400"
+          className="inline-flex h-7 items-center rounded-md border border-slate-300 bg-white px-3 cl-secondary font-bold uppercase tracking-wide text-slate-700 outline-none transition-colors hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-slate-500 disabled:cursor-not-allowed disabled:text-slate-400"
         >
           Cancel
         </button>
@@ -943,7 +1019,7 @@ function CompletionConfirm({
           type="button"
           onClick={onConfirm}
           disabled={busy}
-          className="inline-flex h-7 items-center gap-1.5 rounded-md bg-emerald-700 px-3.5 text-[11px] font-bold uppercase tracking-wide text-white outline-none transition-colors hover:bg-emerald-800 focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300"
+          className="inline-flex h-7 items-center gap-1.5 rounded-md bg-emerald-700 px-3.5 cl-secondary font-bold uppercase tracking-wide text-white outline-none transition-colors hover:bg-emerald-800 focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300"
         >
           {busy ? (
             <>

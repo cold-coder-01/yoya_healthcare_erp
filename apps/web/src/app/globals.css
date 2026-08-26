@@ -43,3 +43,80 @@ body {
      this change, which is why the visual result is unchanged for prose. */
   font-family: var(--font-sans);
 }
+
+/*
+  ============================================================================
+  THE CLINICAL TYPE SCALE
+  ============================================================================
+
+  WHY THIS EXISTS. The clinical desks were built with ad-hoc `text-[9px]`,
+  `text-[10px]`, `text-[11px]` utilities -- 190 of them across the Doctor Desk
+  alone, in ten different sizes with no relationship between them. Half of the
+  clinical content sat at 9-11px, which is genuinely hard to read for an hour at
+  a stretch and harder still for the older clinicians who live in this screen.
+
+  THIS IS A RE-SHAPED SCALE, NOT A ZOOM. The bottom of the range is lifted much
+  further than the top -- the smallest decorative label goes 8.5px -> 11px
+  (+29%) while the largest heading goes 17px -> 18px (+6%) -- so the density of
+  the workstation survives while the floor stops being unreadable. Every tier
+  below is a step a human chose; nothing is scaled by a factor.
+
+  THE FLOOR IS 11px, AND ONLY DECORATION LIVES THERE. Clinical content -- names,
+  values, narrative, indications -- starts at `cl-secondary` (13px). `cl-micro`
+  is for uppercase badges and chips, which are short, high-contrast and read as
+  shapes rather than as sentences.
+
+  FONT-SIZE ONLY, DELIBERATELY. These utilities set no line-height, weight,
+  colour or tracking, so the hundreds of existing `leading-snug`, `font-bold`
+  and `tracking-wide` utilities at the call sites keep working exactly as they
+  did and nothing has to be re-tuned in the same pass. `cl-prose` is the single
+  exception: it is the long-form writing surface, it sets its own line-height
+  because that is the whole point of it, and it is only used by components
+  written after this scale existed.
+*/
+
+/* Uppercase badges, chips and state pills. Never a sentence. */
+@utility cl-micro {
+  font-size: 11px;
+}
+
+/* Reference numbers, timestamps, counts -- supporting metadata. */
+@utility cl-meta {
+  font-size: 12px;
+}
+
+/* Secondary clinical content: indications, notes, linked diagnoses. */
+@utility cl-secondary {
+  font-size: 13px;
+}
+
+/* Primary clinical body text and every form control. */
+@utility cl-body {
+  font-size: 14px;
+}
+
+/* Patient names, test and study names -- the thing being scanned for. */
+@utility cl-strong {
+  font-size: 15px;
+}
+
+/* Panel and card headings. */
+@utility cl-head {
+  font-size: 16px;
+}
+
+/* The patient identity line. The largest text on the desk, and still modest. */
+@utility cl-head-lg {
+  font-size: 18px;
+}
+
+/*
+  The long-form clinical writing surface: the note editor's textarea and the
+  saved narrative it renders back. Sets line-height too, because comfortable
+  leading is what makes a paragraph readable rather than a wall, and 1.6 at
+  15px is the difference between scanning a history and squinting at it.
+*/
+@utility cl-prose {
+  font-size: 15px;
+  line-height: 1.6;
+}

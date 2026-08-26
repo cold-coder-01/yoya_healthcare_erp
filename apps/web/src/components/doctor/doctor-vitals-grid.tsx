@@ -33,16 +33,16 @@ const SECONDARY_CELL =
   "flex flex-col gap-0.5 rounded-md border border-slate-200 bg-slate-50/70 px-2 py-1.5";
 
 const PRIMARY_LABEL =
-  "text-[9px] font-bold uppercase tracking-[0.08em] text-slate-500";
+  "cl-micro font-bold uppercase tracking-[0.08em] text-slate-500";
 const SECONDARY_LABEL =
-  "text-[9px] font-semibold uppercase tracking-[0.06em] text-slate-400";
+  "cl-micro font-semibold uppercase tracking-[0.06em] text-slate-500";
 
 const PRIMARY_VALUE =
-  "text-[17px] font-bold leading-none tabular-nums text-slate-900";
+  "cl-head-lg font-bold leading-none tabular-nums text-slate-900";
 const SECONDARY_VALUE =
-  "text-[12px] font-bold leading-none tabular-nums text-slate-700";
+  "cl-body font-bold leading-none tabular-nums text-slate-700";
 
-const PREV = "text-[9px] tabular-nums leading-tight text-slate-400";
+const PREV = "cl-meta tabular-nums leading-tight text-slate-500";
 
 /** A unit rendered at a quieter weight than its number, so the value leads. */
 function Reading({ text, className }: { text: string; className: string }) {
@@ -51,7 +51,7 @@ function Reading({ text, className }: { text: string; className: string }) {
     <span className={className}>
       {value}
       {unit.length ? (
-        <span className="ml-0.5 text-[10px] font-semibold text-slate-400">
+        <span className="ml-0.5 cl-meta font-semibold text-slate-500">
           {unit.join(" ")}
         </span>
       ) : null}
@@ -92,7 +92,7 @@ export default function DoctorVitalsGrid({
 }) {
   if (!hasAnyVital(vitals)) {
     return (
-      <p className="rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-center text-[11px] text-slate-500">
+      <p className="rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-center cl-secondary text-slate-500">
         No vitals recorded for this visit yet.
       </p>
     );

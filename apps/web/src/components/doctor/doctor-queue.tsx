@@ -86,7 +86,7 @@ function QueueRow({
           }`}
         />
 
-        <span className="text-[11px] font-bold leading-tight tabular-nums text-slate-500">
+        <span className="cl-secondary font-bold leading-tight tabular-nums text-slate-500">
           {formatHospitalTime(row.appointment_date)}
         </span>
 
@@ -100,11 +100,11 @@ function QueueRow({
                 title={`Priority: ${doctorLabel(row.triage_priority)}`}
               />
             ) : null}
-            <span className="truncate text-[13px] font-bold leading-tight text-slate-900">
+            <span className="truncate cl-strong font-bold leading-tight text-slate-900">
               {row.patient.name}
             </span>
           </span>
-          <span className="flex min-w-0 items-center gap-1 text-[10px] leading-tight text-slate-500">
+          <span className="flex min-w-0 items-center gap-1 cl-meta leading-tight text-slate-500">
             <span className="shrink-0 font-mono font-semibold text-slate-600">
               {row.patient.mrn ?? "—"}
             </span>
@@ -119,7 +119,7 @@ function QueueRow({
           </span>
         </span>
 
-        <span className="text-[11px] leading-tight tabular-nums text-slate-600">
+        <span className="cl-secondary leading-tight tabular-nums text-slate-600">
           {row.patient.age ?? "-"}
           <span className="text-slate-300">/</span>
           {compactGender(row.patient.gender)}
@@ -134,7 +134,7 @@ function QueueRow({
           />
           <span
             title={tone.label}
-            className={`inline-flex h-[19px] w-[40px] items-center justify-center rounded border text-[10px] font-bold ${
+            className={`inline-flex h-[19px] w-[40px] items-center justify-center rounded border cl-meta font-bold ${
               STAT_TONE[stat] ?? STAT_TONE.Wait
             }`}
           >
@@ -196,19 +196,19 @@ export default function DoctorQueue({
   return (
     <section className="flex min-h-[340px] min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm min-[1100px]:min-h-0">
       <header className="flex h-9 shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50 px-3">
-        <h2 className="flex items-baseline gap-1.5 text-[11px] font-bold uppercase tracking-[0.08em] text-slate-700">
+        <h2 className="flex items-baseline gap-1.5 cl-secondary font-bold uppercase tracking-[0.08em] text-slate-700">
           Patient Queue
-          <span className="rounded bg-slate-200 px-1.5 py-px text-[10px] tabular-nums text-slate-700">
+          <span className="rounded bg-slate-200 px-1.5 py-px cl-meta tabular-nums text-slate-700">
             {rows.length}
           </span>
         </h2>
         {loading ? (
-          <span className="text-[10px] tabular-nums text-slate-500">Updating…</span>
+          <span className="cl-meta tabular-nums text-slate-500">Updating…</span>
         ) : null}
       </header>
 
       <div
-        className={`${GRID} shrink-0 border-b border-slate-200 bg-slate-50 py-1 pl-3 pr-2 text-[9px] font-bold uppercase tracking-[0.06em] text-slate-400`}
+        className={`${GRID} shrink-0 border-b border-slate-200 bg-slate-50 py-1 pl-3 pr-2 cl-micro font-bold uppercase tracking-[0.06em] text-slate-400`}
       >
         <span>Time</span>
         <span>Patient · Chart no.</span>
@@ -217,12 +217,12 @@ export default function DoctorQueue({
       </div>
 
       {error ? (
-        <div className="border-b border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+        <div className="border-b border-red-200 bg-red-50 px-3 py-2 cl-body text-red-800">
           {error}
         </div>
       ) : null}
       {truncated ? (
-        <div className="border-b border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-900">
+        <div className="border-b border-amber-200 bg-amber-50 px-3 py-1.5 cl-secondary text-amber-900">
           Queue limit reached. Narrow the filters to see every patient.
         </div>
       ) : null}
@@ -246,8 +246,8 @@ export default function DoctorQueue({
           </div>
         ) : rows.length === 0 ? (
           <div className="flex h-full min-h-32 flex-col items-center justify-center gap-1 px-6 text-center">
-            <p className="text-xs font-semibold text-slate-600">No patients here</p>
-            <p className="text-[11px] text-slate-500">
+            <p className="cl-body font-semibold text-slate-600">No patients here</p>
+            <p className="cl-secondary text-slate-500">
               Nothing matches the current filters.
             </p>
           </div>
@@ -269,7 +269,7 @@ export default function DoctorQueue({
         )}
       </div>
 
-      <footer className="flex h-7 shrink-0 items-center gap-2 border-t border-slate-200 bg-slate-50 px-3 text-[10px] text-slate-500">
+      <footer className="flex h-7 shrink-0 items-center gap-2 border-t border-slate-200 bg-slate-50 px-3 cl-meta text-slate-500">
         <span className="tabular-nums">
           {rows.length} {rows.length === 1 ? "patient" : "patients"}
         </span>
@@ -277,7 +277,7 @@ export default function DoctorQueue({
           ·
         </span>
         <span className="flex items-center gap-1">
-          <kbd className="rounded border border-slate-200 bg-white px-1 font-mono text-[9px] text-slate-500">
+          <kbd className="rounded border border-slate-200 bg-white px-1 font-mono cl-micro text-slate-500">
             ↑↓
           </kbd>
           to move

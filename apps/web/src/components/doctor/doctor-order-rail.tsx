@@ -99,10 +99,10 @@ export default function DoctorOrderRail({
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
       <header className="flex h-9 shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50 px-2.5">
-        <h2 className="text-[10.5px] font-bold uppercase tracking-[0.08em] text-slate-700">
+        <h2 className="cl-meta font-bold uppercase tracking-[0.08em] text-slate-700">
           Clinical Actions
         </h2>
-        <span className="inline-flex items-center gap-1 rounded bg-slate-200 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-600">
+        <span className="inline-flex items-center gap-1 rounded bg-slate-200 px-1.5 py-0.5 cl-micro font-bold uppercase tracking-wide text-slate-600">
           <LockIcon className="h-2.5 w-2.5" />
           Not yet
         </span>
@@ -118,7 +118,7 @@ export default function DoctorOrderRail({
         }`}
       >
         {active ? (
-          <p className="text-[10px] leading-snug text-emerald-900">
+          <p className="cl-meta leading-snug text-emerald-900">
             <span className="font-semibold">Note open for writing</span> on{" "}
             <span className="font-mono font-semibold">
               {encounterName ?? "this encounter"}
@@ -126,7 +126,7 @@ export default function DoctorOrderRail({
             . Diagnosis and laboratory ordering are available.
           </p>
         ) : (
-          <p className="text-[10px] leading-snug text-slate-600">
+          <p className="cl-meta leading-snug text-slate-600">
             <span className="font-semibold text-slate-800">
               Start the consultation to open the clinical note.
             </span>{" "}
@@ -144,7 +144,7 @@ export default function DoctorOrderRail({
             act on, and simply absent otherwise -- never a dead control. */}
         {onOpenDiagnosis ? (
           <div className="mb-2.5 flex flex-col gap-1">
-            <h3 className="text-[9px] font-bold uppercase tracking-[0.08em] text-slate-500">
+            <h3 className="cl-micro font-bold uppercase tracking-[0.08em] text-slate-500">
               Clinical
             </h3>
             <button
@@ -157,8 +157,8 @@ export default function DoctorOrderRail({
                   : "border-slate-200 bg-white text-slate-700 hover:border-emerald-300 hover:bg-emerald-50/60"
               }`}
             >
-              <span className="truncate text-[11px] font-bold">Diagnosis</span>
-              <span className="shrink-0 text-[8.5px] font-bold uppercase tracking-wide text-emerald-700">
+              <span className="truncate cl-secondary font-bold">Diagnosis</span>
+              <span className="shrink-0 cl-micro font-bold uppercase tracking-wide text-emerald-700">
                 {diagnosisActive ? "Open" : "Record"}
               </span>
             </button>
@@ -173,8 +173,8 @@ export default function DoctorOrderRail({
                     : "border-slate-200 bg-white text-slate-700 hover:border-emerald-300 hover:bg-emerald-50/60"
                 }`}
               >
-                <span className="truncate text-[11px] font-bold">Laboratory</span>
-                <span className="shrink-0 text-[8.5px] font-bold uppercase tracking-wide text-emerald-700">
+                <span className="truncate cl-secondary font-bold">Laboratory</span>
+                <span className="shrink-0 cl-micro font-bold uppercase tracking-wide text-emerald-700">
                   {laboratoryActive ? "Open" : "Order"}
                 </span>
               </button>
@@ -185,7 +185,7 @@ export default function DoctorOrderRail({
         <div className="flex flex-col gap-2.5">
           {ACTION_GROUPS.map((group) => (
             <div key={group.title} className="flex flex-col gap-1">
-              <h3 className="text-[9px] font-bold uppercase tracking-[0.08em] text-slate-500">
+              <h3 className="cl-micro font-bold uppercase tracking-[0.08em] text-slate-500">
                 {group.title}
               </h3>
               <ul className="flex flex-col gap-px border-l border-slate-200 pl-2">
@@ -194,10 +194,10 @@ export default function DoctorOrderRail({
                     key={item}
                     className="flex items-center justify-between gap-1.5 py-[3px]"
                   >
-                    <span className="truncate text-[11px] font-semibold text-slate-700">
+                    <span className="truncate cl-secondary font-semibold text-slate-700">
                       {item}
                     </span>
-                    <span className="shrink-0 text-[8.5px] font-semibold uppercase tracking-wide text-slate-400">
+                    <span className="shrink-0 cl-micro font-semibold uppercase tracking-wide text-slate-400">
                       Soon
                     </span>
                   </li>
@@ -207,7 +207,7 @@ export default function DoctorOrderRail({
           ))}
         </div>
 
-        <p className="mt-2.5 border-t border-slate-200 pt-1.5 text-[9px] leading-snug text-slate-400">
+        <p className="mt-2.5 border-t border-slate-200 pt-1.5 cl-micro leading-snug text-slate-400">
           This column is reserved so ordering lands where doctors already look.
           The consultation note itself is written in the centre panel.
         </p>

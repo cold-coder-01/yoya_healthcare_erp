@@ -28,7 +28,7 @@ import type { DoctorQueueStage } from "@/types/doctor";
  */
 
 const BADGE_BASE =
-  "inline-flex h-[22px] shrink-0 items-center gap-1 rounded-md border px-2 text-[10px] font-bold uppercase tracking-[0.06em]";
+  "inline-flex h-[22px] shrink-0 items-center gap-1 rounded-md border px-2 cl-meta font-bold uppercase tracking-[0.06em]";
 
 /**
  * The AUTHORITATIVE queue stage: hospital.appointment.front_desk_stage.

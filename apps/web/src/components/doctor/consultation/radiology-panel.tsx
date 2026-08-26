@@ -249,7 +249,7 @@ export default function RadiologyPanel({
       {loadError ? (
         <p
           role="alert"
-          className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] leading-snug text-amber-900"
+          className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 cl-secondary leading-snug text-amber-900"
         >
           {loadError}
         </p>
@@ -258,14 +258,14 @@ export default function RadiologyPanel({
       {actionError ? (
         <p
           role="alert"
-          className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-[11px] leading-snug text-red-900"
+          className="rounded-md border border-red-300 bg-red-50 px-3 py-2 cl-secondary leading-snug text-red-900"
         >
           {actionError}
         </p>
       ) : null}
 
       {loading && orders.length === 0 ? (
-        <p className="py-8 text-center text-xs text-slate-500">
+        <p className="py-8 text-center cl-body text-slate-500">
           Loading radiology orders…
         </p>
       ) : (
@@ -274,12 +274,12 @@ export default function RadiologyPanel({
           {canOrder ? (
             <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-2.5 py-2">
               <div className="flex items-center gap-2">
-                <h3 className="text-[9px] font-bold uppercase tracking-[0.08em] text-slate-500">
+                <h3 className="cl-meta font-bold uppercase tracking-[0.08em] text-slate-600">
                   New radiology order
                 </h3>
                 <span aria-hidden className="h-px flex-1 bg-slate-200" />
                 {searching ? (
-                  <span className="text-[9px] text-slate-400">Searching…</span>
+                  <span className="cl-micro text-slate-400">Searching…</span>
                 ) : null}
               </div>
 
@@ -288,11 +288,11 @@ export default function RadiologyPanel({
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search studies by name, code or body part…"
-                className="h-8 w-full rounded border border-slate-300 bg-white px-2.5 text-[12px] text-slate-900 outline-none placeholder:text-slate-400 focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600"
+                className="h-9 w-full rounded border border-slate-300 bg-white px-2.5 cl-body text-slate-900 outline-none placeholder:text-slate-500 focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600"
               />
 
               {searchTerm.length >= 2 && visibleResults.length === 0 && !searching ? (
-                <p className="text-[11px] text-slate-500">No matching study.</p>
+                <p className="cl-secondary text-slate-500">No matching study.</p>
               ) : null}
 
               {visibleResults.length > 0 ? (
@@ -308,27 +308,27 @@ export default function RadiologyPanel({
                           onClick={() => setSelected((s) => addExam(s, exam))}
                           className="flex w-full items-baseline gap-2 border-b border-slate-100 px-2.5 py-1.5 text-left outline-none last:border-b-0 hover:bg-emerald-50/70 focus-visible:bg-emerald-50 disabled:cursor-not-allowed disabled:bg-slate-50"
                         >
-                          <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-slate-800">
+                          <span className="min-w-0 flex-1 truncate cl-body font-semibold text-slate-900">
                             {exam.name}
                           </span>
                           {context ? (
-                            <span className="shrink-0 text-[10px] text-slate-500">
+                            <span className="shrink-0 cl-meta text-slate-500">
                               {context}
                             </span>
                           ) : null}
                           {/* Contrast is patient preparation, so it is visible
                               at the moment of choosing, not only after. */}
                           {exam.contrast_required ? (
-                            <span className="shrink-0 rounded border border-violet-300 bg-violet-50 px-1 py-px text-[8.5px] font-bold uppercase tracking-wide text-violet-900">
+                            <span className="shrink-0 rounded border border-violet-300 bg-violet-50 px-1 py-px cl-micro font-bold uppercase tracking-wide text-violet-900">
                               Contrast
                             </span>
                           ) : null}
                           {exam.code ? (
-                            <span className="shrink-0 font-mono text-[10px] text-slate-500">
+                            <span className="shrink-0 font-mono cl-meta text-slate-500">
                               {exam.code}
                             </span>
                           ) : null}
-                          <span className="shrink-0 text-[10px] font-bold text-emerald-700">
+                          <span className="shrink-0 cl-meta font-bold text-emerald-700">
                             {already ? "Added" : "+"}
                           </span>
                         </button>
@@ -339,7 +339,7 @@ export default function RadiologyPanel({
               ) : null}
 
               {truncated && visibleResults.length > 0 ? (
-                <p className="text-[9px] text-slate-400">
+                <p className="cl-micro text-slate-400">
                   Showing the first matches only. Refine your search to narrow it.
                 </p>
               ) : null}
@@ -350,7 +350,7 @@ export default function RadiologyPanel({
                     {selected.map((exam) => (
                       <li
                         key={exam.id}
-                        className="inline-flex items-center gap-1.5 rounded border border-emerald-300 bg-emerald-50 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-900"
+                        className="inline-flex items-center gap-1.5 rounded border border-emerald-300 bg-emerald-50 px-2 py-0.5 cl-secondary font-semibold text-emerald-900"
                       >
                         {examLabel(exam)}
                         <button
@@ -359,7 +359,7 @@ export default function RadiologyPanel({
                           onClick={() =>
                             setSelected((s) => removeExam(s, exam.id))
                           }
-                          className="text-[11px] font-bold text-emerald-700 outline-none hover:text-emerald-900 focus-visible:ring-1 focus-visible:ring-emerald-600"
+                          className="cl-secondary font-bold text-emerald-700 outline-none hover:text-emerald-900 focus-visible:ring-1 focus-visible:ring-emerald-600"
                         >
                           ×
                         </button>
@@ -368,7 +368,7 @@ export default function RadiologyPanel({
                   </ul>
 
                   {contrastPending ? (
-                    <p className="rounded border border-violet-300 bg-violet-50 px-2 py-1 text-[10.5px] leading-snug text-violet-900">
+                    <p className="rounded border border-violet-300 bg-violet-50 px-2 py-1 cl-meta leading-snug text-violet-900">
                       A selected study requires contrast. Confirm the patient&apos;s
                       preparation and allergy history before ordering.
                     </p>
@@ -376,7 +376,7 @@ export default function RadiologyPanel({
 
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                     <label className="flex min-w-0 flex-col gap-0.5">
-                      <span className="text-[9px] font-bold uppercase tracking-[0.07em] text-slate-500">
+                      <span className="cl-meta font-bold uppercase tracking-[0.07em] text-slate-600">
                         Priority
                       </span>
                       <select
@@ -388,7 +388,7 @@ export default function RadiologyPanel({
                               .value as RadOrderForm["priority"],
                           }))
                         }
-                        className="h-7 rounded border border-slate-300 bg-white px-1.5 text-[11.5px] font-semibold text-slate-800 outline-none focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600"
+                        className="h-8 rounded border border-slate-300 bg-white px-2 cl-body font-semibold text-slate-800 outline-none focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600"
                       >
                         {RAD_PRIORITIES.map((priority) => (
                           <option key={priority} value={priority}>
@@ -399,7 +399,7 @@ export default function RadiologyPanel({
                     </label>
 
                     <label className="flex min-w-0 flex-col gap-0.5">
-                      <span className="text-[9px] font-bold uppercase tracking-[0.07em] text-slate-500">
+                      <span className="cl-meta font-bold uppercase tracking-[0.07em] text-slate-600">
                         Indication (diagnosis)
                       </span>
                       <select
@@ -412,7 +412,7 @@ export default function RadiologyPanel({
                               : null,
                           }))
                         }
-                        className="h-7 rounded border border-slate-300 bg-white px-1.5 text-[11.5px] font-semibold text-slate-800 outline-none focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600"
+                        className="h-8 rounded border border-slate-300 bg-white px-2 cl-body font-semibold text-slate-800 outline-none focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600"
                       >
                         <option value="">— none —</option>
                         {/* Only THIS consultation's diagnoses. The server
@@ -437,7 +437,7 @@ export default function RadiologyPanel({
                         clinical_indication: event.target.value,
                       }))
                     }
-                    className="w-full resize-y rounded border border-slate-300 bg-white px-2 py-1.5 text-[12px] leading-relaxed text-slate-900 caret-emerald-700 outline-none placeholder:text-slate-400 focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600"
+                    className="w-full resize-y rounded border border-slate-300 bg-white px-2.5 py-2 cl-body leading-[1.55] text-slate-900 caret-emerald-700 outline-none placeholder:text-slate-500 focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600"
                   />
 
                   {/* Radiology has a second free-text field laboratory does
@@ -451,7 +451,7 @@ export default function RadiologyPanel({
                     onChange={(event) =>
                       setForm((f) => ({ ...f, instructions: event.target.value }))
                     }
-                    className="w-full resize-y rounded border border-slate-300 bg-white px-2 py-1.5 text-[12px] leading-relaxed text-slate-900 caret-emerald-700 outline-none placeholder:text-slate-400 focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600"
+                    className="w-full resize-y rounded border border-slate-300 bg-white px-2.5 py-2 cl-body leading-[1.55] text-slate-900 caret-emerald-700 outline-none placeholder:text-slate-500 focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600"
                   />
 
                   <div className="flex justify-end">
@@ -459,7 +459,7 @@ export default function RadiologyPanel({
                       type="button"
                       disabled={!submittable}
                       onClick={() => void place()}
-                      className="h-8 rounded-md bg-emerald-700 px-4 text-[11px] font-bold uppercase tracking-[0.06em] text-white shadow-sm outline-none hover:bg-emerald-800 focus-visible:ring-2 focus-visible:ring-emerald-700 disabled:bg-slate-200 disabled:text-slate-500"
+                      className="h-9 rounded-md bg-emerald-700 px-4 cl-body font-semibold text-white shadow-sm outline-none hover:bg-emerald-800 focus-visible:ring-2 focus-visible:ring-emerald-700 disabled:bg-slate-300 disabled:text-slate-600"
                     >
                       {placing ? "Placing…" : "Place radiology order"}
                     </button>
@@ -468,7 +468,7 @@ export default function RadiologyPanel({
               ) : null}
             </div>
           ) : (
-            <p className="rounded-md border border-slate-300 bg-white px-3 py-2 text-[11px] leading-snug text-slate-700">
+            <p className="rounded-md border border-slate-300 bg-white px-3 py-2 cl-secondary leading-snug text-slate-700">
               This consultation is completed. No new radiology orders can be
               placed.
             </p>
@@ -477,14 +477,14 @@ export default function RadiologyPanel({
           {/* ---- Current orders ---- */}
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-2">
-              <h3 className="text-[9px] font-bold uppercase tracking-[0.08em] text-slate-500">
+              <h3 className="cl-meta font-bold uppercase tracking-[0.08em] text-slate-600">
                 Radiology orders
               </h3>
               <span aria-hidden className="h-px flex-1 bg-slate-200" />
             </div>
 
             {orders.length === 0 ? (
-              <p className="text-[12px] text-slate-500">
+              <p className="cl-body text-slate-600">
                 No radiology orders for this consultation.
               </p>
             ) : (
@@ -497,19 +497,19 @@ export default function RadiologyPanel({
                       className="rounded-lg border border-slate-200 bg-white px-2.5 py-2"
                     >
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <span className="shrink-0 font-mono text-[11px] font-bold text-slate-700">
+                        <span className="shrink-0 font-mono cl-meta font-semibold text-slate-500">
                           {order.request_code}
                         </span>
-                        <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-slate-900">
+                        <span className="min-w-0 flex-1 truncate cl-strong font-semibold leading-snug text-slate-900">
                           {orderExamSummary(order)}
                         </span>
                         {orderNeedsContrast(order) ? (
-                          <span className="shrink-0 rounded border border-violet-300 bg-violet-50 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-violet-900">
+                          <span className="shrink-0 rounded border border-violet-300 bg-violet-50 px-1.5 py-px cl-meta font-semibold uppercase tracking-wide text-violet-900">
                             Contrast
                           </span>
                         ) : null}
                         {order.priority && order.priority !== "routine" ? (
-                          <span className="shrink-0 rounded border border-amber-300 bg-amber-50 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-amber-900">
+                          <span className="shrink-0 rounded border border-amber-300 bg-amber-50 px-1.5 py-px cl-meta font-semibold uppercase tracking-wide text-amber-900">
                             {radPriorityLabel(order.priority)}
                           </span>
                         ) : null}
@@ -517,7 +517,7 @@ export default function RadiologyPanel({
                             backend workflow state AND hospital_billing's own
                             clearance verdict, never invented here. */}
                         <span
-                          className={`shrink-0 rounded border px-1.5 py-px text-[9px] font-bold uppercase tracking-wide ${
+                          className={`shrink-0 rounded border px-1.5 py-px cl-meta font-semibold uppercase tracking-wide ${
                             STATUS_TONE[order.status] ?? STATUS_TONE.draft
                           }`}
                         >
@@ -531,14 +531,14 @@ export default function RadiologyPanel({
                                 type="button"
                                 disabled={busy}
                                 onClick={() => void cancel(order)}
-                                className="rounded border border-red-400 bg-red-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-red-800 outline-none hover:bg-red-100 focus-visible:ring-2 focus-visible:ring-red-600 disabled:opacity-60"
+                                className="rounded border border-red-400 bg-red-50 px-2 py-0.5 cl-meta font-semibold text-red-800 outline-none hover:bg-red-100 focus-visible:ring-2 focus-visible:ring-red-600 disabled:opacity-60"
                               >
                                 {busy ? "Cancelling…" : "Confirm"}
                               </button>
                               <button
                                 type="button"
                                 onClick={() => setConfirmCancelId(null)}
-                                className="rounded border border-slate-300 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-600 outline-none hover:bg-slate-50"
+                                className="rounded border border-slate-300 px-2 py-0.5 cl-meta font-semibold text-slate-600 outline-none hover:bg-slate-50"
                               >
                                 Keep
                               </button>
@@ -547,7 +547,7 @@ export default function RadiologyPanel({
                             <button
                               type="button"
                               onClick={() => setConfirmCancelId(order.id)}
-                              className="shrink-0 rounded border border-slate-300 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-600 outline-none hover:border-red-300 hover:bg-red-50 hover:text-red-800 focus-visible:ring-2 focus-visible:ring-red-600"
+                              className="shrink-0 rounded border border-slate-300 px-2 py-0.5 cl-meta font-semibold text-slate-600 outline-none hover:border-red-300 hover:bg-red-50 hover:text-red-800 focus-visible:ring-2 focus-visible:ring-red-600"
                             >
                               Cancel
                             </button>
@@ -556,9 +556,9 @@ export default function RadiologyPanel({
                       </div>
 
                       {order.diagnosis || order.clinical_indication ? (
-                        <p className="mt-1 text-[11px] leading-relaxed text-slate-600">
+                        <p className="mt-1 cl-secondary leading-[1.55] text-slate-700">
                           {order.diagnosis ? (
-                            <span className="font-semibold text-slate-700">
+                            <span className="font-semibold text-slate-900">
                               {order.diagnosis.name}
                               {order.clinical_indication ? " · " : ""}
                             </span>
@@ -572,8 +572,8 @@ export default function RadiologyPanel({
                       ) : null}
 
                       {order.instructions ? (
-                        <p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">
-                          <span className="font-semibold uppercase tracking-wide text-[9px] text-slate-400">
+                        <p className="mt-0.5 cl-secondary leading-[1.55] text-slate-600">
+                          <span className="font-bold uppercase tracking-wide cl-micro text-slate-500">
                             Prep{" "}
                           </span>
                           <span className="whitespace-pre-wrap">

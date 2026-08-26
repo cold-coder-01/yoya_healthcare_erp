@@ -67,7 +67,7 @@ function Badge({ value, tone }: { value: string | null; tone: string }) {
   if (!value) return null;
   return (
     <span
-      className={`inline-flex shrink-0 items-center rounded border px-1.5 py-px text-[9px] font-bold uppercase tracking-wide ${tone}`}
+      className={`inline-flex shrink-0 items-center rounded border px-1.5 py-px cl-micro font-bold uppercase tracking-wide ${tone}`}
     >
       {diagnosisLabel(value)}
     </span>
@@ -91,14 +91,14 @@ function Select({
 }) {
   return (
     <label className="flex min-w-0 flex-col gap-0.5">
-      <span className="text-[9px] font-bold uppercase tracking-[0.07em] text-slate-500">
+      <span className="cl-micro font-bold uppercase tracking-[0.07em] text-slate-500">
         {label}
       </span>
       <select
         value={value}
         disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
-        className="h-7 min-w-0 rounded border border-slate-300 bg-white px-1.5 text-[11.5px] font-semibold text-slate-800 outline-none focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
+        className="h-7 min-w-0 rounded border border-slate-300 bg-white px-1.5 cl-secondary font-semibold text-slate-800 outline-none focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
       >
         {allowEmpty ? <option value="">—</option> : null}
         {options.map((option) => (
@@ -165,7 +165,7 @@ function FormFields({
         disabled={disabled}
         placeholder="Clinical comment (optional)…"
         onChange={(event) => onChange({ ...form, notes: event.target.value })}
-        className="w-full resize-y rounded border border-slate-300 bg-white px-2 py-1.5 text-[12px] leading-relaxed text-slate-900 caret-emerald-700 outline-none placeholder:text-slate-400 focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600 disabled:cursor-not-allowed disabled:bg-slate-100"
+        className="w-full resize-y rounded border border-slate-300 bg-white px-2 py-1.5 cl-body leading-relaxed text-slate-900 caret-emerald-700 outline-none placeholder:text-slate-400 focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600 disabled:cursor-not-allowed disabled:bg-slate-100"
       />
     </>
   );
@@ -372,7 +372,7 @@ export default function DiagnosisWorkspace({
 
   if (loading && rows.length === 0) {
     return (
-      <p className="py-8 text-center text-xs text-slate-500">Loading diagnoses…</p>
+      <p className="py-8 text-center cl-body text-slate-500">Loading diagnoses…</p>
     );
   }
 
@@ -381,7 +381,7 @@ export default function DiagnosisWorkspace({
       {loadError ? (
         <p
           role="alert"
-          className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] leading-snug text-amber-900"
+          className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 cl-secondary leading-snug text-amber-900"
         >
           {loadError}
         </p>
@@ -390,21 +390,21 @@ export default function DiagnosisWorkspace({
       {actionError ? (
         <p
           role="alert"
-          className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-[11px] leading-snug text-red-900"
+          className="rounded-md border border-red-300 bg-red-50 px-3 py-2 cl-secondary leading-snug text-red-900"
         >
           {actionError}
         </p>
       ) : null}
 
       {!editable ? (
-        <p className="rounded-md border border-slate-300 bg-white px-3 py-2 text-[11px] leading-snug text-slate-700">
+        <p className="rounded-md border border-slate-300 bg-white px-3 py-2 cl-secondary leading-snug text-slate-700">
           This consultation is completed. Its diagnoses are locked.
         </p>
       ) : null}
 
       {/* ---- Recorded diagnoses ---- */}
       {groups.length === 0 ? (
-        <p className="text-[12px] text-slate-500">
+        <p className="cl-body text-slate-500">
           No diagnoses recorded for this consultation.
         </p>
       ) : (
@@ -412,7 +412,7 @@ export default function DiagnosisWorkspace({
           {groups.map((group) => (
             <section key={group.type} className="flex flex-col gap-1">
               <div className="flex items-center gap-2">
-                <h3 className="text-[9px] font-bold uppercase tracking-[0.08em] text-slate-500">
+                <h3 className="cl-micro font-bold uppercase tracking-[0.08em] text-slate-500">
                   {group.label}
                 </h3>
                 <span aria-hidden className="h-px flex-1 bg-slate-200" />
@@ -432,7 +432,7 @@ export default function DiagnosisWorkspace({
                       }`}
                     >
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-slate-900">
+                        <span className="min-w-0 flex-1 truncate cl-body font-semibold text-slate-900">
                           {diseaseLabel(row)}
                         </span>
                         <Badge
@@ -447,12 +447,12 @@ export default function DiagnosisWorkspace({
                           }
                         />
                         {row.severity ? (
-                          <span className="text-[10px] font-semibold text-slate-500">
+                          <span className="cl-meta font-semibold text-slate-500">
                             {diagnosisLabel(row.severity)}
                           </span>
                         ) : null}
                         {row.status ? (
-                          <span className="text-[10px] text-slate-500">
+                          <span className="cl-meta text-slate-500">
                             {diagnosisLabel(row.status)}
                           </span>
                         ) : null}
@@ -467,7 +467,7 @@ export default function DiagnosisWorkspace({
                                 setEditForm(formFromDiagnosis(row));
                                 setConfirmRemoveId(null);
                               }}
-                              className="rounded border border-slate-300 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-600 outline-none hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-emerald-600 disabled:opacity-60"
+                              className="rounded border border-slate-300 px-1.5 py-0.5 cl-micro font-bold uppercase tracking-wide text-slate-600 outline-none hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-emerald-600 disabled:opacity-60"
                             >
                               {isEditing ? "Close" : "Edit"}
                             </button>
@@ -477,14 +477,14 @@ export default function DiagnosisWorkspace({
                                   type="button"
                                   disabled={rowBusy}
                                   onClick={() => void remove(row)}
-                                  className="rounded border border-red-400 bg-red-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-red-800 outline-none hover:bg-red-100 focus-visible:ring-2 focus-visible:ring-red-600 disabled:opacity-60"
+                                  className="rounded border border-red-400 bg-red-50 px-1.5 py-0.5 cl-micro font-bold uppercase tracking-wide text-red-800 outline-none hover:bg-red-100 focus-visible:ring-2 focus-visible:ring-red-600 disabled:opacity-60"
                                 >
                                   {rowBusy ? "Removing…" : "Confirm"}
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => setConfirmRemoveId(null)}
-                                  className="rounded border border-slate-300 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-600 outline-none hover:bg-slate-50"
+                                  className="rounded border border-slate-300 px-1.5 py-0.5 cl-micro font-bold uppercase tracking-wide text-slate-600 outline-none hover:bg-slate-50"
                                 >
                                   Cancel
                                 </button>
@@ -500,7 +500,7 @@ export default function DiagnosisWorkspace({
                                   setConfirmRemoveId(row.id);
                                   setEditingId(null);
                                 }}
-                                className="rounded border border-slate-300 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-600 outline-none hover:border-red-300 hover:bg-red-50 hover:text-red-800 focus-visible:ring-2 focus-visible:ring-red-600 disabled:opacity-60"
+                                className="rounded border border-slate-300 px-1.5 py-0.5 cl-micro font-bold uppercase tracking-wide text-slate-600 outline-none hover:border-red-300 hover:bg-red-50 hover:text-red-800 focus-visible:ring-2 focus-visible:ring-red-600 disabled:opacity-60"
                               >
                                 Remove
                               </button>
@@ -510,7 +510,7 @@ export default function DiagnosisWorkspace({
                       </div>
 
                       {row.notes && !isEditing ? (
-                        <p className="mt-1 whitespace-pre-wrap text-[11px] leading-relaxed text-slate-600">
+                        <p className="mt-1 whitespace-pre-wrap cl-secondary leading-relaxed text-slate-600">
                           {row.notes}
                         </p>
                       ) : null}
@@ -526,7 +526,7 @@ export default function DiagnosisWorkspace({
                             <button
                               type="button"
                               onClick={() => setEditingId(null)}
-                              className="h-7 rounded border border-slate-300 px-2.5 text-[10px] font-bold uppercase tracking-wide text-slate-600 outline-none hover:bg-slate-50"
+                              className="h-7 rounded border border-slate-300 px-2.5 cl-meta font-bold uppercase tracking-wide text-slate-600 outline-none hover:bg-slate-50"
                             >
                               Cancel
                             </button>
@@ -534,7 +534,7 @@ export default function DiagnosisWorkspace({
                               type="button"
                               disabled={rowBusy}
                               onClick={() => void saveEdit(row)}
-                              className="h-7 rounded bg-emerald-700 px-3 text-[10px] font-bold uppercase tracking-wide text-white outline-none hover:bg-emerald-800 focus-visible:ring-2 focus-visible:ring-emerald-700 disabled:bg-slate-200 disabled:text-slate-500"
+                              className="h-7 rounded bg-emerald-700 px-3 cl-meta font-bold uppercase tracking-wide text-white outline-none hover:bg-emerald-800 focus-visible:ring-2 focus-visible:ring-emerald-700 disabled:bg-slate-200 disabled:text-slate-500"
                             >
                               {rowBusy ? "Saving…" : "Save"}
                             </button>
@@ -554,25 +554,25 @@ export default function DiagnosisWorkspace({
       {editable ? (
         <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-2.5 py-2">
           <div className="flex items-center gap-2">
-            <h3 className="text-[9px] font-bold uppercase tracking-[0.08em] text-slate-500">
+            <h3 className="cl-micro font-bold uppercase tracking-[0.08em] text-slate-500">
               Add diagnosis
             </h3>
             <span aria-hidden className="h-px flex-1 bg-slate-200" />
             {searching ? (
-              <span className="text-[9px] text-slate-400">Searching…</span>
+              <span className="cl-micro text-slate-400">Searching…</span>
             ) : null}
           </div>
 
           {picked ? (
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-2">
-                <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-slate-900">
+                <span className="min-w-0 flex-1 truncate cl-body font-semibold text-slate-900">
                   {picked.code ? `${picked.name} (${picked.code})` : picked.name}
                 </span>
                 <button
                   type="button"
                   onClick={() => setPicked(null)}
-                  className="shrink-0 rounded border border-slate-300 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-600 outline-none hover:bg-white"
+                  className="shrink-0 rounded border border-slate-300 px-1.5 py-0.5 cl-micro font-bold uppercase tracking-wide text-slate-600 outline-none hover:bg-white"
                 >
                   Change
                 </button>
@@ -583,7 +583,7 @@ export default function DiagnosisWorkspace({
                   type="button"
                   disabled={addBusy}
                   onClick={() => void add()}
-                  className="h-8 rounded-md bg-emerald-700 px-4 text-[11px] font-bold uppercase tracking-[0.06em] text-white shadow-sm outline-none hover:bg-emerald-800 focus-visible:ring-2 focus-visible:ring-emerald-700 disabled:bg-slate-200 disabled:text-slate-500"
+                  className="h-8 rounded-md bg-emerald-700 px-4 cl-secondary font-bold uppercase tracking-[0.06em] text-white shadow-sm outline-none hover:bg-emerald-800 focus-visible:ring-2 focus-visible:ring-emerald-700 disabled:bg-slate-200 disabled:text-slate-500"
                 >
                   {addBusy ? "Recording…" : "Record diagnosis"}
                 </button>
@@ -596,10 +596,10 @@ export default function DiagnosisWorkspace({
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search the diagnosis catalogue by name or code…"
-                className="h-8 w-full rounded border border-slate-300 bg-white px-2.5 text-[12px] text-slate-900 outline-none placeholder:text-slate-400 focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600"
+                className="h-8 w-full rounded border border-slate-300 bg-white px-2.5 cl-body text-slate-900 outline-none placeholder:text-slate-400 focus-visible:border-emerald-600 focus-visible:ring-1 focus-visible:ring-emerald-600"
               />
               {searchTerm.length >= 2 && visibleResults.length === 0 && !searching ? (
-                <p className="text-[11px] text-slate-500">No matching diagnosis.</p>
+                <p className="cl-secondary text-slate-500">No matching diagnosis.</p>
               ) : null}
               {visibleResults.length > 0 ? (
                 <ul className="max-h-52 overflow-y-auto rounded border border-slate-200 bg-white">
@@ -610,11 +610,11 @@ export default function DiagnosisWorkspace({
                         onClick={() => setPicked(disease)}
                         className="flex w-full items-baseline gap-2 border-b border-slate-100 px-2.5 py-1.5 text-left outline-none last:border-b-0 hover:bg-emerald-50/70 focus-visible:bg-emerald-50"
                       >
-                        <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-slate-800">
+                        <span className="min-w-0 flex-1 truncate cl-body font-semibold text-slate-800">
                           {disease.name}
                         </span>
                         {disease.code ? (
-                          <span className="shrink-0 font-mono text-[10px] text-slate-500">
+                          <span className="shrink-0 font-mono cl-meta text-slate-500">
                             {disease.code}
                           </span>
                         ) : null}
@@ -624,7 +624,7 @@ export default function DiagnosisWorkspace({
                 </ul>
               ) : null}
               {truncated && visibleResults.length > 0 ? (
-                <p className="text-[9px] text-slate-400">
+                <p className="cl-micro text-slate-400">
                   Showing the first matches only. Refine your search to narrow it.
                 </p>
               ) : null}

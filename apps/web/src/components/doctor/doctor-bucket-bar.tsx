@@ -105,14 +105,14 @@ export default function DoctorBucketBar({
               }`}
             >
               <span
-                className={`text-[9px] font-bold uppercase tracking-[0.08em] ${
+                className={`cl-micro font-bold uppercase tracking-[0.08em] ${
                   selected ? tone.text : ""
                 }`}
               >
                 {bucket.label}
               </span>
               <span
-                className={`text-[15px] font-bold leading-none tabular-nums ${
+                className={`cl-head font-bold leading-none tabular-nums ${
                   selected ? tone.text : "text-slate-600"
                 }`}
               >
@@ -153,7 +153,7 @@ export default function DoctorBucketBar({
             {(["wait", "review", "open", "finished"] as const).map((key) => (
               <span
                 key={key}
-                className="flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wide text-slate-500"
+                className="flex items-center gap-1 cl-micro font-semibold uppercase tracking-wide text-slate-500"
               >
                 <span
                   aria-hidden

@@ -81,7 +81,7 @@ export default function OrdersWorkspace({
               type="button"
               aria-current={kind === entry.key ? "page" : undefined}
               onClick={() => setKind(entry.key)}
-              className={`-mb-px border-b-2 px-2 py-1.5 text-[10.5px] font-bold uppercase tracking-[0.07em] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-emerald-600 ${
+              className={`-mb-px border-b-2 px-2 py-1.5 cl-meta font-bold uppercase tracking-[0.07em] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-emerald-600 ${
                 kind === entry.key
                   ? "border-emerald-600 text-slate-900"
                   : "border-transparent text-slate-500 hover:text-slate-800"
@@ -93,7 +93,7 @@ export default function OrdersWorkspace({
             <span
               key={entry.key}
               title="Arrives in a later clinical slice"
-              className="cursor-default border-b-2 border-transparent px-2 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-slate-400"
+              className="cursor-default border-b-2 border-transparent px-2 py-1.5 cl-meta font-semibold uppercase tracking-[0.07em] text-slate-400"
             >
               {entry.label}
             </span>
