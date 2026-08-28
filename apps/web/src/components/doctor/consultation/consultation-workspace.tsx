@@ -45,6 +45,7 @@ import { PriorityBadge, StageBadge } from "../doctor-badges";
 import DoctorVitalsGrid from "../doctor-vitals-grid";
 import DiagnosisWorkspace from "./diagnosis-workspace";
 import OrdersWorkspace from "./orders-workspace";
+import ResultsWorkspace from "./results-workspace";
 import ConsultationNoteEditor from "./note-editor";
 import NoteEditorModal from "./note-editor-modal";
 import { ConsultationOrderDraftProvider } from "./order-draft-context";
@@ -753,6 +754,19 @@ export default function ConsultationWorkspace({
              patient change must not carry one patient's orders onto another's
              screen. */
           <OrdersWorkspace key={appointmentId} appointmentId={appointmentId} />
+        ) : section === "results" ? (
+          /*
+            Keyed on the visit, like every other section, and mounted only
+            while RESULTS is open -- which is what makes opening the tab
+            refetch. That is the honest behaviour for a queue another
+            department is working: a result the doctor left ten minutes ago may
+            well have landed, and a stale card is worse than a brief spinner.
+
+            READ-ONLY, and unconditionally so: it is rendered the same way for
+            a completed consultation as for an open one, because chasing a
+            result is precisely what a doctor does after the visit finishes.
+          */
+          <ResultsWorkspace key={appointmentId} appointmentId={appointmentId} />
         ) : section === "diagnosis" ? (
           /*
             Keyed on the visit so a patient change cannot carry one patient's

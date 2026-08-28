@@ -4,7 +4,7 @@ import type { DoctorQueueStage } from "@/types/doctor";
 /**
  * COLOUR CARRIES ONE MEANING EACH, and selection is not one of them.
  *
- * emerald = ready / cleared / satisfied
+ * emerald = the thing you were waiting for is here (ready / cleared / arrived)
  * amber   = something is owed or missing
  * cyan    = triage in flight
  * indigo  = consultation under way
@@ -33,8 +33,17 @@ const BADGE_BASE =
 /**
  * The AUTHORITATIVE queue stage: hospital.appointment.front_desk_stage.
  *
- * Emerald is reserved for ready_doctor, and this is the only badge on the desk
- * allowed to render it -- the one state that means "you may see this patient".
+ * Emerald is reserved for ready_doctor, the one QUEUE state that means "you may
+ * see this patient", and no other stage may take it.
+ *
+ * Slice 7B gives emerald a second home outside the queue: RESULT AVAILABLE on
+ * the Results tab, which is the same meaning one step further along -- the
+ * thing you were waiting for has arrived. The two never contend, because a
+ * visit still in ready_doctor has no consultation and therefore no results,
+ * and the stages that do coexist with results (in_consultation, completed) are
+ * indigo and slate. Stated here rather than left implicit, so the next person
+ * to reach for emerald finds the rule instead of guessing at it.
+ *
  * The wording is the operator's, not the schema's: a doctor reads
  * "Ready for doctor", not "ready_doctor".
  */

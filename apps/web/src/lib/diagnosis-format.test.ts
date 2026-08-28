@@ -68,12 +68,16 @@ test("note and diagnosis are the live sections after slice 2", () => {
   assert.equal(isLiveSection("diagnosis"), true);
 });
 
-test("results and history remain inert", () => {
-  // `orders` left this list in slice 3, when laboratory ordering shipped. The
-  // remaining two are the sections that still have no endpoint behind them.
-  for (const key of ["results", "history"]) {
-    assert.equal(isLiveSection(key), false, key);
-  }
+test("history remains inert", () => {
+  // `orders` left this list in slice 3 when laboratory ordering shipped, and
+  // `results` left it in slice 7B. History is the one section that still has
+  // no endpoint and no model behind it, so it stays honest text rather than a
+  // control that looks pressable and does nothing.
+  assert.equal(isLiveSection("history"), false);
+});
+
+test("results is live now that it has an endpoint behind it", () => {
+  assert.equal(isLiveSection("results"), true);
 });
 
 test("an unknown section key is never live", () => {

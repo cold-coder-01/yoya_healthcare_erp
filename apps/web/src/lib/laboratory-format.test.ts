@@ -81,9 +81,9 @@ test("orders is live after slice 3, alongside note and diagnosis", () => {
   assert.equal(isLiveSection("orders"), true);
 });
 
-test("results and history remain inert", () => {
-  assert.equal(isLiveSection("results"), false);
+test("history remains inert, and results went live in slice 7B", () => {
   assert.equal(isLiveSection("history"), false);
+  assert.equal(isLiveSection("results"), true);
 });
 
 test("the section bar keeps its clinical order", () => {

@@ -20,7 +20,7 @@ export const CONSULTATION_SECTIONS = [
   { key: "note", label: "Note", live: true },
   { key: "diagnosis", label: "Diagnosis", live: true },
   { key: "orders", label: "Orders", live: true },
-  { key: "results", label: "Results", live: false },
+  { key: "results", label: "Results", live: true },
   { key: "history", label: "History", live: false },
 ] as const;
 

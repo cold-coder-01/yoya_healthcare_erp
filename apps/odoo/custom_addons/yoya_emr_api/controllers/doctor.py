@@ -112,6 +112,9 @@ from ..services.radiology_serializers import (
     serialize_radiology_exam,
     serialize_radiology_orders,
 )
+from ..services.result_serializers import (
+    serialize_results,
+)
 from ..services.medication_serializers import (
     CATALOGUE_DEFAULT_LIMIT as MED_CATALOGUE_DEFAULT_LIMIT,
     CATALOGUE_MAX_LIMIT as MED_CATALOGUE_MAX_LIMIT,
@@ -2183,6 +2186,60 @@ class YoyaEmrDoctorController(http.Controller):
                 "limit": limit,
                 "truncated": len(exams) == limit,
             }
+        )
+
+    # ------------------------------------------------------------------
+    # 21. Consultation results -- read (Laboratory + Radiology)
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>/results",
+        type="http", auth="user", methods=["GET"], csrf=False,
+    )
+    @doctor_endpoint
+    def results_review(self, appointment_id, **params):
+        """Released laboratory and radiology findings for this visit.
+
+        THE ONLY VERB IS GET, and that is the whole design. Reporting,
+        validating and releasing belong to the laboratory and the imaging
+        department; the Doctor Desk reviews what they have handed off and can
+        do nothing else to it. There is no acknowledge route, no reviewed
+        flag and no sign-off, because no model records any of those and an
+        endpoint would be asserting something no record supports.
+
+        BOTH SERVICES IN ONE PAYLOAD. The Results tab always renders
+        laboratory and radiology together, so splitting them would buy two
+        round trips, two loading states and two failure modes for one screen.
+
+        KEYED ON THE CONSULTATION, NOT THE APPOINTMENT STATE -- and here that
+        matters more than anywhere else in this controller. Chasing a result is
+        precisely what a doctor does AFTER the visit is finished: laboratory
+        and imaging routinely outlive the consultation that ordered them, and
+        Slice 4's completion policy explicitly does not wait for either. A
+        completed consultation, a done appointment and a closed encounter all
+        keep reading here.
+
+        NO SUDO, ANYWHERE. Requests are found through the caller's own record
+        rules and results are reached through request.result_ids, so Slice 7A's
+        laboratory-result rules and Slice 5's radiology-result rules are the
+        security boundary. A doctor sees the results of their own visits
+        because the ORM says so, not because this function filtered.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+
+        appointment = _load_visit(env, appointment_id)
+        consultation = env["hospital.consultation"].find_for_appointment(appointment)
+        if not consultation:
+            # A visit that never opened a consultation ordered nothing, so it
+            # has nothing to report. An empty payload, exactly as the orders
+            # endpoints answer -- not a 404 for a visit the doctor can see.
+            return success_response({"laboratory": [], "radiology": []})
+
+        return success_response(
+            serialize_results(
+                env["hospital.laboratory.request"].for_consultation(consultation),
+                env["hospital.radiology.request"].for_consultation(consultation),
+            )
         )
 
     # ------------------------------------------------------------------
