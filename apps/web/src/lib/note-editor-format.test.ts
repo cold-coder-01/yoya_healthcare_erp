@@ -33,15 +33,23 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  DIAGNOSIS_IDLE_TEXT,
   EMPTY_SECTION_TEXT,
+  NOTE_EDITOR_OPEN_TEXT,
+  NOTE_IDLE_TEXT,
+  ORDERS_IDLE_TEXT,
+  activeNoteField,
   closeIntent,
+  consultationIdleText,
   escapeIntent,
   isDocumented,
   isSaveShortcut,
+  isStaleNoteSelection,
   previewText,
   sectionActionLabel,
   shouldCloseAfterSave,
 } from "./note-editor-format.ts";
+import { NOTE_FIELDS } from "./consultation-format.ts";
 
 const OPEN = { readOnly: false, changed: false, busy: false };
 
@@ -239,4 +247,152 @@ test("a REFUSED save leaves the editor open", () => {
     sentence is shown above the buttons.
   */
   assert.equal(shouldCloseAfterSave(false), false);
+});
+
+/* ------------------------------------------------------------------ *
+ * WHICH EDITOR IS OPEN -- the invariant, as one resolution
+ *
+ * THE DEFECT THIS SECTION EXISTS FOR. The desk could sit in a state equivalent
+ * to "a note section is open" while NO editor was mounted: the command bar said
+ * "Note open for editing" and there was nothing on screen to close. Resolving
+ * the open section ONCE, and reading the modal's gate and the footer's sentence
+ * off that same value, is what makes the two facts the same fact.
+ * ------------------------------------------------------------------ */
+
+test("no section selected resolves to no open editor", () => {
+  assert.equal(activeNoteField(null, NOTE_FIELDS), null);
+  assert.equal(activeNoteField(undefined, NOTE_FIELDS), null);
+  // An empty string is not a section either, and must not resolve to fields[0].
+  assert.equal(activeNoteField("", NOTE_FIELDS), null);
+});
+
+test("opening a section resolves to that field's descriptor", () => {
+  const field = activeNoteField("assessment", NOTE_FIELDS);
+  assert.ok(field, "assessment did not resolve to an editable field");
+  assert.equal(field.key, "assessment");
+  assert.equal(field.label, "Assessment");
+});
+
+test("every writable section can be opened", () => {
+  // A field the save path knows about but the resolver does not would be a
+  // section that silently refuses to open.
+  for (const known of NOTE_FIELDS) {
+    const field = activeNoteField(known.key, NOTE_FIELDS);
+    assert.ok(field, `${known.key} does not resolve`);
+    assert.equal(field.key, known.key);
+  }
+});
+
+test("an unknown section opens nothing", () => {
+  // Not a throw: a key the save payload cannot carry is a section that must not
+  // be opened, and null is what the staleness check then reports.
+  assert.equal(activeNoteField("vital_signs", NOTE_FIELDS), null);
+  assert.equal(activeNoteField("diagnosis", NOTE_FIELDS), null);
+});
+
+test("a selection that resolves to no field is STALE", () => {
+  // THE hidden state, named. The render gate is closed while the selection is
+  // still set -- the workspace normalises this to null on sight.
+  assert.equal(isStaleNoteSelection("vital_signs", null), true);
+});
+
+test("no selection is never stale, so the normaliser cannot loop", () => {
+  /*
+    The property that keeps the defensive effect safe. After it writes null the
+    predicate is false, so the re-render it caused does nothing -- which is the
+    difference between a backstop and a render loop.
+  */
+  assert.equal(isStaleNoteSelection(null, null), false);
+  assert.equal(isStaleNoteSelection(undefined, null), false);
+  assert.equal(isStaleNoteSelection("", null), false);
+});
+
+test("a selection that DID resolve is not stale", () => {
+  const field = activeNoteField("plan", NOTE_FIELDS);
+  assert.equal(isStaleNoteSelection("plan", field), false);
+});
+
+test("resolution and staleness are exhaustive: a set section either opens or is cleared", () => {
+  /*
+    The invariant stated as a law rather than as cases: for ANY selection, the
+    editor is mounted or the selection is reported stale, never neither. That is
+    what makes "no modal visible" and "nothing open" the same state.
+  */
+  for (const key of [
+    ...NOTE_FIELDS.map((field) => field.key as string),
+    "vital_signs",
+    "diagnosis",
+    "orders",
+    "assessment ",
+  ]) {
+    const resolved = activeNoteField(key, NOTE_FIELDS);
+    const stale = isStaleNoteSelection(key, resolved);
+    assert.notEqual(
+      resolved !== null,
+      stale,
+      `${key}: mounted and stale must be opposites, never both or neither`,
+    );
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * The command bar's sentence
+ * ------------------------------------------------------------------ */
+
+test("the command bar says an editor is open ONLY when one is", () => {
+  // THE DEFECT, as a single assertion. The footer used to say this whenever the
+  // NOTE tab was idle, with nothing mounted behind the words.
+  assert.equal(
+    consultationIdleText({ section: "note", editorOpen: true }),
+    NOTE_EDITOR_OPEN_TEXT,
+  );
+  assert.notEqual(
+    consultationIdleText({ section: "note", editorOpen: false }),
+    NOTE_EDITOR_OPEN_TEXT,
+  );
+});
+
+test("NO section can claim an open editor while none is mounted", () => {
+  for (const section of ["note", "diagnosis", "orders", "results", "history"]) {
+    assert.notEqual(
+      consultationIdleText({ section, editorOpen: false }),
+      NOTE_EDITOR_OPEN_TEXT,
+      section,
+    );
+  }
+});
+
+test("the idle note tab describes a record to read, not an open editor", () => {
+  assert.equal(
+    consultationIdleText({ section: "note", editorOpen: false }),
+    NOTE_IDLE_TEXT,
+  );
+  assert.equal(NOTE_IDLE_TEXT, "Select a section to write your note");
+});
+
+test("the diagnosis and orders sentences are unchanged", () => {
+  // They were already true of the section rather than of editor state, so this
+  // fix must not have touched them.
+  assert.equal(
+    consultationIdleText({ section: "diagnosis", editorOpen: false }),
+    DIAGNOSIS_IDLE_TEXT,
+  );
+  assert.equal(DIAGNOSIS_IDLE_TEXT, "Diagnoses save as you record them");
+  assert.equal(
+    consultationIdleText({ section: "orders", editorOpen: false }),
+    ORDERS_IDLE_TEXT,
+  );
+  assert.equal(ORDERS_IDLE_TEXT, "Orders are placed one at a time");
+});
+
+test("an open editor outranks the section, because it is the more specific truth", () => {
+  // The modal covers the command bar, so this is rarely read -- but a sentence
+  // that is true regardless of which tab is behind it cannot go stale.
+  for (const section of ["note", "diagnosis", "orders"]) {
+    assert.equal(
+      consultationIdleText({ section, editorOpen: true }),
+      NOTE_EDITOR_OPEN_TEXT,
+      section,
+    );
+  }
 });

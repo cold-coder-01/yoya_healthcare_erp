@@ -7,12 +7,19 @@ import { formatHospitalTime } from "@/lib/clinical-format";
 import {
   NOTE_FIELDS,
   buildSavePayload,
+  completeDisabledReason,
   draftFromConsultation,
   hasUnsavedChanges,
   isEmptySave,
+  mayCompleteConsultation,
 } from "@/lib/consultation-format";
 import { CONSULTATION_SECTIONS } from "@/lib/diagnosis-format";
 import type { ConsultationSection } from "@/lib/diagnosis-format";
+import {
+  activeNoteField,
+  consultationIdleText,
+  isStaleNoteSelection,
+} from "@/lib/note-editor-format";
 import {
   bloodPressureText,
   compactGender,
@@ -284,8 +291,37 @@ export default function ConsultationWorkspace({
   const editable = Boolean(consultation?.editable);
 
   /* ---------------- focused note editor ---------------- */
+  /*
+    THE OPEN EDITOR, RESOLVED ONCE.
+
+    This single value is what the modal's render gate, the command bar's
+    sentence and the staleness check all read. "An editor is open" and "the
+    modal is mounted" are therefore the SAME expression rather than two
+    derivations that can disagree -- and their disagreement had exactly one
+    visible shape: a command bar announcing an open editor with nothing on
+    screen to close.
+
+    Resolved from NOTE_FIELDS -- the same list the save payload is built from --
+    so a section can never be opened for a field the save path does not know
+    about.
+  */
+  const openField = activeNoteField(openSection, NOTE_FIELDS);
+  const editorOpen = openField !== null;
+
+  /*
+    NORMALISED AT THE SOURCE, which is why no effect is needed downstream.
+
+    The selection is refused unless it resolves to a field the render gate will
+    actually mount, so `openSection` can never hold a value that makes the
+    workspace think an editor is open while none is. An effect that cleared the
+    bad value afterwards would be a repair for a state this simply cannot enter
+    -- and would call setState from an effect body to do it.
+  */
   const openNoteSection = useCallback(
     (field: ConsultationNarrativeField, origin: HTMLButtonElement) => {
+      if (isStaleNoteSelection(field, activeNoteField(field, NOTE_FIELDS))) {
+        return;
+      }
       noteOriginRef.current = origin;
       setOpenSection(field);
     },
@@ -306,6 +342,19 @@ export default function ConsultationWorkspace({
       requestAnimationFrame(() => origin.focus());
     }
   }, []);
+
+  /*
+    WHY THERE IS NO NORMALISING EFFECT HERE, and why the invariant still holds.
+
+    "No modal visible" and "nothing open" are not two states kept in step; they
+    are one derivation, `openField`, read by the render gate and by the command
+    bar alike. The selection can only be SET to a resolvable field (above) and
+    can only be CLEARED through `closeNoteSection` (below), which every exit --
+    Save & close, Cancel, the X, Escape, the backdrop and the read-only
+    viewer's Close -- routes through. There is no third writer and no second
+    exit, so there is nothing for an effect to repair, and no setState in an
+    effect body to cascade a render off.
+  */
 
   const onFieldChange = useCallback(
     (field: ConsultationNarrativeField, value: string) => {
@@ -438,8 +487,23 @@ export default function ConsultationWorkspace({
     endpoint; this refuses to offer the action in the first place.
   */
   const completeBlockedByDraft = dirty || status === "saving";
-  const mayComplete =
-    editable && canComplete && !completeBlockedByDraft && !noteLoading;
+  /*
+    The gate itself now lives in consultation-format, where a test enumerates
+    its whole input surface. `editorOpen` is deliberately NOT among those
+    inputs: which section the doctor has open on screen is presentation, and
+    the question that actually matters -- whether their words reached Odoo --
+    is `dirty`. Adding an editor flag here is how a piece of view state becomes
+    able to make a documented consultation uncompletable.
+  */
+  const completeState = {
+    editable,
+    canComplete,
+    dirty,
+    saving: status === "saving",
+    loading: noteLoading,
+  };
+  const mayComplete = mayCompleteConsultation(completeState);
+  const completeReason = completeDisabledReason({ ...completeState, blockers });
 
   const complete = useCallback(async () => {
     if (!consultation || !editable || completeBlockedByDraft) return;
@@ -507,14 +571,6 @@ export default function ConsultationWorkspace({
 
   const { patient, triage, medical_alerts: alerts, visit, encounter } = detail;
   const problem = status === "conflict" || status === "error";
-  /*
-    The open section's descriptor, or null. Resolved from NOTE_FIELDS -- the
-    same list the save payload is built from -- so a section can never be opened
-    for a field the save path does not know about.
-  */
-  const openField = openSection
-    ? (NOTE_FIELDS.find((field) => field.key === openSection) ?? null)
-    : null;
 
   return (
     /*
@@ -792,17 +848,31 @@ export default function ConsultationWorkspace({
           to its own stable code, so the desk never guesses at a rule it does
           not own.
         */}
-        {editable && blockers.length && !completeBlockedByDraft ? (
+        {editable && !canComplete && !completeBlockedByDraft && !noteLoading ? (
           <ul className="mb-2 space-y-0.5 rounded-md border border-slate-300 bg-slate-50 px-2.5 py-1.5">
-            {blockers.map((blocker) => (
+            {(blockers.length
+              ? blockers.map((blocker) => ({
+                  key: blocker.code as string,
+                  message: blocker.message,
+                }))
+              : /*
+                  THE HOLE THIS BRANCH CLOSES. A verdict of can_complete:false
+                  carrying an EMPTY blocker list used to render nothing at all:
+                  the list needed `blockers.length`, and the button's tooltip
+                  needed it too. The doctor got a grey button and no sentence
+                  anywhere. The wording is this desk's, and says so -- it is the
+                  only sentence here the server did not write.
+                */
+                [{ key: "not_cleared", message: completeReason ?? "" }]
+            ).map((item) => (
               <li
-                key={blocker.code}
+                key={item.key}
                 className="flex items-start gap-1.5 cl-secondary leading-snug text-slate-700"
               >
                 <span aria-hidden className="mt-px text-slate-400">
                   •
                 </span>
-                {blocker.message}
+                {item.message}
               </li>
             ))}
           </ul>
@@ -865,12 +935,19 @@ export default function ConsultationWorkspace({
                 ) : null}
               </>
             ) : editable ? (
+              /*
+                THE SENTENCE IS BOUND TO THE MODAL'S OWN RENDER GATE.
+
+                The open-editor sentence used to be the NOTE tab's STATIC idle
+                text, so the desk announced an editor whenever the note simply
+                sat there clean -- indistinguishable, to a doctor reading the
+                footer, from an editor stuck open behind nothing. It is now said
+                only when `editorOpen` is true, and `editorOpen` is the same
+                value that mounts the modal below. The wording itself lives in
+                note-editor-format, so it cannot be restated here by hand.
+              */
               <span className="text-slate-500">
-                {section === "diagnosis"
-                  ? "Diagnoses save as you record them"
-                  : section === "orders"
-                    ? "Orders are placed one at a time"
-                    : "Note open for editing"}
+                {consultationIdleText({ section, editorOpen })}
               </span>
             ) : (
               <span className="text-slate-500">Read-only</span>
@@ -913,13 +990,13 @@ export default function ConsultationWorkspace({
                   setCompleteStatus("confirming");
                 }}
                 disabled={!mayComplete || completeStatus !== "idle"}
-                title={
-                  completeBlockedByDraft
-                    ? "Save your note before completing the consultation."
-                    : !canComplete && blockers.length
-                      ? blockers[0].message
-                      : undefined
-                }
+                /*
+                  ALWAYS NAMES A REASON WHEN IT IS GREY. The previous expression
+                  fell through to `undefined` when the server said
+                  can_complete:false with an EMPTY blocker list -- a dead button
+                  with no list, no tooltip and no sentence anywhere on screen.
+                */
+                title={completeReason ?? undefined}
                 className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-emerald-700 px-4 cl-secondary font-bold uppercase tracking-[0.06em] text-white shadow-sm outline-none transition-colors hover:bg-emerald-800 focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none"
               >
                 {completeStatus === "completing" ? (

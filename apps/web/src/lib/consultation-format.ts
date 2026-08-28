@@ -12,6 +12,7 @@
 // make this module untestable under `npm test`. The field list is therefore
 // restated below rather than imported, and a test pins the two together.
 import type {
+  ConsultationBlocker,
   ConsultationDraft,
   ConsultationNarrativeField,
   ConsultationSaveRequest,
@@ -162,6 +163,74 @@ export function buildSavePayload(
 /** True when a save would send nothing but the version. */
 export function isEmptySave(payload: ConsultationSaveRequest) {
   return Object.keys(payload).length === 1;
+}
+
+/* ------------------------------------------------------------------ *
+ * The Complete gate
+ * ------------------------------------------------------------------ */
+
+/**
+ * WHETHER THE DESK MAY OFFER COMPLETION. Five conditions, in one place.
+ *
+ * `canComplete` IS THE SERVER'S VERDICT AND IS NEVER RE-DERIVED HERE. It comes
+ * from hospital.consultation.completion_blockers(), which action_complete()
+ * enforces a moment later; a local re-derivation would eventually enable a
+ * button the server refuses. The other four are strictly LOCAL refusals that
+ * only ever narrow the offer:
+ *
+ *   editable  the consultation is still a draft, per the server
+ *   dirty     unsaved text would be frozen out of existence -- completion
+ *             writes no clinical content, which is why it does not auto-save
+ *   saving    a write is in flight; completing over it races the response
+ *   loading   the verdict on screen has not been read yet
+ *
+ * NOTHING ABOUT AN OPEN EDITOR APPEARS HERE, deliberately. Which section the
+ * doctor has open is presentation; whether their words reached Odoo is
+ * `dirty`, and that is the condition worth blocking on.
+ */
+export function mayCompleteConsultation(state: {
+  editable: boolean;
+  canComplete: boolean;
+  dirty: boolean;
+  saving: boolean;
+  loading: boolean;
+}): boolean {
+  return (
+    state.editable &&
+    state.canComplete &&
+    !state.dirty &&
+    !state.saving &&
+    !state.loading
+  );
+}
+
+/**
+ * WHY THE BUTTON IS GREY, in the doctor's own words. Null when it is not.
+ *
+ * A disabled control with no explanation is the single most common way a
+ * clinician loses time on a form, and the desk had one reachable hole: a server
+ * verdict of `can_complete: false` carrying an EMPTY blocker list rendered no
+ * list, no tooltip and no sentence anywhere -- a dead button and no stated
+ * reason. That last branch closes it.
+ *
+ * The blocker sentences are the SERVER's, reproduced verbatim. This invents a
+ * sentence only for the local refusals the server has no opinion about.
+ */
+export function completeDisabledReason(state: {
+  editable: boolean;
+  canComplete: boolean;
+  dirty: boolean;
+  saving: boolean;
+  loading: boolean;
+  blockers: readonly ConsultationBlocker[];
+}): string | null {
+  if (mayCompleteConsultation(state)) return null;
+  if (!state.editable) return "This consultation is already completed.";
+  if (state.saving) return "Wait for the note to finish saving.";
+  if (state.dirty) return "Save your note before completing the consultation.";
+  if (state.loading) return "Loading the consultation note…";
+  if (state.blockers.length) return state.blockers[0].message;
+  return "The consultation is not yet cleared for completion. Reload the note to re-check.";
 }
 
 /**

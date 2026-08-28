@@ -39,8 +39,10 @@ import {
   statLabel,
 } from "./doctor-format.ts";
 import {
+  completeDisabledReason,
   isConsultationMode,
   isConsultationVisible,
+  mayCompleteConsultation,
 } from "./consultation-format.ts";
 
 /* ------------------------------------------------------------------ *
@@ -69,11 +71,14 @@ const envelope = (
 /*
   THE GATE, RESTATED EXACTLY AS THE WORKSPACE APPLIES IT.
 
-  Kept as one expression so the rule is testable without mounting React. It
-  mirrors `mayComplete` in consultation-workspace.tsx; if that changes, this
-  has to change with it, which is the point of pinning it.
+  This used to be the only copy, and a restatement can drift from the component
+  it describes without either failing. The rule now lives in
+  consultation-format as `mayCompleteConsultation`, which the workspace calls
+  directly; this restatement is kept solely so a test below can assert the two
+  agree across every combination of inputs. If they diverge, that test fails
+  rather than the restatement quietly certifying the wrong rule.
 */
-function mayComplete(input: {
+function mayCompleteRestated(input: {
   editable: boolean;
   canComplete: boolean;
   dirty: boolean;
@@ -88,6 +93,9 @@ function mayComplete(input: {
     !input.loading
   );
 }
+
+/** The rule the button actually reads. */
+const mayComplete = mayCompleteConsultation;
 
 /* ------------------------------------------------------------------ *
  * Buckets
@@ -201,6 +209,135 @@ test("complete is refused when the server reports a blocker", () => {
 
 test("complete is refused on an already-completed consultation", () => {
   assert.equal(mayComplete({ ...open, editable: false }), false);
+});
+
+test("the shipped gate and the restated rule agree in EVERY combination", () => {
+  /*
+    32 states, exhaustively. The workspace calls mayCompleteConsultation; this
+    file describes the rule in prose above. Enumerating the whole space is what
+    stops the two being separately true.
+  */
+  for (const editable of [true, false]) {
+    for (const canComplete of [true, false]) {
+      for (const dirty of [true, false]) {
+        for (const saving of [true, false]) {
+          for (const loading of [true, false]) {
+            const state = { editable, canComplete, dirty, saving, loading };
+            assert.equal(
+              mayCompleteConsultation(state),
+              mayCompleteRestated(state),
+              JSON.stringify(state),
+            );
+          }
+        }
+      }
+    }
+  }
+});
+
+test("the gate takes NO input describing an open editor", () => {
+  /*
+    THE DEFECT THIS PINS. A stale "a note section is open" flag must never be
+    able to block completion: it is presentation, and the condition that
+    actually matters -- whether the doctor's words reached Odoo -- is `dirty`.
+    The gate's whole input surface is these five keys, so there is nowhere for
+    an editor flag to be added without this failing.
+  */
+  assert.deepEqual(Object.keys(open).sort(), [
+    "canComplete",
+    "dirty",
+    "editable",
+    "loading",
+    "saving",
+  ]);
+});
+
+test("a clean note with a satisfied server verdict completes, editor state or not", () => {
+  // The UAT case: assessment documented, primary diagnosis recorded, nothing
+  // unsaved. Nothing on the desk may hold this back.
+  assert.equal(mayCompleteConsultation(open), true);
+});
+
+/* ------------------------------------------------------------------ *
+ * WHY the button is grey -- it must always say
+ * ------------------------------------------------------------------ */
+
+test("an offerable completion has no disabled reason", () => {
+  assert.equal(completeDisabledReason({ ...open, blockers: [] }), null);
+});
+
+test("the server's own sentence is reproduced verbatim", () => {
+  const blockers: ConsultationBlocker[] = [
+    { code: "no_primary_diagnosis", message: "Mark one diagnosis as primary." },
+  ];
+  assert.equal(
+    completeDisabledReason({ ...open, canComplete: false, blockers }),
+    "Mark one diagnosis as primary.",
+  );
+});
+
+test("a REFUSED verdict with an EMPTY blocker list still names a reason", () => {
+  /*
+    THE HOLE THIS CLOSES. can_complete:false with no blockers used to render
+    nothing at all -- the list needed blockers.length and so did the tooltip --
+    leaving a dead button and no sentence anywhere on screen. That is
+    indistinguishable, to the doctor, from the desk being broken.
+  */
+  const reason = completeDisabledReason({
+    ...open,
+    canComplete: false,
+    blockers: [],
+  });
+  assert.ok(reason, "a refused completion explained nothing");
+  assert.match(reason, /not yet cleared/i);
+});
+
+test("unsaved text is named ahead of any server blocker", () => {
+  // It is the one the doctor can act on immediately, and acting on it may clear
+  // the others -- saving an assessment satisfies assessment_missing.
+  const blockers: ConsultationBlocker[] = [
+    { code: "assessment_missing", message: "Record your assessment." },
+  ];
+  assert.equal(
+    completeDisabledReason({ ...open, dirty: true, canComplete: false, blockers }),
+    "Save your note before completing the consultation.",
+  );
+});
+
+test("a completed consultation says so rather than listing blockers", () => {
+  assert.match(
+    completeDisabledReason({ ...open, editable: false, blockers: [] }) ?? "",
+    /already completed/i,
+  );
+});
+
+test("every refused state produces a sentence, and every allowed state none", () => {
+  // The two halves of the same property: grey always explains itself, and an
+  // enabled button never carries a reason it cannot mean.
+  for (const editable of [true, false]) {
+    for (const canComplete of [true, false]) {
+      for (const dirty of [true, false]) {
+        for (const saving of [true, false]) {
+          for (const loading of [true, false]) {
+            const state = {
+              editable,
+              canComplete,
+              dirty,
+              saving,
+              loading,
+              blockers: [],
+            };
+            const reason = completeDisabledReason(state);
+            assert.equal(
+              reason === null,
+              mayCompleteConsultation(state),
+              JSON.stringify(state),
+            );
+          }
+        }
+      }
+    }
+  }
 });
 
 /* ------------------------------------------------------------------ *

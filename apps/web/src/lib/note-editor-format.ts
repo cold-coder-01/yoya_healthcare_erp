@@ -113,3 +113,90 @@ export function shouldCloseAfterSave(saveSucceeded: boolean): boolean {
 export function sectionActionLabel(readOnly: boolean): "Read" | "Edit" {
   return readOnly ? "Read" : "Edit";
 }
+
+/* ------------------------------------------------------------------ *
+ * WHICH EDITOR IS OPEN -- resolved ONCE, for every consumer
+ * ------------------------------------------------------------------ */
+
+/**
+ * The field descriptor for the open section, or null when nothing is open.
+ *
+ * THE INVARIANT THIS FUNCTION EXISTS TO ENFORCE. The workspace holds the open
+ * section as a KEY, but the modal needs a DESCRIPTOR (label, placeholder) and
+ * the command bar needs a BOOLEAN. Resolving the key in each place separately
+ * is how the three drift apart -- and the drift has exactly one visible shape:
+ * a footer announcing "Note open for editing" with no editor on screen.
+ *
+ * So the resolution happens here, once, and the render gate, the footer
+ * sentence and the staleness check are all read off the SAME value. "An editor
+ * is open" and "the modal is mounted" then cannot be different facts, because
+ * they are the same expression.
+ *
+ * Returns null for an unknown key rather than throwing: a key the save path
+ * does not recognise is a section that must not be opened, and null is what
+ * `isStaleNoteSelection` then reports.
+ */
+export function activeNoteField<Field extends { key: string }>(
+  openSection: string | null | undefined,
+  fields: readonly Field[],
+): Field | null {
+  if (!openSection) return null;
+  return fields.find((field) => field.key === openSection) ?? null;
+}
+
+/**
+ * Whether a section is selected that resolves to NO editor.
+ *
+ * The one way the selection and the rendered modal could disagree: a key set
+ * that `activeNoteField` cannot resolve, leaving the render gate closed while
+ * the selection is still non-null. That is the hidden "open for editing" state.
+ *
+ * USED AS A GUARD, NOT AS A REPAIR. The workspace asks this BEFORE writing the
+ * selection and refuses the write, so the state is never entered rather than
+ * cleared afterwards -- which also means no effect calls setState to fix it,
+ * and no render cascades off one that did.
+ *
+ * Deliberately false for `openSection === null`: "nothing is open" is the
+ * resting state, not a fault to be corrected.
+ */
+export function isStaleNoteSelection(
+  openSection: string | null | undefined,
+  resolved: unknown,
+): boolean {
+  return Boolean(openSection) && resolved === null;
+}
+
+/* ------------------------------------------------------------------ *
+ * The command bar's idle sentence
+ * ------------------------------------------------------------------ */
+
+/**
+ * THIS SENTENCE IS A CLAIM ABOUT STATE, so it may only be said when the state
+ * holds. It used to be the NOTE tab's static idle text, which meant the desk
+ * announced an open editor whenever the note was simply sitting there clean --
+ * indistinguishable, to a doctor reading the footer, from an editor stuck open
+ * behind nothing.
+ */
+export const NOTE_EDITOR_OPEN_TEXT = "Note open for editing";
+/** What the NOTE tab actually is when no editor is open: a record to read. */
+export const NOTE_IDLE_TEXT = "Select a section to write your note";
+export const DIAGNOSIS_IDLE_TEXT = "Diagnoses save as you record them";
+export const ORDERS_IDLE_TEXT = "Orders are placed one at a time";
+
+/**
+ * The command bar's resting sentence for the section on screen.
+ *
+ * `editorOpen` is the SAME value the modal's render gate reads, so this can
+ * never describe an editor that is not mounted. It is tested first because it
+ * is the only branch making a claim about editor state; the rest describe the
+ * section, which is always true of it.
+ */
+export function consultationIdleText(state: {
+  section: string;
+  editorOpen: boolean;
+}): string {
+  if (state.editorOpen) return NOTE_EDITOR_OPEN_TEXT;
+  if (state.section === "diagnosis") return DIAGNOSIS_IDLE_TEXT;
+  if (state.section === "orders") return ORDERS_IDLE_TEXT;
+  return NOTE_IDLE_TEXT;
+}
