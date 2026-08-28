@@ -33,10 +33,16 @@ Extends ``hospital.radiology.request`` the same way, and adds the record rules
 the radiology models shipped without entirely, so a doctor reaches their own
 imaging orders and results rather than the whole hospital's.
 
+Adds the matching record rules for ``hospital.laboratory.result`` and its
+lines, which shipped with a doctor ACL row and no rule at all -- so a doctor
+now reaches the results of their own investigations rather than every
+laboratory result in the hospital, on the same four-branch scope and with the
+same read-only guarantee the radiology results already carry.
+
 This module never modifies ``hospital_management``, ``hospital_billing`` or
 ``hospital_radiology``.
 """,
-    "version": "18.0.1.6.0",
+    "version": "18.0.1.7.0",
     "category": "Healthcare",
     "author": "YOYA Healthcare",
     "license": "LGPL-3",
