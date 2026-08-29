@@ -17,7 +17,12 @@
  *
  * Nothing here fetches.
  */
-import type { AbnormalFlag, ResultStatus } from "@/types/doctor-results";
+import type {
+  AbnormalFlag,
+  RadiologyImage,
+  RadiologyResult,
+  ResultStatus,
+} from "@/types/doctor-results";
 
 /* ------------------------------------------------------------------ *
  * Status
@@ -258,6 +263,101 @@ export function labResultSummary(
  */
 export function canOpenResult(row: { result: unknown | null }): boolean {
   return row.result !== null && row.result !== undefined;
+}
+
+/* ------------------------------------------------------------------ *
+ * Imaging
+ * ------------------------------------------------------------------ */
+
+/**
+ * The images on a released report, defaulted.
+ *
+ * EVERY READ GOES THROUGH HERE because `images` is optional on the wire: a
+ * desk deployed against an Odoo predating Slice 8B receives a payload without
+ * it, and a Results tab that threw on a released report would be a worse
+ * failure than one that shows no imaging section.
+ */
+export function resultImages(
+  result: Pick<RadiologyResult, "images"> | null | undefined,
+): RadiologyImage[] {
+  return result?.images ?? [];
+}
+
+/** Only the items a lightbox can display. A PDF is opened, not paged through. */
+export function viewableImages(
+  result: Pick<RadiologyResult, "images"> | null | undefined,
+): RadiologyImage[] {
+  return resultImages(result).filter((image) => image.kind === "image");
+}
+
+/**
+ * THE ONE URL THE BROWSER USES FOR CLINICAL IMAGERY.
+ *
+ * Composed here, from ids, and never taken from the payload -- which carries
+ * no URL at all, precisely so that an Odoo origin, a /web/content path or an
+ * access token has nowhere to hide. Every `<img src>` and every Open button on
+ * this screen resolves through this function.
+ */
+export function imageContentPath(
+  appointmentId: number,
+  imageId: number,
+  disposition?: "attachment",
+): string {
+  const base = `/api/doctor/visits/${appointmentId}/results/images/${imageId}`;
+  return disposition === "attachment" ? `${base}?disposition=attachment` : base;
+}
+
+/**
+ * The worklist's one-line imaging note: "1 image", "2 images · 1 PDF".
+ *
+ * Counted by KIND, because the two are different acts for a doctor -- one is
+ * looked at, the other is opened. Null when there is nothing attached, so the
+ * compact row grows no taller than it did before Slice 8B.
+ */
+export function imagingSummary(
+  result: Pick<RadiologyResult, "images"> | null | undefined,
+): string | null {
+  const images = resultImages(result);
+  if (!images.length) return null;
+  const pictures = images.filter((image) => image.kind === "image").length;
+  const pdfs = images.length - pictures;
+  const parts: string[] = [];
+  if (pictures) parts.push(pictures === 1 ? "1 image" : `${pictures} images`);
+  if (pdfs) parts.push(pdfs === 1 ? "1 PDF" : `${pdfs} PDFs`);
+  return parts.join(" · ");
+}
+
+/**
+ * A file size a clinician can read at a glance.
+ *
+ * Rounded for legibility, not for accounting: the number tells a doctor
+ * whether a file will open quickly, and no decision turns on the exact byte.
+ */
+export function fileSizeText(bytes: number | null | undefined): string | null {
+  if (!bytes || bytes <= 0) return null;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Shown in place of a thumbnail whose bytes did not arrive. */
+export const IMAGE_UNAVAILABLE_TEXT = "Image unavailable";
+
+/** The lightbox position line, or null when there is nothing to page through. */
+export function lightboxPosition(index: number, total: number): string | null {
+  if (total <= 1) return null;
+  return `${index + 1} / ${total}`;
+}
+
+/**
+ * The next index when paging a lightbox, wrapping at both ends.
+ *
+ * Wrapping rather than stopping: a doctor comparing two views of the same
+ * study should not have to notice which end of the list they are at.
+ */
+export function stepIndex(index: number, total: number, step: number): number {
+  if (total <= 0) return 0;
+  return (index + step + total) % total;
 }
 
 /* ------------------------------------------------------------------ *

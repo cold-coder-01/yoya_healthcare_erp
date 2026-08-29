@@ -39,10 +39,15 @@ now reaches the results of their own investigations rather than every
 laboratory result in the hospital, on the same four-branch scope and with the
 same read-only guarantee the radiology results already carry.
 
+Scopes ``hospital.radiology.image`` the same way. Those files are stored as
+``ir.attachment`` rows whose access is resolved through the owning record, and
+there is no record rule on ``ir.attachment`` itself, so this doctor rule is what
+stands between a clinician and another patient's imaging.
+
 This module never modifies ``hospital_management``, ``hospital_billing`` or
 ``hospital_radiology``.
 """,
-    "version": "18.0.1.7.0",
+    "version": "18.0.1.8.0",
     "category": "Healthcare",
     "author": "YOYA Healthcare",
     "license": "LGPL-3",

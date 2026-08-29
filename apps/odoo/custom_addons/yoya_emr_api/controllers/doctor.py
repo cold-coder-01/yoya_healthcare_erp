@@ -408,6 +408,27 @@ class DiagnosisResponseError(Exception):
     """
 
 
+def _safe_download_name(filename):
+    """A filename fit for a Content-Disposition header.
+
+    Path separators, control characters and quotes are removed rather than
+    escaped: this value is chosen by whoever uploaded the file, and the header
+    it lands in is one where a stray CR/LF has historically meant response
+    splitting. Werkzeug quotes the value too, but a name that cannot go wrong
+    is better than one that is escaped correctly today.
+
+    A file with no usable name still gets one, because a browser offered an
+    empty download name saves something the doctor cannot open.
+    """
+    forbidden = set('\\/"\r\n\t')
+    cleaned = "".join(
+        character
+        for character in (filename or "")
+        if character.isprintable() and character not in forbidden
+    ).strip()
+    return cleaned or "radiology-image"
+
+
 def doctor_endpoint(func):
     """Stable error envelope. Never leaks a traceback.
 
@@ -2241,6 +2262,92 @@ class YoyaEmrDoctorController(http.Controller):
                 env["hospital.radiology.request"].for_consultation(consultation),
             )
         )
+
+    # ------------------------------------------------------------------
+    # 22. Consultation results -- one radiology image's BYTES
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>"
+        "/results/images/<int:image_id>",
+        type="http", auth="user", methods=["GET"], csrf=False,
+    )
+    @doctor_endpoint
+    def results_image_content(self, appointment_id, image_id, **params):
+        """The bytes of one released radiology image, scoped to this visit.
+
+        WHY A DEDICATED ROUTE RATHER THAN /web/content. Odoo's generic binary
+        controller resolves access from the attachment alone; it cannot know
+        that this image must belong to a RELEASED result of a request placed in
+        THIS visit's consultation. Those three facts are the whole security
+        argument, so the route that serves the bytes is the route that checks
+        them.
+
+        THE ID IS A hospital.radiology.image ID, never an ir.attachment id. An
+        attachment id is a database-wide handle spanning every model; accepting
+        one here would turn a clinical endpoint into a general file reader.
+
+        A SECOND, INDEPENDENT RELEASE CHECK. The serializer already withholds
+        image metadata for an unreleased report, but `result_id.state` is
+        re-tested below rather than trusted. Metadata visibility and byte
+        visibility are separate gates on purpose: a bug in one must not hand
+        the other away, and an id can be guessed without ever reading a payload.
+
+        NO SUDO. The search runs as the caller, so Slice 8A's doctor record
+        rule on hospital.radiology.image is doing the scoping and this handler
+        is only narrowing it further. Nothing here can widen what the ORM
+        already allows.
+
+        EVERY REFUSAL IS THE SAME 404. Out of scope, another doctor's, an
+        unreleased parent, an archived image, a patient-document id, an
+        ir.attachment id and an id that never existed all answer identically --
+        so the response never confirms that a record is there.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+
+        appointment = _load_visit(env, appointment_id)
+        consultation = env["hospital.consultation"].find_for_appointment(appointment)
+        if not consultation:
+            raise ApiError("image_not_found", "Image not found.", 404)
+
+        image = env["hospital.radiology.image"].search(
+            [
+                ("id", "=", image_id),
+                ("active", "=", True),
+                ("result_id.active", "=", True),
+                ("result_id.state", "=", "released"),
+                ("result_id.request_id.consultation_id", "=", consultation.id),
+            ],
+            limit=1,
+        )
+        if not image:
+            raise ApiError("image_not_found", "Image not found.", 404)
+
+        # A PDF may be asked for as a download; everything else is shown in
+        # place. The client asks, the server decides what it is willing to
+        # honour -- an arbitrary Content-Disposition is a header-injection
+        # surface, so only the two literals are accepted.
+        as_attachment = params.get("disposition") == "attachment"
+
+        stream = env["ir.binary"]._get_stream_from(
+            image,
+            "file",
+            # THE STORED FILENAME, SANITISED, and never a client-supplied one.
+            # It ends up in Content-Disposition, so a name carrying CR/LF or a
+            # path separator is a header-splitting and path-confusion surface;
+            # werkzeug quotes it too, but a value that cannot go wrong is
+            # better than one that is escaped correctly today.
+            filename=_safe_download_name(image.filename),
+            # Server-derived at upload from the file's own bytes, so it is the
+            # one mimetype in the system that was never taken on trust.
+            mimetype=image.mimetype or None,
+        )
+        response = stream.get_response(as_attachment=as_attachment)
+        # CLINICAL BYTES DO NOT SIT IN A CACHE. `private` alone would still let
+        # the browser serve them from history on a shared workstation, which is
+        # exactly where a hospital desk lives.
+        response.headers["Cache-Control"] = "private, no-store"
+        return response
 
     # ------------------------------------------------------------------
     # 17. Consultation radiology orders -- read

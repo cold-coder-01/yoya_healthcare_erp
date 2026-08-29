@@ -47,10 +47,23 @@ class HospitalRadiologyResult(models.Model):
         "result_id",
         string="Result Lines",
     )
+    image_ids = fields.One2many(
+        "hospital.radiology.image",
+        "result_id",
+        string="Imaging",
+        help="Clinical files attached to this report: JPEG, PNG or PDF. The "
+        "set is frozen once the result is validated.",
+    )
+    image_count = fields.Integer(compute="_compute_image_count", string="Images")
     findings = fields.Text()
     impression = fields.Text()
     recommendations = fields.Text()
     active = fields.Boolean(default=True)
+
+    @api.depends("image_ids")
+    def _compute_image_count(self):
+        for result in self:
+            result.image_count = len(result.image_ids)
 
     @api.depends("name", "patient_id")
     def _compute_display_name(self):

@@ -323,6 +323,58 @@ def serialize_reported_exam(line, ordered_lines):
     }
 
 
+# What a doctor may DO with a file, derived from the mimetype the server itself
+# sniffed at upload. Never from the extension: hospital.radiology.image refuses
+# a file whose bytes disagree with its name, and re-deciding from the name here
+# would reintroduce exactly the question that validation already settled.
+_IMAGE_KIND = {
+    "image/jpeg": "image",
+    "image/png": "image",
+    "application/pdf": "pdf",
+}
+
+
+def image_kind(mimetype):
+    """"image" or "pdf" -- what the client should render, not what it is."""
+    return _IMAGE_KIND.get(mimetype or "", "image")
+
+
+def serialize_radiology_image(image):
+    """One attached clinical file, as METADATA ONLY.
+
+    NO URL IS SERIALIZED, AND THAT IS THE POINT. The client composes its own
+    BFF path from `id`; an absolute URL in this payload is precisely where an
+    Odoo origin, a /web/content path or an access token would leak into a
+    browser. The id is the hospital.radiology.image id -- never the
+    ir.attachment id, which is a database-wide handle this API has no business
+    naming.
+
+    `file` itself is absent. Bytes travel through the scoped byte endpoint,
+    which re-checks the release state independently of this serializer.
+    """
+    return {
+        "id": image.id,
+        "name": image.name,
+        "caption": _text(image.caption),
+        "kind": image_kind(image.mimetype),
+        "mimetype": image.mimetype or None,
+        "filename": image.filename,
+        "file_size": image.file_size or 0,
+        "sequence": image.sequence,
+    }
+
+
+def released_images(result):
+    """The active images of a result, in a deterministic order.
+
+    Sorted explicitly by (sequence, id) rather than trusting the order the
+    One2many happened to return, so the same database always produces the same
+    list -- which is what lets a lightbox's "2 of 3" mean the same thing twice.
+    """
+    images = result.image_ids.filtered(lambda image: image.active)
+    return images.sorted(key=lambda image: (image.sequence, image.id))
+
+
 def serialize_radiology_result(result):
     """One released radiology report.
 
@@ -338,9 +390,14 @@ def serialize_radiology_result(result):
     """
     ordered_lines = result.request_id.line_ids
     exams = [serialize_reported_exam(line, ordered_lines) for line in result.line_ids]
+    images = released_images(result)
     findings = _text(result.findings)
     impression = _text(result.impression)
     recommendations = _text(result.recommendations)
+    # DELIBERATELY UNCHANGED BY IMAGING. `has_report` asks whether anyone wrote
+    # anything, and a released report carrying only a picture is still a report
+    # with no text -- which is what the empty-report sentence exists to say. An
+    # image is shown beside that sentence, not instead of it.
     has_report = bool(
         findings
         or impression
@@ -358,6 +415,13 @@ def serialize_radiology_result(result):
         "recommendations": recommendations,
         "has_report": has_report,
         "exams": exams,
+        # IMAGING. Reached only from here, so it inherits the released-only
+        # rule the whole `result` object already carries: an unreleased report
+        # has no `result`, and therefore no images, without a second check.
+        # The byte endpoint re-checks release anyway -- see the module docstring
+        # on why one gate is never allowed to imply the other.
+        "images": [serialize_radiology_image(image) for image in images],
+        "image_count": len(images),
     }
 
 

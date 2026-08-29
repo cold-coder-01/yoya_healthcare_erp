@@ -821,6 +821,66 @@
         </record>
 
         <!-- ============================================================
+             hospital.radiology.image
+             ============================================================
+
+             WHY A RULE HERE PROTECTS THE FILE ITSELF, and not merely a row.
+             `file` is Binary(attachment=True), so the bytes live in an
+             ir.attachment carrying res_model='hospital.radiology.image'.
+             ir.attachment.check() resolves access by browsing that
+             res_model/res_id pair and calling check_access() on the record, so
+             the domain below is what stands between a doctor and another
+             doctor's patient's images. There is no ir.rule on ir.attachment
+             itself anywhere in this database; the parent's rule IS the
+             protection, which is exactly why it has to be right.
+
+             THE SAME FOUR BRANCHES AS THE RESULT, one level deeper, so a
+             doctor's access to a report and to the images inside it can never
+             drift apart. Read-only, and every perm_* below except read is
+             False: uploading and removing imaging is the department's act, and
+             the shipped ACL is 1,0,0,0 for the doctor group.
+        -->
+
+        <record id="rule_radiology_image_doctor" model="ir.rule">
+            <field name="name">Radiology Image: for my results and my visits (doctor)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_image"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">
+                ['|', '|', '|',
+                    ('result_id.physician_id.user_id', '=', user.id),
+                    ('result_id.request_id.physician_id.user_id', '=', user.id),
+                    ('result_id.request_id.appointment_id.doctor_id.user_id', '=', user.id),
+                    ('result_id.request_id.consultation_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <!--
+            MANDATORY, for the reason the laboratory and radiology result rules
+            above already state: group_hospital_manager IMPLIES
+            group_hospital_doctor, and the system administrator implies manager
+            in turn. Odoo ORs the domains of every rule whose groups a user
+            holds, so without this the doctor scope would silently become a
+            manager's ceiling and the imaging bench could lose sight of the
+            department's own work.
+        -->
+
+        <record id="rule_radiology_image_operations" model="ir.rule">
+            <field name="name">Radiology Image: all (imaging bench / manager / system administrator)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_image"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <!-- ============================================================
              hospital.prescription / .line / hospital.pharmacy.dispense
              ============================================================
 

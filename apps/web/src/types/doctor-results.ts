@@ -118,6 +118,27 @@ export type ReportedExam = {
   ordered: boolean;
 };
 
+/**
+ * One clinical file attached to a released radiology report.
+ *
+ * THERE IS NO URL FIELD, DELIBERATELY. The client builds its own BFF path from
+ * `id`; a URL in the payload is exactly where an Odoo origin, a /web/content
+ * path or an access token would reach the browser. `id` is the
+ * hospital.radiology.image id -- never the ir.attachment id, which is a
+ * database-wide file handle this contract has no business naming.
+ */
+export type RadiologyImage = {
+  id: number;
+  name: string;
+  caption: string | null;
+  /** What to RENDER, derived server-side from the sniffed mimetype. */
+  kind: "image" | "pdf";
+  mimetype: string | null;
+  filename: string;
+  file_size: number;
+  sequence: number;
+};
+
 export type RadiologyResult = {
   id: number;
   result_code: string;
@@ -135,6 +156,17 @@ export type RadiologyResult = {
    */
   has_report: boolean;
   exams: ReportedExam[];
+  /**
+   * Attached imaging, in a deterministic (sequence, id) order so a lightbox's
+   * "2 of 3" means the same thing on every load.
+   *
+   * OPTIONAL ON THE WIRE. A desk deployed against an Odoo that predates Slice
+   * 8B receives a payload without these keys, and a Results tab that crashed
+   * on a released report would be a worse failure than one that shows no
+   * imaging section. Every read below goes through a helper that defaults.
+   */
+  images?: RadiologyImage[];
+  image_count?: number;
 };
 
 export type RadiologyReview = {

@@ -14,3 +14,4 @@ from . import test_doctor_radiology_api
 from . import test_doctor_consultation_complete
 from . import test_doctor_medication_api
 from . import test_doctor_results_api
+from . import test_doctor_results_images

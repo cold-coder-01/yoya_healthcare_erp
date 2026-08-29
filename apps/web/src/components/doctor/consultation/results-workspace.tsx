@@ -10,6 +10,7 @@ import {
   canOpenResult,
   checkedAtText,
   hasAnyOrder,
+  imagingSummary,
   labResultSummary,
   pendingReason,
   reportPreview,
@@ -278,7 +279,10 @@ export default function ResultsWorkspace({
           {openResult.kind === "laboratory" ? (
             <LaboratoryResultView row={openResult.row} />
           ) : (
-            <RadiologyResultView row={openResult.row} />
+            <RadiologyResultView
+              row={openResult.row}
+              appointmentId={appointmentId}
+            />
           )}
         </ClinicalResultViewerModal>
       ) : null}
@@ -524,6 +528,7 @@ function RadiologyCard({
   const result = row.result;
   const exams = result ? result.exams : row.pending_exams;
   const modality = exams.find((exam) => exam.modality_label)?.modality_label;
+  const imaging = imagingSummary(result);
   const identity = serviceSummary(exams.map((exam) => exam.name));
 
   return (
@@ -550,13 +555,21 @@ function RadiologyCard({
             clamping it to a single line is what keeps ten studies scannable.
             An empty released report says so here in the same one line.
           */
-          <p
-            className={`min-w-0 flex-1 truncate cl-secondary leading-snug ${
-              result.has_report ? "text-slate-700" : "italic text-slate-500"
-            }`}
-          >
-            {reportPreview(result)}
-          </p>
+          <div className="flex min-w-0 flex-1 flex-col">
+            <p
+              className={`min-w-0 truncate cl-secondary leading-snug ${
+                result.has_report ? "text-slate-700" : "italic text-slate-500"
+              }`}
+            >
+              {reportPreview(result)}
+            </p>
+            {/* ONE LINE, NO THUMBNAIL. The worklist is scanned; a picture here
+                would cost the row its height and buy nothing a count does not
+                already say. The images themselves are one click away. */}
+            {imaging ? (
+              <p className="min-w-0 truncate cl-meta text-slate-500">{imaging}</p>
+            ) : null}
+          </div>
         ) : (
           <PendingBody cancelled={row.status === "cancelled"} />
         )}

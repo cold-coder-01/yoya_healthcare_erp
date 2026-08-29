@@ -51,6 +51,10 @@ const VIEWER = source(
   "components/doctor/consultation/clinical-result-viewer-modal.tsx",
 );
 const VIEWS = source("components/doctor/consultation/result-views.tsx");
+const LIGHTBOX = source("components/doctor/consultation/image-lightbox.tsx");
+const IMAGE_ROUTE = source(
+  "app/api/doctor/visits/[appointmentId]/results/images/[imageId]/route.ts",
+);
 const CONSULTATION = source(
   "components/doctor/consultation/consultation-workspace.tsx",
 );
@@ -483,7 +487,12 @@ test("there is exactly ONE fetch in the whole Results feature", () => {
     viewer costs no request" true by construction rather than by discipline.
   */
   assert.ok(!code(VIEWS).includes("useEffect"), "a result view gained an effect");
-  assert.ok(!code(VIEWS).includes("useState"), "a result view gained state");
+  /*
+    Local UI STATE is allowed and expected -- the gallery has to remember which
+    image is open, and a thumbnail has to remember that its bytes did not
+    arrive. What must stay absent is anything that LOADS: no fetch above, and
+    no effect, which is where a data request would have to live.
+  */
 });
 
 test("opening a viewer only sets state", () => {
@@ -499,10 +508,17 @@ test("opening a viewer only sets state", () => {
 });
 
 test("the viewer receives a row, never an id to resolve", () => {
-  // Passing an id would be an invitation to look it up again.
+  /*
+    Passing a RESULT id would be an invitation to look it up again. The
+    radiology view does take the APPOINTMENT id, which is a different thing
+    entirely: it is not resolved into anything, it is composed into the image
+    URL so the visit travels with the request and Odoo can check the pairing.
+  */
   assert.ok(WORKSPACE.includes("row={openResult.row}"));
   assert.ok(VIEWS.includes("export function LaboratoryResultView({ row }"));
-  assert.ok(VIEWS.includes("export function RadiologyResultView({ row }"));
+  assert.ok(VIEWS.includes("export function RadiologyResultView({"));
+  assert.ok(VIEWS.includes("appointmentId,"));
+  assert.ok(!code(VIEWS).includes("result_id"), "a view resolves a result id");
 });
 
 test("one viewer shell serves both services", () => {
@@ -533,6 +549,206 @@ test("the viewer is read-only in every state, with no write affordance", () => {
       assert.ok(!lower.includes(banned), `'${banned}' appeared in ${name}`);
     }
   }
+});
+
+/* ------------------------------------------------------------------ *
+ * Imaging (Slice 8B)
+ * ------------------------------------------------------------------ */
+
+test("EVERY image URL is the BFF path, and no Odoo origin exists anywhere", () => {
+  /*
+    THE PROPERTY THE WHOLE SLICE TURNS ON. An <img src> pointing at Odoo would
+    put the backend origin in the page, and a /web/content link would need a
+    public attachment or an access token to work at all -- both of which turn a
+    scoped clinical file into something anyone with the link can open.
+  */
+  for (const [name, text] of [
+    ["results-workspace", WORKSPACE],
+    ["result-views", VIEWS],
+    ["image-lightbox", LIGHTBOX],
+    ["doctor-results types", TYPES],
+    ["image route", IMAGE_ROUTE],
+  ] as const) {
+    const body = code(text);
+    for (const banned of ["/web/content", "/web/image", "access_token", "8171", "localhost"]) {
+      assert.ok(!body.includes(banned), `'${banned}' appeared in ${name}`);
+    }
+  }
+  // Both surfaces compose their src through the one helper.
+  assert.ok(VIEWS.includes("imageContentPath(appointmentId, image.id)"));
+  assert.ok(LIGHTBOX.includes("imageContentPath(appointmentId, image.id)"));
+});
+
+test("no image URL is ever taken from the payload", () => {
+  // The contract carries no URL field at all; a client that read one would be
+  // reading something the server has no business sending.
+  assert.ok(!code(TYPES).includes("url"), "the contract declares a URL field");
+  assert.ok(!code(VIEWS).includes("image.url"));
+  assert.ok(!code(LIGHTBOX).includes("image.url"));
+});
+
+test("the compact worklist gains a count and NOT a thumbnail", () => {
+  /*
+    The row is scanned. A picture in it would cost the row its height and buy
+    nothing the count does not already say.
+  */
+  assert.ok(WORKSPACE.includes("imagingSummary(result)"));
+  assert.ok(WORKSPACE.includes("{imaging}"));
+  const body = code(WORKSPACE);
+  assert.ok(!body.includes("<img"), "a thumbnail reached the worklist");
+  assert.ok(!body.includes("imageContentPath"), "the worklist builds an image URL");
+});
+
+test("the viewer carries an IMAGING section, last", () => {
+  assert.ok(VIEWS.includes('title="Imaging"'));
+  // After the narrative: the impression is the finding a doctor acts on, and
+  // the pictures are the evidence behind it.
+  assert.ok(
+    VIEWS.indexOf('title="Imaging"') > VIEWS.indexOf('title="Impression"'),
+    "imaging was placed above the impression",
+  );
+  assert.ok(
+    VIEWS.indexOf('title="Imaging"') > VIEWS.indexOf('title="Per-study notes"'),
+  );
+});
+
+test("a PDF gets a tile with an explicit Open, never an inline frame", () => {
+  /*
+    Rendering an uploaded PDF in an <iframe> or <object> gives the file's own
+    scripting a context inside this application's origin -- and proxying the
+    bytes through the BFF is exactly what makes them same-origin.
+  */
+  assert.ok(VIEWS.includes("function PdfTile("));
+  assert.ok(VIEWS.includes("Open PDF"));
+  assert.ok(VIEWS.includes('imageContentPath(appointmentId, image.id, "attachment")'));
+  const body = code(VIEWS);
+  for (const banned of ["<iframe", "<object", "<embed"]) {
+    assert.ok(!body.includes(banned), `${banned} renders an uploaded file`);
+  }
+});
+
+test("the lightbox opens over data already held, and fetches no JSON", () => {
+  const body = code(LIGHTBOX);
+  assert.ok(!body.includes("fetch("), "the lightbox fetches");
+  assert.ok(!body.includes("useSWR") && !body.includes("axios"));
+  // It is handed the already-loaded array and an index into it.
+  assert.ok(LIGHTBOX.includes("images: RadiologyImage[]"));
+  assert.ok(LIGHTBOX.includes("startIndex"));
+});
+
+test("the lightbox closes by every conventional route and restores focus", () => {
+  assert.ok(LIGHTBOX.includes('role="dialog"'));
+  assert.ok(LIGHTBOX.includes('aria-modal="true"'));
+  assert.ok(LIGHTBOX.includes("aria-labelledby={titleId}"));
+  assert.ok(LIGHTBOX.includes('aria-label="Close image"'), "no labelled X");
+  assert.ok(LIGHTBOX.includes('event.key === "Escape"'), "Escape does not close");
+  // Backdrop and the X: two controls, one handler.
+  assert.equal(
+    (LIGHTBOX.match(/onClick=\{onClose\}/g) ?? []).length,
+    2,
+    "a close control stopped routing through onClose",
+  );
+  assert.ok(LIGHTBOX.includes('if (event.key !== "Tab") return;'), "no focus trap");
+  assert.ok(
+    VIEWS.includes("requestAnimationFrame(() => button.focus())"),
+    "focus does not return to the thumbnail that opened the lightbox",
+  );
+});
+
+test("several images can be paged, one image cannot", () => {
+  assert.ok(LIGHTBOX.includes('aria-label="Previous image"'));
+  assert.ok(LIGHTBOX.includes('aria-label="Next image"'));
+  assert.ok(LIGHTBOX.includes("total > 1 ?"), "paging is not gated on the count");
+  assert.ok(LIGHTBOX.includes('event.key === "ArrowRight"'));
+  assert.ok(LIGHTBOX.includes("lightboxPosition(index, total)"));
+});
+
+test("a PDF is never paged through in the lightbox", () => {
+  // It is opened, not flicked past, so it never enters the index space.
+  assert.ok(VIEWS.includes("viewableImages({ images })"));
+  assert.ok(VIEWS.includes("images={viewable}"));
+});
+
+test("an unreachable image is contained and leaks no backend text", () => {
+  for (const [name, text] of [["result-views", VIEWS], ["image-lightbox", LIGHTBOX]] as const) {
+    assert.ok(text.includes("onError={() => setFailed(true)}"), `${name} has no fallback`);
+    assert.ok(text.includes("IMAGE_UNAVAILABLE_TEXT"), `${name} has no fallback text`);
+  }
+});
+
+test("the imaging surface offers no write control at all", () => {
+  for (const [name, text] of [
+    ["result-views", VIEWS],
+    ["image-lightbox", LIGHTBOX],
+  ] as const) {
+    const lower = code(text).toLowerCase();
+    for (const banned of [
+      "upload", "delete", "reorder", "annotate", "acknowledge", "onsave",
+      "<input", "<textarea", "formdata",
+    ]) {
+      assert.ok(!lower.includes(banned), `'${banned}' appeared in ${name}`);
+    }
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * The image BFF route
+ * ------------------------------------------------------------------ */
+
+test("the image route exports GET and nothing else", () => {
+  assert.ok(IMAGE_ROUTE.includes("export async function GET("));
+  for (const verb of ["POST", "PUT", "PATCH", "DELETE"]) {
+    assert.ok(
+      !IMAGE_ROUTE.includes(`export async function ${verb}(`),
+      `the image route exports ${verb}`,
+    );
+  }
+});
+
+test("the image route requires a session and streams rather than buffers", () => {
+  assert.ok(IMAGE_ROUTE.includes("requireOdooSession()"));
+  assert.ok(IMAGE_ROUTE.includes("streamOdooBinary("));
+  // callOdooApi always parses JSON: it would corrupt the bytes and hold a
+  // whole study in memory.
+  assert.ok(!IMAGE_ROUTE.includes("callOdooApi"));
+  assert.ok(IMAGE_ROUTE.includes("/results/images/${image.value}"));
+});
+
+test("both path segments are validated before an upstream URL is built", () => {
+  assert.ok(IMAGE_ROUTE.includes("parseAppointmentId(appointmentId)"));
+  assert.ok(IMAGE_ROUTE.includes("parseAppointmentId(imageId)"));
+});
+
+test("disposition is mapped to a literal, never forwarded", () => {
+  // An arbitrary value reaching a Content-Disposition header is a header
+  // injection surface.
+  assert.ok(
+    IMAGE_ROUTE.includes('requested === "attachment" ? "?disposition=attachment" : ""'),
+    "the disposition is forwarded rather than mapped",
+  );
+});
+
+test("the binary helper relays an allowlist and strips the session", () => {
+  const utils = source("app/api/reception/_utils.ts");
+  assert.ok(utils.includes("export async function streamOdooBinary("));
+  assert.ok(utils.includes("const STREAMABLE_HEADERS = ["));
+  for (const header of ["content-type", "content-length", "content-disposition", "cache-control"]) {
+    assert.ok(utils.includes(`"${header}"`), `${header} is not relayed`);
+  }
+  // An allowlist, so nothing added upstream arrives here by default.
+  assert.ok(
+    utils.includes("for (const name of STREAMABLE_HEADERS)"),
+    "headers are copied wholesale rather than allowlisted",
+  );
+  assert.ok(!code(utils).includes('headers.set("set-cookie"'));
+  // The body is passed through, never read into memory.
+  assert.ok(utils.includes("new Response(upstream.body,"));
+  assert.ok(utils.includes("Cookie: `session_id=${sessionId}`"));
+});
+
+test("a refusal keeps the standard envelope rather than streaming an error", () => {
+  assert.ok(IMAGE_ROUTE.includes("forwardOdooResult({"));
+  assert.ok(IMAGE_ROUTE.includes("handleRouteError("));
 });
 
 /* ------------------------------------------------------------------ *

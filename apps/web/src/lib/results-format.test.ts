@@ -43,9 +43,17 @@ import {
   needsAbnormalWord,
   pendingReason,
   reportPreview,
+  IMAGE_UNAVAILABLE_TEXT,
   OPEN_RESULT_TEXT,
   canOpenResult,
+  fileSizeText,
+  imageContentPath,
+  imagingSummary,
   labResultSummary,
+  lightboxPosition,
+  resultImages,
+  stepIndex,
+  viewableImages,
   resultStatusLabel,
   resultStatusTone,
   sectionSummary,
@@ -356,6 +364,143 @@ test("both services share one phrase for the action", () => {
   const lowered = OPEN_RESULT_TEXT.toLowerCase();
   for (const invented of ["review", "acknowledg", "sign"]) {
     assert.ok(!lowered.includes(invented), invented);
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * Imaging
+ * ------------------------------------------------------------------ */
+
+const picture = (over = {}) => ({
+  id: 1,
+  name: "Brain CT - Axial View",
+  caption: null,
+  kind: "image" as const,
+  mimetype: "image/jpeg",
+  filename: "images.jpg",
+  file_size: 184320,
+  sequence: 10,
+  ...over,
+});
+
+const pdf = (over = {}) =>
+  picture({ id: 2, kind: "pdf" as const, mimetype: "application/pdf", ...over });
+
+test("THE IMAGE PATH IS ALWAYS THE BFF, never an Odoo origin", () => {
+  /*
+    THE PROPERTY THIS WHOLE SLICE TURNS ON. The payload carries no URL at all,
+    precisely so an Odoo origin, a /web/content path or an access token has
+    nowhere to hide; every <img src> and every Open button resolves through
+    this one function instead.
+  */
+  const path = imageContentPath(8072, 41);
+  assert.equal(path, "/api/doctor/visits/8072/results/images/41");
+  assert.ok(path.startsWith("/api/doctor/"));
+  for (const banned of ["http", "8171", "/web/content", "access_token", "localhost"]) {
+    assert.ok(!path.includes(banned), banned);
+  }
+});
+
+test("the visit travels in the path, so the scope check has both halves", () => {
+  // An id alone would let a doctor swap the appointment and still resolve.
+  assert.match(imageContentPath(1, 2), /visits\/1\/results\/images\/2$/);
+  assert.notEqual(imageContentPath(1, 2), imageContentPath(9, 2));
+});
+
+test("only a PDF asks for a download, and only through the one enum", () => {
+  assert.equal(
+    imageContentPath(8072, 41, "attachment"),
+    "/api/doctor/visits/8072/results/images/41?disposition=attachment",
+  );
+  // Nothing else is expressible: the parameter is a literal union.
+  assert.ok(!imageContentPath(8072, 41).includes("disposition"));
+});
+
+test("images default to empty rather than throwing on an older payload", () => {
+  /*
+    `images` is optional on the wire. A desk deployed against an Odoo predating
+    Slice 8B must show no imaging section -- not crash a released report.
+  */
+  assert.deepEqual(resultImages(null), []);
+  assert.deepEqual(resultImages(undefined), []);
+  assert.deepEqual(resultImages({ images: undefined }), []);
+  assert.deepEqual(resultImages({ images: [] }), []);
+});
+
+test("only pictures are paged through in a lightbox", () => {
+  // A PDF is opened, not flicked past, so it never enters the index space.
+  const images = [picture(), pdf(), picture({ id: 3 })];
+  assert.deepEqual(
+    viewableImages({ images }).map((image) => image.id),
+    [1, 3],
+  );
+});
+
+test("the worklist line counts by kind, because they are different acts", () => {
+  assert.equal(imagingSummary({ images: [picture()] }), "1 image");
+  assert.equal(
+    imagingSummary({ images: [picture(), picture({ id: 3 })] }),
+    "2 images",
+  );
+  assert.equal(imagingSummary({ images: [pdf()] }), "1 PDF");
+  assert.equal(
+    imagingSummary({ images: [picture(), picture({ id: 3 }), pdf()] }),
+    "2 images · 1 PDF",
+  );
+});
+
+test("a report with no imaging adds no line to the compact row", () => {
+  // Null, not an empty string: the row must not grow a blank line and with it
+  // a millimetre of height on a screen that is scanned.
+  assert.equal(imagingSummary({ images: [] }), null);
+  assert.equal(imagingSummary(null), null);
+  assert.equal(imagingSummary(undefined), null);
+});
+
+test("file sizes read at a glance", () => {
+  assert.equal(fileSizeText(512), "512 B");
+  assert.equal(fileSizeText(184320), "180 KB");
+  assert.equal(fileSizeText(2 * 1024 * 1024), "2.0 MB");
+});
+
+test("an unknown or empty size shows nothing rather than '0 B'", () => {
+  assert.equal(fileSizeText(0), null);
+  assert.equal(fileSizeText(null), null);
+  assert.equal(fileSizeText(undefined), null);
+});
+
+test("a lone image has no position indicator", () => {
+  assert.equal(lightboxPosition(0, 1), null);
+  assert.equal(lightboxPosition(0, 0), null);
+});
+
+test("several images are numbered from one, as a human counts", () => {
+  assert.equal(lightboxPosition(0, 3), "1 / 3");
+  assert.equal(lightboxPosition(2, 3), "3 / 3");
+});
+
+test("paging wraps at both ends", () => {
+  /*
+    A doctor comparing two views of the same study should not have to notice
+    which end of the list they are at.
+  */
+  assert.equal(stepIndex(0, 3, 1), 1);
+  assert.equal(stepIndex(2, 3, 1), 0);
+  assert.equal(stepIndex(0, 3, -1), 2);
+  assert.equal(stepIndex(1, 3, -1), 0);
+});
+
+test("paging an empty list is a no-op rather than a crash", () => {
+  assert.equal(stepIndex(0, 0, 1), 0);
+  assert.equal(stepIndex(0, 0, -1), 0);
+});
+
+test("an unreachable image says so in words", () => {
+  assert.equal(IMAGE_UNAVAILABLE_TEXT, "Image unavailable");
+  // Never a backend error, never a stack, never a URL.
+  const lowered = IMAGE_UNAVAILABLE_TEXT.toLowerCase();
+  for (const banned of ["error", "404", "http", "odoo", "failed"]) {
+    assert.ok(!lowered.includes(banned), banned);
   }
 });
 

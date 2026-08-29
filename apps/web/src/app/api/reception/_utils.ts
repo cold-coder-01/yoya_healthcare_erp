@@ -182,6 +182,83 @@ export async function callOdooApi<T>(
   };
 }
 
+/**
+ * Headers a proxied binary response is allowed to carry to the browser.
+ *
+ * AN ALLOWLIST, NOT A DENYLIST. Everything Odoo sends that is not named here
+ * is dropped, so a header added upstream in a future version cannot arrive
+ * here by default -- `Set-Cookie` above all, which would hand an Odoo session
+ * to the browser and undo the entire BFF boundary. Server banners, upstream
+ * URLs and Odoo's own debug headers are dropped for the same reason.
+ */
+const STREAMABLE_HEADERS = [
+  "content-type",
+  "content-length",
+  "content-disposition",
+  "cache-control",
+] as const;
+
+/**
+ * Proxy a BINARY response from Odoo without ever buffering it.
+ *
+ * WHY callOdooApi CANNOT DO THIS. That helper ends in
+ * `normalizeEnvelope(await readJson(response))` -- it always parses JSON, so
+ * it would both corrupt image bytes and hold a 25 MB study in the Node
+ * process. This forwards `response.body` as a stream instead, so memory stays
+ * flat whatever the file size.
+ *
+ * THE SESSION NEVER REACHES THE BROWSER, in either direction: the HTTP-only
+ * cookie is read server-side and sent upstream, and nothing from upstream is
+ * relayed back except the four headers above.
+ *
+ * A non-2xx upstream response is returned as `ok: false` with its status and
+ * its already-parsed JSON envelope, so the caller can answer with the same
+ * error shape every other Doctor route uses rather than streaming an error
+ * page as if it were an image.
+ */
+export async function streamOdooBinary(
+  sessionId: string,
+  path: string,
+): Promise<
+  | { ok: true; response: Response }
+  | { ok: false; status: number; body: unknown }
+> {
+  const baseUrl = getOdooBaseUrl();
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${baseUrl}${path}`, {
+      method: "GET",
+      headers: { Cookie: `session_id=${sessionId}` },
+      cache: "no-store",
+    });
+  } catch {
+    throw new OdooClientError("odoo_unreachable", "Unable to reach Odoo.", 502);
+  }
+
+  if (!upstream.ok) {
+    // The error path IS small and IS JSON -- the Odoo controller answers a
+    // refusal with the standard envelope -- so reading it whole is safe and
+    // lets the refusal keep its shape.
+    return {
+      ok: false as const,
+      status: upstream.status,
+      body: await readJson(upstream),
+    };
+  }
+
+  const headers = new Headers();
+  for (const name of STREAMABLE_HEADERS) {
+    const value = upstream.headers.get(name);
+    if (value) headers.set(name, value);
+  }
+
+  return {
+    ok: true as const,
+    response: new Response(upstream.body, { status: 200, headers }),
+  };
+}
+
 export async function readJsonObject(request: Request) {
   let body: unknown;
   try {

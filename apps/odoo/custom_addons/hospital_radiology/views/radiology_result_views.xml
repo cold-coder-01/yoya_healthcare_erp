@@ -73,6 +73,41 @@
                                 <field name="recommendations"/>
                             </group>
                         </page>
+                        <page string="Imaging">
+                            <!--
+                                READ-ONLY FROM VALIDATED ONWARD, so the freeze
+                                is visible as well as enforced. The model is the
+                                authority: hospital.radiology.image guards
+                                create, write, unlink and archive, so RPC,
+                                import and a forged context obey the same rule
+                                this attribute only displays.
+                            -->
+                            <field name="image_ids" nolabel="1"
+                                   readonly="state in ('validated', 'released', 'cancelled')">
+                                <list string="Imaging" editable="bottom">
+                                    <field name="sequence" widget="handle"/>
+                                    <field name="name"/>
+                                    <field name="image_type"/>
+                                    <field name="file" filename="filename" widget="binary"/>
+                                    <field name="filename" column_invisible="1"/>
+                                    <field name="caption"/>
+                                    <field name="mimetype" readonly="1"/>
+                                    <field name="file_size" readonly="1" optional="show"/>
+                                    <field name="uploaded_by_id" readonly="1" optional="show"/>
+                                    <field name="uploaded_at" readonly="1" optional="hide"/>
+                                </list>
+                            </field>
+                            <p class="text-muted mt-2" invisible="state in ('validated', 'released', 'cancelled')">
+                                JPEG, PNG or PDF, up to 25 MB each. The file's
+                                content decides its type, not its name. Imaging
+                                is frozen once the result is validated.
+                            </p>
+                            <p class="text-muted mt-2" invisible="state not in ('validated', 'released', 'cancelled')">
+                                This result is signed off, so its imaging is
+                                frozen. Issue a new radiology result if a
+                                correction is needed.
+                            </p>
+                        </page>
                     </notebook>
                 </sheet>
             </form>

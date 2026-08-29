@@ -1,7 +1,20 @@
 {
     "name": "Hospital Radiology",
-    "summary": "Radiology request and result workflow for Ethiopian Hospital ERP",
-    "version": "18.0.1.0.0",
+    "summary": "Radiology request, result and imaging workflow for Ethiopian Hospital ERP",
+    "description": """
+Hospital Radiology
+==================
+
+Radiology requests, results and the report a radiologist signs.
+
+Adds ``hospital.radiology.image``: JPEG, PNG and PDF files attached to a
+result, with the type read from the file's own bytes rather than its name, a
+25 MB ceiling, and server-derived mimetype and size. The image set may be
+managed while the result is draft or entered, and is frozen from validated
+onward against create, write, unlink and archive alike, because a report whose
+evidence can still be replaced is signed off in name only.
+""",
+    "version": "18.0.1.1.0",
     "category": "Healthcare",
     "author": "Ethiopian Hospital ERP",
     "license": "LGPL-3",
