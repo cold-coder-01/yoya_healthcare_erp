@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="sequence_hospital_admission" model="ir.sequence">
+        <field name="name">Hospital Admission Sequence</field>
+        <field name="code">hospital.admission.sequence</field>
+        <field name="prefix">ADM</field>
+        <field name="padding">5</field>
+        <field name="number_next">1</field>
+    </record>
+</odoo>

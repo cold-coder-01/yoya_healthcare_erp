@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         NURSING APP ROOT MENU
+    ═══════════════════════════════════════════════════════════ -->
+
+    <menuitem
+        id="menu_hospital_nursing_root"
+        name="Nursing"
+        sequence="30"
+        web_icon="hospital_nursing,static/src/img/nursing_icon.png"/>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         NURSING MAIN ITEMS
+    ═══════════════════════════════════════════════════════════ -->
+
+    <menuitem
+        id="menu_hospital_nursing_rounds"
+        parent="menu_hospital_nursing_root"
+        name="Nursing Rounds"
+        action="action_hospital_nursing_round"
+        sequence="10"/>
+
+    <menuitem
+        id="menu_hospital_nursing_notes"
+        parent="menu_hospital_nursing_root"
+        name="Nursing Notes"
+        action="action_hospital_nursing_note"
+        sequence="20"/>
+
+    <menuitem
+        id="menu_hospital_nursing_care_plans"
+        parent="menu_hospital_nursing_root"
+        name="Care Plans"
+        action="action_hospital_nursing_care_plan"
+        sequence="30"/>
+
+    <menuitem
+        id="menu_hospital_medication_administration"
+        parent="menu_hospital_nursing_root"
+        name="Medication Administration"
+        action="action_hospital_medication_administration"
+        sequence="40"/>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         CONFIGURATION
+    ═══════════════════════════════════════════════════════════ -->
+
+    <menuitem
+        id="menu_hospital_nursing_configuration"
+        parent="menu_hospital_nursing_root"
+        name="Configuration"
+        sequence="100"
+        groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+
+</odoo>

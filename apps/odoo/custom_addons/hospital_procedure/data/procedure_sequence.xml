@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="sequence_hospital_procedure_request" model="ir.sequence">
+        <field name="name">Procedure Request Sequence</field>
+        <field name="code">hospital.procedure.request.sequence</field>
+        <field name="prefix">PROC</field>
+        <field name="padding">5</field>
+        <field name="number_next">1</field>
+        <field name="number_increment">1</field>
+    </record>
+
+</odoo>

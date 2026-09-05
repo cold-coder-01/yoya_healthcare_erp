@@ -1,0 +1,264 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_fiscal_device_list" model="ir.ui.view">
+        <field name="name">hospital.fiscal.device.list</field>
+        <field name="model">hospital.fiscal.device</field>
+        <field name="arch" type="xml">
+            <!-- Never expose api_key in list views -->
+            <list string="Fiscal Devices">
+                <field name="name"/>
+                <field name="device_code"/>
+                <field name="terminal_type"/>
+                <field name="serial_number" optional="show"/>
+                <field name="location_name" optional="show"/>
+                <field name="branch_name" optional="hide"/>
+                <field name="last_seen"/>
+                <field name="active" widget="boolean_toggle"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_fiscal_device_form" model="ir.ui.view">
+        <field name="name">hospital.fiscal.device.form</field>
+        <field name="model">hospital.fiscal.device</field>
+        <field name="arch" type="xml">
+            <form string="Fiscal Device" class="o_hospital_fiscal_device_form">
+                <sheet class="o_hospital_fiscal_device_form">
+                    <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active"/>
+                    <field name="is_online" invisible="1"/>
+
+                    <!-- ═══ HERO HEADER ═══ -->
+                    <div class="device_hero">
+                        <div class="device_hero_icon">
+                            <i class="fa fa-tablet" title="Fiscal POS Terminal"/>
+                        </div>
+                        <div class="device_hero_content">
+                            <div class="device_hero_label">Fiscal POS Terminal</div>
+                            <div class="device_hero_name">
+                                <field name="name" placeholder="e.g. SUNMI Cashier 01"/>
+                            </div>
+                            <div class="device_hero_sub">
+                                Fiscal POS terminal used for official patient payment and receipt issuance.
+                            </div>
+                            <div class="device_hero_badges">
+                                <span class="device_chip device_chip_active" invisible="not active">
+                                    <i class="fa fa-check-circle"/> Active
+                                </span>
+                                <span class="device_chip device_chip_inactive" invisible="active">
+                                    <i class="fa fa-times-circle"/> Inactive
+                                </span>
+                                <span class="device_chip device_chip_online" invisible="not is_online">
+                                    <i class="fa fa-wifi"/> Online
+                                </span>
+                                <span class="device_chip device_chip_offline" invisible="is_online">
+                                    <i class="fa fa-wifi"/> Offline
+                                </span>
+                            </div>
+                        </div>
+                        <div class="device_kpis">
+                            <div class="device_kpi">
+                                <div class="device_kpi_icon">
+                                    <i class="fa fa-line-chart" title="Total Transactions"/>
+                                </div>
+                                <div>
+                                    <span class="device_kpi_label">Total Transactions</span>
+                                    <div class="device_kpi_value">
+                                        <field name="transaction_count" readonly="1"/>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="device_kpi">
+                                <div class="device_kpi_icon">
+                                    <i class="fa fa-check-circle" title="Successful Payments"/>
+                                </div>
+                                <div>
+                                    <span class="device_kpi_label">Successful Payments</span>
+                                    <div class="device_kpi_value">
+                                        <field name="successful_payment_count" readonly="1"/>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="device_kpi">
+                                <div class="device_kpi_icon">
+                                    <i class="fa fa-calendar-check-o" title="Last Payment"/>
+                                </div>
+                                <div>
+                                    <span class="device_kpi_label">Last Payment</span>
+                                    <div class="device_kpi_value">
+                                        <field name="last_payment_datetime" readonly="1"/>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="device_kpi">
+                                <div class="device_kpi_icon">
+                                    <i class="fa fa-clock-o" title="Registered On"/>
+                                </div>
+                                <div>
+                                    <span class="device_kpi_label">Registered On</span>
+                                    <div class="device_kpi_value">
+                                        <field name="create_date" readonly="1"/>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ═══ CARD GRID ═══ -->
+                    <div class="device_card_grid">
+
+                        <div class="device_card">
+                            <div class="device_card_title">
+                                <i class="fa fa-id-card"/> Terminal Identity
+                            </div>
+                            <group>
+                                <field name="device_code" placeholder="SUNMI-001"/>
+                                <field name="terminal_type"/>
+                                <field name="serial_number"/>
+                                <field name="active"/>
+                                <field name="last_seen" readonly="1"/>
+                            </group>
+                        </div>
+
+                        <div class="device_card">
+                            <div class="device_card_title">
+                                <i class="fa fa-map-marker"/> Location Information
+                            </div>
+                            <group>
+                                <field name="location_name"/>
+                                <field name="branch_name"/>
+                            </group>
+                        </div>
+
+                        <div class="device_card"
+                             groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
+                            <div class="device_card_title">
+                                <i class="fa fa-lock"/> Security &amp; API Settings
+                            </div>
+                            <group>
+                                <field name="api_key" password="True"/>
+                                <field name="allowed_ip" placeholder="e.g. 10.0.0.15, 10.0.0.16 (empty = any IP)"/>
+                            </group>
+                            <div class="device_static_row">
+                                <span class="device_static_label">Authentication Method</span>
+                                <span class="device_static_value">API Key</span>
+                            </div>
+                            <div class="device_static_row">
+                                <span class="device_static_label">Encryption</span>
+                                <span class="device_static_value">HTTPS recommended</span>
+                            </div>
+                            <div class="device_static_row">
+                                <span class="device_static_label">Signature Method</span>
+                                <span class="device_static_value">HMAC recommended (production hardening)</span>
+                            </div>
+                            <div class="device_security_note">
+                                <i class="fa fa-shield"/>
+                                <div>
+                                    For production, use a strong API key, restrict allowed IPs, and
+                                    sign all requests using HMAC over HTTPS. See the module README
+                                    hardening checklist.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="device_card">
+                            <div class="device_card_title">
+                                <i class="fa fa-plug"/> Capabilities &amp; Features
+                            </div>
+                            <div class="device_capabilities">
+                                <span class="device_capability_chip"><i class="fa fa-search"/> Lookup</span>
+                                <span class="device_capability_chip"><i class="fa fa-check"/> Payment Success</span>
+                                <span class="device_capability_chip"><i class="fa fa-times"/> Payment Failure</span>
+                                <span class="device_capability_chip"><i class="fa fa-refresh"/> Status Check</span>
+                            </div>
+                            <div class="device_static_row">
+                                <span class="device_static_label">Receipt Type</span>
+                                <span class="device_static_value">Electronic Fiscal Receipt</span>
+                            </div>
+                            <div class="device_static_row">
+                                <span class="device_static_label">Fiscal Provider</span>
+                                <span class="device_static_value">Zoorya (ETTA Solutions)</span>
+                            </div>
+                            <div class="device_static_row">
+                                <span class="device_static_label">Currency</span>
+                                <span class="device_static_value">ETB</span>
+                            </div>
+                            <div class="device_static_row">
+                                <span class="device_static_label">Supports Partial Payment</span>
+                                <span class="device_static_value">No — exact payable amount only</span>
+                            </div>
+                        </div>
+
+                        <div class="device_card">
+                            <div class="device_card_title">
+                                <i class="fa fa-line-chart"/> Activity Information
+                            </div>
+                            <group>
+                                <field name="last_seen" readonly="1"/>
+                                <field name="last_payment_datetime" readonly="1"/>
+                                <field name="transaction_count" readonly="1"/>
+                                <field name="successful_payment_count" readonly="1"/>
+                                <field name="failed_exception_count" readonly="1"/>
+                            </group>
+                            <div class="device_static_row">
+                                <span class="device_static_label">Connection Status</span>
+                                <span class="device_static_value">
+                                    <span class="device_chip device_chip_online" invisible="not is_online">
+                                        <i class="fa fa-wifi"/> Online
+                                    </span>
+                                    <span class="device_chip device_chip_offline" invisible="is_online">
+                                        <i class="fa fa-wifi"/> Offline
+                                    </span>
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="device_card device_card_full">
+                            <div class="device_card_title">
+                                <i class="fa fa-sticky-note"/> Notes
+                            </div>
+                            <field name="notes" nolabel="1" placeholder="Internal notes about this terminal..."/>
+                        </div>
+                    </div>
+
+                    <!-- ═══ FOOTER METADATA ═══ -->
+                    <div class="device_footer_meta">
+                        <span>Created by <field name="create_uid" readonly="1"/></span>
+                        <span>Created on <field name="create_date" readonly="1"/></span>
+                        <span>Last updated by <field name="write_uid" readonly="1"/></span>
+                        <span>Last updated on <field name="write_date" readonly="1"/></span>
+                    </div>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_fiscal_device_search" model="ir.ui.view">
+        <field name="name">hospital.fiscal.device.search</field>
+        <field name="model">hospital.fiscal.device</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="device_code"/>
+                <field name="serial_number"/>
+                <field name="location_name"/>
+                <filter string="Active" name="active" domain="[('active', '=', True)]"/>
+                <filter string="Archived" name="archived" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Terminal Type" name="group_by_type" context="{'group_by': 'terminal_type'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_fiscal_device" model="ir.actions.act_window">
+        <field name="name">Fiscal Devices</field>
+        <field name="res_model">hospital.fiscal.device</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_fiscal_device_search"/>
+        <field name="context">{'search_default_active': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Register a fiscal POS terminal</p>
+            <p>Only registered, active devices with a valid API key can call the fiscal bridge API.</p>
+        </field>
+    </record>
+</odoo>

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         PATIENT FORM EXTENSION — Admissions Smart Button + Tab
+    ═══════════════════════════════════════════════════════════ -->
+
+    <record id="view_hospital_patient_admission_inherit" model="ir.ui.view">
+        <field name="name">hospital.patient.admission.inherit</field>
+        <field name="model">hospital.patient</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_patient_form"/>
+        <field name="arch" type="xml">
+
+            <!-- Smart button injected into the existing button_box -->
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button
+                    name="action_view_patient_admissions"
+                    type="object"
+                    class="oe_stat_button"
+                    icon="fa-bed"
+                    invisible="not id">
+                    <field name="admission_count" widget="statinfo" string="Admissions"/>
+                </button>
+            </xpath>
+
+            <!-- Admissions tab injected into patient notebook -->
+            <xpath expr="//notebook" position="inside">
+                <page string="Admissions" name="admissions">
+                    <field name="admission_ids" readonly="1">
+                        <list string="Admissions"
+                            decoration-success="state == 'admitted'"
+                            decoration-info="state == 'transferred'"
+                            decoration-muted="state == 'discharged' or state == 'cancelled'">
+                            <field name="name"/>
+                            <field name="admission_date"/>
+                            <field name="ward_id"/>
+                            <field name="room_id"/>
+                            <field name="bed_id"/>
+                            <field name="physician_id"/>
+                            <field name="state"/>
+                            <field name="discharge_date"/>
+                        </list>
+                    </field>
+                </page>
+            </xpath>
+
+        </field>
+    </record>
+
+</odoo>

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="sequence_hospital_nursing_round" model="ir.sequence">
+        <field name="name">Nursing Round Sequence</field>
+        <field name="code">hospital.nursing.round.sequence</field>
+        <field name="prefix">NURR</field>
+        <field name="padding">5</field>
+        <field name="number_next">1</field>
+        <field name="number_increment">1</field>
+    </record>
+
+    <record id="sequence_hospital_nursing_note" model="ir.sequence">
+        <field name="name">Nursing Note Sequence</field>
+        <field name="code">hospital.nursing.note.sequence</field>
+        <field name="prefix">NURN</field>
+        <field name="padding">5</field>
+        <field name="number_next">1</field>
+        <field name="number_increment">1</field>
+    </record>
+
+    <record id="sequence_hospital_care_plan" model="ir.sequence">
+        <field name="name">Nursing Care Plan Sequence</field>
+        <field name="code">hospital.nursing.care.plan.sequence</field>
+        <field name="prefix">CARE</field>
+        <field name="padding">5</field>
+        <field name="number_next">1</field>
+        <field name="number_increment">1</field>
+    </record>
+
+    <record id="sequence_hospital_medication_administration" model="ir.sequence">
+        <field name="name">Medication Administration Record Sequence</field>
+        <field name="code">hospital.medication.administration.sequence</field>
+        <field name="prefix">MAR</field>
+        <field name="padding">5</field>
+        <field name="number_next">1</field>
+        <field name="number_increment">1</field>
+    </record>
+
+</odoo>

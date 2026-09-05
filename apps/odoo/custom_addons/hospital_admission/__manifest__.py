@@ -1,0 +1,21 @@
+{
+    "name": "Hospital Admission",
+    "summary": "Inpatient admission, ward, room, bed management for Ethiopian Hospital ERP",
+    "version": "18.0.1.0.0",
+    "category": "Healthcare",
+    "author": "Ethiopian Hospital ERP",
+    "license": "LGPL-3",
+    "depends": ["hospital_management", "hospital_billing", "mail"],
+    "data": [
+        "security/ir.model.access.csv",
+        "data/admission_sequence.xml",
+        "views/ward_views.xml",
+        "views/admission_views.xml",
+        "views/patient_admission_views.xml",
+        "views/admission_menus.xml",
+        "reports/admission_template.xml",
+        "reports/admission_report.xml",
+    ],
+    "application": True,
+    "installable": True,
+}

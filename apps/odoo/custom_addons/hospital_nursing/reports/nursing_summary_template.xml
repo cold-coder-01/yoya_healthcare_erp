@@ -1,0 +1,267 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <template id="report_nursing_summary_template">
+        <t t-call="web.html_container">
+            <t t-foreach="docs" t-as="admission">
+                <t t-call="web.external_layout">
+                    <div class="page">
+                        <style>
+                            .hospital-report-title {
+                                color: #006A4F;
+                                font-size: 22px;
+                                font-weight: 700;
+                                margin-bottom: 4px;
+                            }
+                            .hospital-section-title {
+                                color: #006A4F;
+                                font-size: 14px;
+                                font-weight: 700;
+                                margin: 14px 0 6px;
+                                border-bottom: 1px solid #006A4F;
+                                padding-bottom: 3px;
+                            }
+                            .hospital-report-table {
+                                width: 100%;
+                                border-collapse: collapse;
+                                margin-bottom: 10px;
+                            }
+                            .hospital-report-table th {
+                                background: #F3F8F6;
+                                color: #333333;
+                                font-weight: 700;
+                            }
+                            .hospital-report-table th,
+                            .hospital-report-table td {
+                                border: 1px solid #DDDDDD;
+                                padding: 5px 7px;
+                                font-size: 11px;
+                                vertical-align: top;
+                            }
+                            .hospital-info-table td:first-child,
+                            .hospital-info-table td:nth-child(3) {
+                                width: 18%;
+                                color: #555555;
+                                font-weight: 700;
+                                background: #F9FAFB;
+                            }
+                            .hospital-empty-note {
+                                color: #666666;
+                                font-style: italic;
+                                margin: 4px 0 10px;
+                                font-size: 11px;
+                            }
+                            .hospital-footer-note {
+                                color: #555555;
+                                font-size: 11px;
+                                margin-top: 20px;
+                                border-top: 1px solid #DDDDDD;
+                                padding-top: 6px;
+                            }
+                            .badge-state {
+                                display: inline-block;
+                                padding: 2px 7px;
+                                border-radius: 4px;
+                                font-size: 10px;
+                                font-weight: 700;
+                                background: #e8f4f0;
+                                color: #006A4F;
+                            }
+                        </style>
+
+                        <t t-set="report_title" t-value="'Nursing Summary'"/>
+                        <t t-set="report_ref_label" t-value="'Admission'"/>
+                        <t t-set="report_ref" t-value="admission.name"/>
+                        <t t-set="report_date_label" t-value="'Generated Date'"/>
+                        <t t-set="report_date" t-value="context_today(admission)"/>
+                        <t t-call="hospital_management.hospital_report_header"/>
+
+                        <!-- Patient & Admission Info -->
+                        <div class="hospital-section-title">Patient &amp; Admission Information</div>
+                        <table class="hospital-report-table hospital-info-table">
+                            <tbody>
+                                <tr>
+                                    <td>Patient</td>
+                                    <td><span t-field="admission.patient_id"/></td>
+                                    <td>Admission Ref</td>
+                                    <td><span t-field="admission.name"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Physician</td>
+                                    <td><span t-out="admission.physician_id.display_name or 'N/A'"/></td>
+                                    <td>Status</td>
+                                    <td>
+                                        <span class="badge-state" t-out="admission.state or ''"/>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>Admission Date</td>
+                                    <td><span t-field="admission.admission_date"/></td>
+                                    <td>Expected Discharge</td>
+                                    <td><span t-out="admission.expected_discharge_date or 'N/A'"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Ward</td>
+                                    <td><span t-out="admission.ward_id.display_name or 'N/A'"/></td>
+                                    <td>Room / Bed</td>
+                                    <td>
+                                        <span t-out="admission.room_id.display_name or 'N/A'"/>
+                                        <t t-if="admission.bed_id">
+                                            / <span t-out="admission.bed_id.display_name"/>
+                                        </t>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <!-- Recent Nursing Rounds -->
+                        <div class="hospital-section-title">Recent Nursing Rounds</div>
+                        <t t-set="rounds" t-value="admission.env['hospital.nursing.round'].search([('admission_id', '=', admission.id)], order='round_datetime desc', limit=10)"/>
+                        <t t-if="rounds">
+                            <table class="hospital-report-table">
+                                <thead>
+                                    <tr>
+                                        <th>Ref</th>
+                                        <th>Date/Time</th>
+                                        <th>Nurse</th>
+                                        <th>Temp</th>
+                                        <th>Pulse</th>
+                                        <th>RR</th>
+                                        <th>BP</th>
+                                        <th>SpO2</th>
+                                        <th>Pain</th>
+                                        <th>State</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr t-foreach="rounds" t-as="round">
+                                        <td><span t-field="round.name"/></td>
+                                        <td><span t-field="round.round_datetime"/></td>
+                                        <td><span t-out="round.nurse_id.display_name or ''"/></td>
+                                        <td><span t-out="round.temperature or ''"/></td>
+                                        <td><span t-out="round.pulse_rate or ''"/></td>
+                                        <td><span t-out="round.respiratory_rate or ''"/></td>
+                                        <td>
+                                            <t t-if="round.systolic_bp or round.diastolic_bp">
+                                                <span t-out="round.systolic_bp"/>/<span t-out="round.diastolic_bp"/>
+                                            </t>
+                                        </td>
+                                        <td><span t-out="round.oxygen_saturation or ''"/></td>
+                                        <td><span t-out="round.pain_level or ''"/></td>
+                                        <td><span t-out="round.state or ''"/></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </t>
+                        <t t-else="">
+                            <div class="hospital-empty-note">No nursing rounds recorded for this admission.</div>
+                        </t>
+
+                        <!-- Recent Nursing Notes -->
+                        <div class="hospital-section-title">Recent Nursing Notes</div>
+                        <t t-set="notes" t-value="admission.env['hospital.nursing.note'].search([('admission_id', '=', admission.id)], order='note_datetime desc', limit=10)"/>
+                        <t t-if="notes">
+                            <table class="hospital-report-table">
+                                <thead>
+                                    <tr>
+                                        <th>Ref</th>
+                                        <th>Date/Time</th>
+                                        <th>Type</th>
+                                        <th>Nurse</th>
+                                        <th>Note</th>
+                                        <th>Action Required</th>
+                                        <th>State</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr t-foreach="notes" t-as="note">
+                                        <td><span t-field="note.name"/></td>
+                                        <td><span t-field="note.note_datetime"/></td>
+                                        <td><span t-out="note.note_type or ''"/></td>
+                                        <td><span t-out="note.nurse_id.display_name or ''"/></td>
+                                        <td><span t-field="note.note"/></td>
+                                        <td><span t-out="'Yes' if note.action_required else 'No'"/></td>
+                                        <td><span t-out="note.state or ''"/></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </t>
+                        <t t-else="">
+                            <div class="hospital-empty-note">No nursing notes recorded for this admission.</div>
+                        </t>
+
+                        <!-- Active Care Plans -->
+                        <div class="hospital-section-title">Active Care Plans</div>
+                        <t t-set="care_plans" t-value="admission.env['hospital.nursing.care.plan'].search([('admission_id', '=', admission.id), ('state', 'in', ['draft', 'active'])], order='plan_date desc')"/>
+                        <t t-if="care_plans">
+                            <table class="hospital-report-table">
+                                <thead>
+                                    <tr>
+                                        <th>Ref</th>
+                                        <th>Date</th>
+                                        <th>Priority</th>
+                                        <th>Nursing Diagnosis</th>
+                                        <th>Goals</th>
+                                        <th>State</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr t-foreach="care_plans" t-as="plan">
+                                        <td><span t-field="plan.name"/></td>
+                                        <td><span t-field="plan.plan_date"/></td>
+                                        <td><span t-out="plan.priority or ''"/></td>
+                                        <td><span t-out="plan.nursing_diagnosis or ''"/></td>
+                                        <td><span t-out="plan.goals or ''"/></td>
+                                        <td><span t-out="plan.state or ''"/></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </t>
+                        <t t-else="">
+                            <div class="hospital-empty-note">No active care plans for this admission.</div>
+                        </t>
+
+                        <!-- Medication Administration Summary -->
+                        <div class="hospital-section-title">Medication Administration Summary</div>
+                        <t t-set="mar_records" t-value="admission.env['hospital.medication.administration'].search([('admission_id', '=', admission.id)], order='scheduled_datetime desc', limit=20)"/>
+                        <t t-if="mar_records">
+                            <table class="hospital-report-table">
+                                <thead>
+                                    <tr>
+                                        <th>Ref</th>
+                                        <th>Medication</th>
+                                        <th>Dose</th>
+                                        <th>Route</th>
+                                        <th>Scheduled</th>
+                                        <th>Administered</th>
+                                        <th>Nurse</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr t-foreach="mar_records" t-as="mar">
+                                        <td><span t-field="mar.name"/></td>
+                                        <td><span t-field="mar.medication_name"/></td>
+                                        <td><span t-out="mar.dose or ''"/></td>
+                                        <td><span t-out="mar.route or ''"/></td>
+                                        <td><span t-out="mar.scheduled_datetime or ''"/></td>
+                                        <td><span t-out="mar.administered_datetime or ''"/></td>
+                                        <td><span t-out="mar.nurse_id.display_name or ''"/></td>
+                                        <td><span t-out="mar.administration_status or ''"/></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </t>
+                        <t t-else="">
+                            <div class="hospital-empty-note">No medication administration records for this admission.</div>
+                        </t>
+
+                        <div class="hospital-footer-note">
+                            This report is generated from YOYA Hospital — Ethiopian Hospital ERP.
+                            Nursing records are confidential and for authorized clinical use only.
+                        </div>
+                    </div>
+                </t>
+            </t>
+        </t>
+    </template>
+</odoo>

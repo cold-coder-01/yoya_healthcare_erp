@@ -1,0 +1,303 @@
+/* ================================================================
+   Hospital Fiscal Bridge — Fiscal Device / Terminal Form
+   Scoped under .o_hospital_fiscal_device_form
+   Emerald hospital theme (matches billing Pattern V1).
+   ================================================================ */
+
+.o_hospital_fiscal_device_form {
+    --fiscal-primary:      #006A4F;
+    --fiscal-primary-dark: #005A43;
+    --fiscal-primary-soft: rgba(0, 106, 79, 0.08);
+    --fiscal-primary-chip: #E6F4F0;
+    --fiscal-border:       #e5e7eb;
+    --fiscal-card:         #ffffff;
+    --fiscal-page:         #f7faf9;
+    --fiscal-text:         #1f2933;
+    --fiscal-muted:        #6b7280;
+    --fiscal-shadow:       0 6px 18px rgba(0, 0, 0, 0.05);
+    --fiscal-shadow-sm:    0 2px 6px rgba(31, 41, 51, 0.04);
+    --fiscal-radius:       12px;
+    --fiscal-danger:       #DC2626;
+    --fiscal-danger-chip:  #FEE2E2;
+    --fiscal-gray-chip:    #F3F4F6;
+    --fiscal-amber-chip:   #FEF3C7;
+    --fiscal-amber:        #B45309;
+}
+
+/* ── Sheet ─────────────────────────────────────── */
+
+.o_hospital_fiscal_device_form .o_form_sheet,
+.o_form_sheet.o_hospital_fiscal_device_form {
+    background-color: var(--fiscal-page) !important;
+    border: 1px solid var(--fiscal-border) !important;
+    border-radius: var(--fiscal-radius) !important;
+    box-shadow: var(--fiscal-shadow) !important;
+    color: var(--fiscal-text);
+    max-width: none !important;
+    padding: 18px 22px 24px !important;
+}
+
+/* ── Hero ──────────────────────────────────────── */
+
+.o_hospital_fiscal_device_form .device_hero {
+    align-items: center;
+    background: var(--fiscal-card);
+    border: 1px solid var(--fiscal-border);
+    border-radius: var(--fiscal-radius);
+    box-shadow: var(--fiscal-shadow-sm);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-bottom: 14px;
+    padding: 16px 20px;
+}
+
+.o_hospital_fiscal_device_form .device_hero_icon {
+    align-items: center;
+    background: var(--fiscal-primary);
+    border-radius: 14px;
+    color: #ffffff;
+    display: flex;
+    flex: 0 0 auto;
+    font-size: 26px;
+    height: 60px;
+    justify-content: center;
+    width: 60px;
+}
+
+.o_hospital_fiscal_device_form .device_hero_content {
+    flex: 1 1 240px;
+    min-width: 220px;
+}
+
+.o_hospital_fiscal_device_form .device_hero_label {
+    color: var(--fiscal-muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.o_hospital_fiscal_device_form .device_hero_name,
+.o_hospital_fiscal_device_form .device_hero_name .o_field_widget,
+.o_hospital_fiscal_device_form .device_hero_name input {
+    color: var(--fiscal-text);
+    font-size: 24px;
+    font-weight: 800;
+    line-height: 1.2;
+}
+
+.o_hospital_fiscal_device_form .device_hero_sub {
+    color: var(--fiscal-muted);
+    font-size: 12px;
+    margin-top: 4px;
+}
+
+.o_hospital_fiscal_device_form .device_hero_badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.o_hospital_fiscal_device_form .device_chip {
+    align-items: center;
+    border-radius: 999px;
+    display: inline-flex;
+    font-size: 12px;
+    font-weight: 700;
+    gap: 6px;
+    padding: 3px 12px;
+}
+
+.o_hospital_fiscal_device_form .device_chip_active   { background: var(--fiscal-primary-chip); color: var(--fiscal-primary); }
+.o_hospital_fiscal_device_form .device_chip_inactive { background: var(--fiscal-danger-chip);  color: var(--fiscal-danger); }
+.o_hospital_fiscal_device_form .device_chip_online   { background: var(--fiscal-primary-chip); color: var(--fiscal-primary); }
+.o_hospital_fiscal_device_form .device_chip_offline  { background: var(--fiscal-gray-chip);    color: var(--fiscal-muted); }
+
+/* Hero KPI block (right side) */
+
+.o_hospital_fiscal_device_form .device_kpis {
+    display: grid;
+    flex: 0 1 auto;
+    gap: 10px;
+    grid-template-columns: repeat(4, minmax(120px, 1fr));
+}
+
+@media (max-width: 1200px) {
+    .o_hospital_fiscal_device_form .device_kpis {
+        grid-template-columns: repeat(2, minmax(120px, 1fr));
+    }
+}
+
+.o_hospital_fiscal_device_form .device_kpi {
+    align-items: center;
+    background: var(--fiscal-page);
+    border: 1px solid var(--fiscal-border);
+    border-radius: 10px;
+    display: flex;
+    gap: 10px;
+    padding: 8px 12px;
+}
+
+.o_hospital_fiscal_device_form .device_kpi_icon {
+    align-items: center;
+    background: var(--fiscal-primary-chip);
+    border-radius: 8px;
+    color: var(--fiscal-primary);
+    display: flex;
+    flex: 0 0 auto;
+    font-size: 14px;
+    height: 32px;
+    justify-content: center;
+    width: 32px;
+}
+
+.o_hospital_fiscal_device_form .device_kpi_label {
+    color: var(--fiscal-muted);
+    display: block;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.o_hospital_fiscal_device_form .device_kpi_value,
+.o_hospital_fiscal_device_form .device_kpi_value .o_field_widget {
+    color: var(--fiscal-text);
+    font-size: 14px;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+/* ── Card grid ─────────────────────────────────── */
+
+.o_hospital_fiscal_device_form .device_card_grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-bottom: 12px;
+}
+
+@media (max-width: 900px) {
+    .o_hospital_fiscal_device_form .device_card_grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.o_hospital_fiscal_device_form .device_card {
+    background: var(--fiscal-card);
+    border: 1px solid var(--fiscal-border);
+    border-radius: var(--fiscal-radius);
+    box-shadow: var(--fiscal-shadow-sm);
+    padding: 14px 16px;
+}
+
+.o_hospital_fiscal_device_form .device_card_full {
+    grid-column: 1 / -1;
+}
+
+.o_hospital_fiscal_device_form .device_card_title {
+    align-items: center;
+    border-bottom: 1px solid var(--fiscal-border);
+    color: var(--fiscal-text);
+    display: flex;
+    font-size: 13px;
+    font-weight: 700;
+    gap: 8px;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+}
+
+.o_hospital_fiscal_device_form .device_card_title i {
+    align-items: center;
+    background: var(--fiscal-primary-chip);
+    border-radius: 8px;
+    color: var(--fiscal-primary);
+    display: inline-flex;
+    font-size: 13px;
+    height: 26px;
+    justify-content: center;
+    width: 26px;
+}
+
+.o_hospital_fiscal_device_form .device_card .o_form_label {
+    color: var(--fiscal-muted);
+    font-size: 12px;
+}
+
+/* Static informational rows (capabilities, security methods) */
+
+.o_hospital_fiscal_device_form .device_static_row {
+    border-bottom: 1px dashed var(--fiscal-border);
+    display: flex;
+    font-size: 12px;
+    justify-content: space-between;
+    padding: 5px 0;
+}
+
+.o_hospital_fiscal_device_form .device_static_row:last-child {
+    border-bottom: none;
+}
+
+.o_hospital_fiscal_device_form .device_static_label {
+    color: var(--fiscal-muted);
+}
+
+.o_hospital_fiscal_device_form .device_static_value {
+    color: var(--fiscal-text);
+    font-weight: 600;
+}
+
+/* Capability chips */
+
+.o_hospital_fiscal_device_form .device_capabilities {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.o_hospital_fiscal_device_form .device_capability_chip {
+    align-items: center;
+    background: var(--fiscal-primary-chip);
+    border-radius: 999px;
+    color: var(--fiscal-primary);
+    display: inline-flex;
+    font-size: 11px;
+    font-weight: 700;
+    gap: 6px;
+    padding: 4px 12px;
+}
+
+/* Security info box */
+
+.o_hospital_fiscal_device_form .device_security_note {
+    align-items: flex-start;
+    background: var(--fiscal-primary-soft);
+    border: 1px solid rgba(0, 106, 79, 0.25);
+    border-radius: 10px;
+    color: var(--fiscal-primary-dark);
+    display: flex;
+    font-size: 12px;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 8px 12px;
+}
+
+.o_hospital_fiscal_device_form .device_security_note i {
+    margin-top: 2px;
+}
+
+/* Footer metadata */
+
+.o_hospital_fiscal_device_form .device_footer_meta {
+    color: var(--fiscal-muted);
+    display: flex;
+    flex-wrap: wrap;
+    font-size: 11px;
+    gap: 4px 24px;
+    margin-top: 4px;
+    padding: 2px 4px;
+}

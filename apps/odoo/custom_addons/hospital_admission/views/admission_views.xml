@@ -1,0 +1,286 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         ADMISSION LIST VIEW
+    ═══════════════════════════════════════════════════════════ -->
+
+    <record id="view_hospital_admission_list" model="ir.ui.view">
+        <field name="name">hospital.admission.list</field>
+        <field name="model">hospital.admission</field>
+        <field name="arch" type="xml">
+            <list string="Admissions"
+                decoration-success="state == 'admitted'"
+                decoration-info="state == 'transferred'"
+                decoration-muted="state == 'discharged' or state == 'cancelled'"
+                decoration-warning="state == 'draft'">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="physician_id"/>
+                <field name="ward_id"/>
+                <field name="room_id"/>
+                <field name="bed_id"/>
+                <field name="admission_date"/>
+                <field name="expected_discharge_date"/>
+                <field name="state"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         ADMISSION FORM VIEW
+    ═══════════════════════════════════════════════════════════ -->
+
+    <record id="view_hospital_admission_form" model="ir.ui.view">
+        <field name="name">hospital.admission.form</field>
+        <field name="model">hospital.admission</field>
+        <field name="arch" type="xml">
+            <form string="Admission" class="hospital_admission_profile">
+                <header>
+                    <button
+                        name="action_confirm_admission"
+                        string="Confirm Admission"
+                        type="object"
+                        class="btn-primary"
+                        invisible="state != 'draft'"/>
+                    <button
+                        name="action_open_transfer_wizard"
+                        string="Transfer Patient"
+                        type="object"
+                        invisible="state not in ('admitted', 'transferred')"/>
+                    <button
+                        name="action_discharge"
+                        string="Discharge"
+                        type="object"
+                        class="btn-primary"
+                        invisible="state not in ('admitted', 'transferred')"/>
+                    <button
+                        name="action_cancel"
+                        string="Cancel"
+                        type="object"
+                        invisible="state not in ('draft', 'admitted', 'transferred')"/>
+                    <button
+                        name="action_reset_to_draft"
+                        string="Reset to Draft"
+                        type="object"
+                        groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"
+                        invisible="state != 'cancelled'"/>
+                    <button
+                        name="action_generate_admission_bill"
+                        string="Generate Admission Bill"
+                        type="object"
+                        class="btn-primary"
+                        groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"
+                        invisible="state != 'discharged' or bill_id != False"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,admitted,transferred,discharged"/>
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button
+                            name="action_view_admission_bill"
+                            type="object"
+                            class="oe_stat_button"
+                            icon="fa-file-text-o"
+                            invisible="bill_id == False">
+                            <field name="bill_count" widget="statinfo" string="Bill"/>
+                        </button>
+                    </div>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1>
+                            <field name="name" readonly="1"/>
+                        </h1>
+                    </div>
+
+                    <group>
+                        <group string="Patient Information">
+                            <field name="patient_id" readonly="state != 'draft'"/>
+                            <field name="physician_id"/>
+                            <field name="appointment_id"
+                                domain="[('patient_id', '=', patient_id)]"/>
+                            <field name="diagnosis_id"
+                                domain="[('patient_id', '=', patient_id)]"/>
+                        </group>
+                        <group string="Admission Details">
+                            <field name="admission_date" readonly="state != 'draft'"/>
+                            <field name="expected_discharge_date"/>
+                            <field name="discharge_date" readonly="1"/>
+                            <field name="active"/>
+                        </group>
+                    </group>
+
+                    <group string="Bed Assignment">
+                        <group>
+                            <field name="ward_id" readonly="state not in ('draft',)"/>
+                            <field name="room_id"
+                                domain="[('ward_id', '=', ward_id)]"
+                                readonly="state not in ('draft',)"/>
+                            <field name="bed_id"
+                                domain="[('room_id', '=', room_id), ('state', '=', 'available')]"
+                                readonly="state not in ('draft',)"/>
+                        </group>
+                    </group>
+
+                    <group string="Admission Reason">
+                        <field name="admission_reason" nolabel="1"/>
+                    </group>
+
+                    <group string="Discharge Information" invisible="state not in ('discharged',)">
+                        <field name="discharge_summary" nolabel="1"/>
+                    </group>
+
+                    <notebook>
+                        <page string="Transfers" name="transfers">
+                            <field name="transfer_ids" readonly="1">
+                                <list string="Transfers">
+                                    <field name="transfer_date"/>
+                                    <field name="from_ward_id"/>
+                                    <field name="from_room_id"/>
+                                    <field name="from_bed_id"/>
+                                    <field name="to_ward_id"/>
+                                    <field name="to_room_id"/>
+                                    <field name="to_bed_id"/>
+                                    <field name="transferred_by"/>
+                                    <field name="reason"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Notes" name="notes">
+                            <field name="notes"/>
+                        </page>
+                        <page string="Discharge Summary" name="discharge_summary_tab">
+                            <field name="discharge_summary"/>
+                        </page>
+                        <page string="Billing" name="billing">
+                            <group string="Billing Preview">
+                                <group>
+                                    <field name="stay_days" readonly="1"/>
+                                    <field name="admission_fee_amount" readonly="1"/>
+                                    <field name="daily_rate_amount" readonly="1"/>
+                                    <field name="bed_charge_amount" readonly="1"/>
+                                    <field name="total_admission_charge" readonly="1"/>
+                                </group>
+                                <group>
+                                    <field name="billing_state" readonly="1"/>
+                                    <field name="bill_id" readonly="1"/>
+                                    <field name="currency_id" readonly="1"/>
+                                </group>
+                            </group>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         ADMISSION SEARCH VIEW
+    ═══════════════════════════════════════════════════════════ -->
+
+    <record id="view_hospital_admission_search" model="ir.ui.view">
+        <field name="name">hospital.admission.search</field>
+        <field name="model">hospital.admission</field>
+        <field name="arch" type="xml">
+            <search string="Search Admissions">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="physician_id"/>
+                <field name="ward_id"/>
+                <field name="bed_id"/>
+                <filter string="Draft" name="draft" domain="[('state', '=', 'draft')]"/>
+                <filter string="Admitted" name="admitted" domain="[('state', '=', 'admitted')]"/>
+                <filter string="Transferred" name="transferred" domain="[('state', '=', 'transferred')]"/>
+                <filter string="Discharged" name="discharged" domain="[('state', '=', 'discharged')]"/>
+                <filter string="Cancelled" name="cancelled" domain="[('state', '=', 'cancelled')]"/>
+                <separator/>
+                <filter string="Active" name="active" domain="[('active', '=', True)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Patient" name="group_patient" context="{'group_by': 'patient_id'}"/>
+                    <filter string="Physician" name="group_physician" context="{'group_by': 'physician_id'}"/>
+                    <filter string="Ward" name="group_ward" context="{'group_by': 'ward_id'}"/>
+                    <filter string="State" name="group_state" context="{'group_by': 'state'}"/>
+                    <filter string="Admission Date" name="group_date" context="{'group_by': 'admission_date:month'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         ADMISSION ACTION
+    ═══════════════════════════════════════════════════════════ -->
+
+    <record id="action_hospital_admission" model="ir.actions.act_window">
+        <field name="name">Admissions</field>
+        <field name="res_model">hospital.admission</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_admission_search"/>
+        <field name="context">{'search_default_active': 1}</field>
+    </record>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         TRANSFERS ACTION (read-only list of all transfers)
+    ═══════════════════════════════════════════════════════════ -->
+
+    <record id="view_hospital_admission_transfer_list" model="ir.ui.view">
+        <field name="name">hospital.admission.transfer.list</field>
+        <field name="model">hospital.admission.transfer</field>
+        <field name="arch" type="xml">
+            <list string="Transfers" create="false" edit="false" delete="false">
+                <field name="transfer_date"/>
+                <field name="admission_id"/>
+                <field name="from_ward_id"/>
+                <field name="from_room_id"/>
+                <field name="from_bed_id"/>
+                <field name="to_ward_id"/>
+                <field name="to_room_id"/>
+                <field name="to_bed_id"/>
+                <field name="transferred_by"/>
+                <field name="reason"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="action_hospital_admission_transfer" model="ir.actions.act_window">
+        <field name="name">Transfers</field>
+        <field name="res_model">hospital.admission.transfer</field>
+        <field name="view_mode">list</field>
+    </record>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         TRANSFER WIZARD VIEW
+    ═══════════════════════════════════════════════════════════ -->
+
+    <record id="view_hospital_admission_transfer_wizard_form" model="ir.ui.view">
+        <field name="name">hospital.admission.transfer.wizard.form</field>
+        <field name="model">hospital.admission.transfer.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Transfer Patient">
+                <group string="Current Location">
+                    <field name="admission_id" readonly="1"/>
+                    <field name="current_ward_id" readonly="1"/>
+                    <field name="current_room_id" readonly="1"/>
+                    <field name="current_bed_id" readonly="1"/>
+                </group>
+                <group string="New Location">
+                    <field name="to_ward_id"/>
+                    <field name="to_room_id" domain="[('ward_id', '=', to_ward_id)]"/>
+                    <field name="to_bed_id"
+                        domain="[('room_id', '=', to_room_id), ('state', '=', 'available')]"/>
+                </group>
+                <group string="Transfer Reason">
+                    <field name="reason" nolabel="1"/>
+                </group>
+                <footer>
+                    <button
+                        name="action_do_transfer"
+                        string="Confirm Transfer"
+                        type="object"
+                        class="btn-primary"/>
+                    <button string="Cancel" class="btn-secondary" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+</odoo>

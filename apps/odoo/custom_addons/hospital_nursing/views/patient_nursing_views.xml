@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         PATIENT FORM — Nursing Smart Buttons + Tab
+    ═══════════════════════════════════════════════════════════ -->
+
+    <record id="view_hospital_patient_nursing_inherit" model="ir.ui.view">
+        <field name="name">hospital.patient.nursing.inherit</field>
+        <field name="model">hospital.patient</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_patient_form"/>
+        <field name="arch" type="xml">
+
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button
+                    name="action_view_nursing_rounds"
+                    type="object"
+                    class="oe_stat_button"
+                    icon="fa-heartbeat"
+                    invisible="not id">
+                    <field name="nursing_round_count" widget="statinfo" string="Nursing Rounds"/>
+                </button>
+                <button
+                    name="action_view_nursing_notes"
+                    type="object"
+                    class="oe_stat_button"
+                    icon="fa-pencil-square-o"
+                    invisible="not id">
+                    <field name="nursing_note_count" widget="statinfo" string="Nursing Notes"/>
+                </button>
+                <button
+                    name="action_view_care_plans"
+                    type="object"
+                    class="oe_stat_button"
+                    icon="fa-clipboard"
+                    invisible="not id">
+                    <field name="care_plan_count" widget="statinfo" string="Care Plans"/>
+                </button>
+                <button
+                    name="action_view_medication_administrations"
+                    type="object"
+                    class="oe_stat_button"
+                    icon="fa-pills"
+                    invisible="not id">
+                    <field name="medication_administration_count" widget="statinfo" string="MAR"/>
+                </button>
+            </xpath>
+
+            <xpath expr="//notebook" position="inside">
+                <page string="Nursing" name="nursing">
+                    <group string="Recent Nursing Rounds">
+                        <field name="nursing_round_ids" nolabel="1" readonly="1">
+                            <list string="Nursing Rounds" limit="5">
+                                <field name="name"/>
+                                <field name="round_datetime"/>
+                                <field name="nurse_id"/>
+                                <field name="temperature"/>
+                                <field name="pulse_rate"/>
+                                <field name="oxygen_saturation"/>
+                                <field name="pain_level"/>
+                                <field name="state"/>
+                            </list>
+                        </field>
+                    </group>
+                    <group string="Recent Nursing Notes">
+                        <field name="nursing_note_ids" nolabel="1" readonly="1">
+                            <list string="Nursing Notes" limit="5">
+                                <field name="name"/>
+                                <field name="note_datetime"/>
+                                <field name="note_type"/>
+                                <field name="nurse_id"/>
+                                <field name="action_required"/>
+                                <field name="state"/>
+                            </list>
+                        </field>
+                    </group>
+                    <group string="Care Plans">
+                        <field name="care_plan_ids" nolabel="1" readonly="1">
+                            <list string="Care Plans" limit="5">
+                                <field name="name"/>
+                                <field name="plan_date"/>
+                                <field name="priority"/>
+                                <field name="state"/>
+                            </list>
+                        </field>
+                    </group>
+                    <group string="Medication Administration (MAR)">
+                        <field name="medication_administration_ids" nolabel="1" readonly="1">
+                            <list string="MAR" limit="5">
+                                <field name="name"/>
+                                <field name="medication_name"/>
+                                <field name="dose"/>
+                                <field name="route"/>
+                                <field name="scheduled_datetime"/>
+                                <field name="administration_status"/>
+                            </list>
+                        </field>
+                    </group>
+                </page>
+            </xpath>
+
+        </field>
+    </record>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         ADMISSION FORM — Nursing Smart Buttons
+    ═══════════════════════════════════════════════════════════ -->
+
+    <record id="view_hospital_admission_nursing_inherit" model="ir.ui.view">
+        <field name="name">hospital.admission.nursing.inherit</field>
+        <field name="model">hospital.admission</field>
+        <field name="inherit_id" ref="hospital_admission.view_hospital_admission_form"/>
+        <field name="arch" type="xml">
+
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button
+                    name="action_view_admission_nursing_rounds"
+                    type="object"
+                    class="oe_stat_button"
+                    icon="fa-heartbeat"
+                    invisible="not id">
+                    <field name="nursing_round_count" widget="statinfo" string="Rounds"/>
+                </button>
+                <button
+                    name="action_view_admission_nursing_notes"
+                    type="object"
+                    class="oe_stat_button"
+                    icon="fa-pencil-square-o"
+                    invisible="not id">
+                    <field name="nursing_note_count" widget="statinfo" string="Notes"/>
+                </button>
+                <button
+                    name="action_view_admission_care_plans"
+                    type="object"
+                    class="oe_stat_button"
+                    icon="fa-clipboard"
+                    invisible="not id">
+                    <field name="care_plan_count" widget="statinfo" string="Care Plans"/>
+                </button>
+                <button
+                    name="action_view_admission_medication_administrations"
+                    type="object"
+                    class="oe_stat_button"
+                    icon="fa-pills"
+                    invisible="not id">
+                    <field name="medication_administration_count" widget="statinfo" string="MAR"/>
+                </button>
+            </xpath>
+
+        </field>
+    </record>
+
+</odoo>
