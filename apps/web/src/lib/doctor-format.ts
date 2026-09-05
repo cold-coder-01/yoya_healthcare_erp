@@ -260,29 +260,79 @@ function stageBlockReason(
  * Vitals
  * ------------------------------------------------------------------ */
 
+/**
+ * ZERO MEANS NOT RECORDED, for every numeric vital on this screen.
+ *
+ * WHY THE CLIENT DECIDES THIS. hospital.patient.evaluation stores each vital as
+ * a plain Float with no null sentinel, so a reading nobody took is stored as
+ * 0.0 and is indistinguishable in the column from a measured zero.
+ * api_response.float_value forwards the raw number deliberately -- its comment
+ * says "let the client decide" -- and this is the client deciding.
+ *
+ * WHY 0 IS ALWAYS "NOT RECORDED" HERE AND NEVER A READING. Every field this
+ * guard covers is physiologically impossible at zero in a living patient:
+ * weight, height, temperature, heart rate, respiratory rate, systolic and
+ * diastolic pressure, SpO2, RBS, head circumference and BMI. There is no
+ * measurement being suppressed, because there is no patient in front of a
+ * doctor with a pulse of 0 or an oxygen saturation of 0%.
+ *
+ * PAIN SCORE IS NOT ONE OF THESE, and that is the exception that makes the
+ * rule safe to state. A pain level of 0 is a real, meaningful answer -- no
+ * pain -- and it never reaches this guard: hospital.patient.evaluation stores
+ * pain_level as a Selection keyed '0'..'10', the serializer sends it through
+ * selection_value(), and it arrives as a string.
+ *
+ * THE ALTERNATIVE WAS WORSE. Before this, a triage record saved with vitals
+ * left blank rendered "BP 0/0 · Pulse 0 bpm · SpO2 0 %" on the Doctor Desk --
+ * not a missing reading, but a fabricated one describing a dead patient.
+ */
+function isRecordedVital(value: number | null | undefined): value is number {
+  return value !== null && value !== undefined && value !== 0;
+}
+
 /** A vital reading with its unit, or an em dash. Never a zero for "unknown". */
 export function vitalText(
   value: number | null | undefined,
   unit = "",
   digits = 1,
 ): string {
-  if (value === null || value === undefined) return "—";
+  if (!isRecordedVital(value)) return "—";
   const rounded = Number.isInteger(value) ? String(value) : value.toFixed(digits);
   return unit ? `${rounded} ${unit}` : rounded;
 }
 
-/** "120/80", or an em dash when either half is missing. */
+/**
+ * "120/80", or an em dash when either half is missing.
+ *
+ * BOTH HALVES MUST BE REAL. "120/0" is not a blood pressure with a missing
+ * diastolic; it is a reading that would send a clinician looking for shock.
+ */
 export function bloodPressureText(vitals: DoctorVitals): string {
   const { systolic_bp: systolic, diastolic_bp: diastolic } = vitals;
-  if (systolic === null || diastolic === null) return "—";
+  if (!isRecordedVital(systolic) || !isRecordedVital(diastolic)) return "—";
   return `${Math.round(systolic)}/${Math.round(diastolic)}`;
 }
 
-/** True when any vital was recorded, so an empty grid can say so honestly. */
+/**
+ * True when any vital was recorded, so an empty grid can say so honestly.
+ *
+ * Uses the SAME recorded-ness test the cells do, so the grid cannot claim to
+ * hold vitals and then render a row of em dashes.
+ */
 export function hasAnyVital(vitals: DoctorVitals): boolean {
+  /*
+    PAIN SCORE COUNTS, AND IT COUNTS AT ZERO. It is the one reading on this
+    grid whose zero is a real answer -- no pain -- and the grid renders it
+    behind this gate, so testing it for recorded-ness the way a pulse is
+    tested would hide a legitimately reported score of 0.
+  */
+  if (vitals.pain_level !== null && vitals.pain_level !== undefined) return true;
   return (
     Object.entries(vitals).filter(
-      ([key, value]) => key !== "bmi_state" && value !== null && value !== undefined,
+      ([key, value]) =>
+        key !== "bmi_state" &&
+        key !== "pain_level" &&
+        isRecordedVital(value as number | null | undefined),
     ).length > 0
   );
 }
