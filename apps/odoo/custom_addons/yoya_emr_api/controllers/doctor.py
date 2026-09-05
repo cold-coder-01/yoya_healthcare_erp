@@ -115,6 +115,13 @@ from ..services.radiology_serializers import (
 from ..services.result_serializers import (
     serialize_results,
 )
+from ..services.history_serializers import (
+    abnormal_counts,
+    released_image_count,
+    serialize_history_detail,
+    serialize_history_summary,
+    serialize_history_visit,
+)
 from ..services.medication_serializers import (
     CATALOGUE_DEFAULT_LIMIT as MED_CATALOGUE_DEFAULT_LIMIT,
     CATALOGUE_MAX_LIMIT as MED_CATALOGUE_MAX_LIMIT,
@@ -592,6 +599,428 @@ def _load_visit(env, appointment_id):
             403,
         )
     return appointment
+
+
+# ----------------------------------------------------------------------
+# LONGITUDINAL CLINICAL HISTORY
+# ----------------------------------------------------------------------
+HISTORY_DEFAULT_LIMIT = 20
+HISTORY_MAX_LIMIT = 50
+
+# Prior episodes History is willing to show. Verified against the live
+# vocabulary rather than assumed: hospital.encounter.state is
+# planned / checked_in / active / completed / closed / cancelled.
+#
+# 'completed' and 'closed' are the settled ones. 'planned' and 'checked_in'
+# are arrivals that never became clinical episodes, and 'active' is an open
+# episode that belongs on a worklist, not in a history.
+HISTORY_ENCOUNTER_STATES = ("completed", "closed")
+
+# Cancelled is admitted ONLY when the episode actually carries clinical data;
+# the substance test below is what decides. A cancellation with nothing
+# recorded is an administrative artifact and is excluded, because a card that
+# opens onto seven empty sections teaches a doctor to stop opening cards.
+HISTORY_CANCELLED_STATE = "cancelled"
+
+
+def _load_history_current_visit(env, appointment_id):
+    """The CURRENT visit, which is what proves the care relationship.
+
+    WHY THIS EXISTS RATHER THAN _load_visit. _load_visit deliberately
+    distinguishes 'not_found' (404) from 'out_of_scope' (403), which is the
+    right answer on a worklist: a doctor looking at a real visit that is not
+    theirs should be told so. On a HISTORY route that distinction is an
+    enumeration oracle. Comparing a 403 against a 404 would confirm which
+    appointment ids exist, one probe at a time, for the whole hospital.
+
+    So every refusal here is the SAME 404: an id that never existed, an id
+    belonging to another doctor, and an id belonging to another hospital all
+    answer identically. This mirrors results_image_content, which already
+    collapses every refusal for exactly this reason.
+
+    _load_visit IS DELIBERATELY LEFT UNTOUCHED. Its behaviour is pinned by
+    test_visit_detail_respects_scope and relied on by every live endpoint;
+    this function narrows for History only.
+
+    THE SCOPE IS THE NORMAL, NARROW, DOCTOR-OWNED ONE. find_appointment_in_scope
+    applies clinical_scope's explicit domain, which is an API-layer AND and is
+    NOT widened by the Slice 9A record rules. A doctor therefore establishes a
+    care relationship only through a visit genuinely assigned to them.
+    """
+    appointment, reason = find_appointment_in_scope(env, appointment_id)
+    if reason is not None or not appointment:
+        raise ApiError("visit_not_found", "Visit not found.", 404)
+    return appointment
+
+
+def _history_patient_and_encounter(appointment):
+    """(patient, current_encounter) derived SERVER-SIDE from the current visit.
+
+    NO CLIENT-SUPPLIED PATIENT ID, anywhere in the history surface. The patient
+    is whoever the proven current visit is for, which is what makes patient
+    enumeration structurally impossible rather than merely refused.
+
+    This matters more than usual here: hospital.patient carries a read ACL for
+    Hospital Doctor and NO record rule, so a patient_id route would inherit an
+    unscoped demographic read.
+    """
+    patient = appointment.patient_id
+    if not patient:
+        raise ApiError("visit_not_found", "Visit not found.", 404)
+    return patient, appointment.encounter_id
+
+
+def _history_clinical_children(env, encounter, consultation):
+    """Every clinical child of one prior episode, legacy rows included.
+
+    TWO DISJOINT BRANCHES PER MODEL, and the disjointness is the whole point.
+
+    Bridge-era rows carry consultation_id. Legacy rows predate the consultation
+    bridge and carry only appointment_id; the Phase-0 census found this is the
+    NORMAL case rather than an edge one (189 of 194 laboratory requests, 26 of
+    35 diagnoses, 6 of 7 prescriptions and 6 of 9 radiology requests have a
+    null consultation_id). A resolver that matched consultation_id alone would
+    show a doctor almost nothing.
+
+    The legacy branch pins consultation_id = False explicitly, so a modern row
+    carrying BOTH links matches the first branch only and can never be returned
+    twice.
+
+    An episode with no appointment and no consultation has no path here and is
+    correctly empty; the 13 laboratory and 2 radiology rows the census found
+    with neither link belong to no episode and are unreachable by design.
+    """
+    appointment = encounter.appointment_id
+    result = {}
+    for key, model, parent_field in (
+        ("diagnoses", "hospital.patient.diagnosis", "appointment_id"),
+        ("laboratory", "hospital.laboratory.request", "appointment_id"),
+        ("radiology", "hospital.radiology.request", "appointment_id"),
+        ("prescriptions", "hospital.prescription", "appointment_id"),
+    ):
+        Model = env[model]
+        rows = Model.browse()
+        if consultation:
+            rows |= Model.search([("consultation_id", "=", consultation.id)])
+        if appointment:
+            rows |= Model.search(
+                [
+                    ("consultation_id", "=", False),
+                    (parent_field, "=", appointment.id),
+                ]
+            )
+        result[key] = rows
+    return result
+
+
+def _history_evaluation(env, encounter):
+    """The triage record for one prior episode, or an empty recordset.
+
+    Ordered and limited rather than assumed unique: yoya_clinical_bridge adds
+    unique(appointment_id), but legacy rows may predate it, exactly as
+    clinical_scope.latest_evaluation_for already allows for.
+    """
+    if not encounter.appointment_id:
+        return env["hospital.patient.evaluation"].browse()
+    return env["hospital.patient.evaluation"].search(
+        [("appointment_id", "=", encounter.appointment_id.id)],
+        order="evaluation_date desc, id desc",
+        limit=1,
+    )
+
+
+def _history_has_substance(encounter, consultation, children, evaluation):
+    """True when the episode carries a real clinical record.
+
+    AN ADMINISTRATIVE BOOKING IS NOT A CLINICAL VISIT. Rendering one as a rich
+    history card promises a doctor something that is not there.
+    """
+    return bool(
+        consultation
+        or children["diagnoses"]
+        or children["laboratory"]
+        or children["radiology"]
+        or children["prescriptions"]
+        or (evaluation and evaluation.state == "done")
+    )
+
+
+def _load_history_episode(env, appointment, historical_appointment_id):
+    """(encounter, consultation) for ONE prior episode of this visit's patient.
+
+    THE FIVE CHECKS THE HISTORY SURFACE SHARES, resolved once so the detail
+    endpoint and the image endpoint cannot disagree about what they are willing
+    to open. `appointment` has already been proven to be the caller's own.
+
+    THE PATIENT MATCH IS NOT REDUNDANT WITH THE RECORD RULES. The
+    care-relationship rule admits every record of every patient this doctor
+    currently treats, so without it a historical appointment id belonging to a
+    DIFFERENT patient of the same doctor would resolve happily and be rendered
+    under the wrong patient's name. The rule answers "may I read this?"; only
+    this check answers "is this the patient I am looking at?".
+
+    THE INCLUSION POLICY IS RE-APPLIED so the summary and the detail cannot
+    disagree: an episode the list refuses to show must not be readable by
+    typing its id.
+
+    THE HISTORICAL APPOINTMENT RECORD IS NEVER READ. It is matched as a COLUMN
+    VALUE on hospital.encounter; there is no care-relationship rule on
+    hospital.appointment and this path does not need one.
+
+    EVERY MISS RAISES THE SAME 404.
+    """
+    patient, current_encounter = _history_patient_and_encounter(appointment)
+
+    domain = [
+        ("appointment_id", "=", historical_appointment_id),
+        ("patient_id", "=", patient.id),
+        (
+            "state",
+            "in",
+            list(HISTORY_ENCOUNTER_STATES) + [HISTORY_CANCELLED_STATE],
+        ),
+    ]
+    if current_encounter:
+        domain.append(("id", "!=", current_encounter.id))
+
+    encounter = env["hospital.encounter"].search(domain, limit=1)
+    if not encounter:
+        raise ApiError("visit_not_found", "Visit not found.", 404)
+
+    consultation = env["hospital.consultation"].search(
+        [("encounter_id", "=", encounter.id)], limit=1
+    )
+    children = _history_clinical_children(env, encounter, consultation)
+    evaluation = _history_evaluation(env, encounter)
+    if not _history_has_substance(encounter, consultation, children, evaluation):
+        raise ApiError("visit_not_found", "Visit not found.", 404)
+
+    return encounter, consultation
+
+
+def _serve_released_image(env, consultation, image_id, params):
+    """The bytes of one released image belonging to `consultation`.
+
+    EXTRACTED SO THE TWO IMAGE ROUTES CANNOT DRIFT. The Results tab serves
+    images of the CURRENT visit and History serves images of a PRIOR one, but
+    "which bytes may this caller have" is one question and it is answered here
+    once. A second copy of these four conditions is exactly how one route ends
+    up enforcing release and the other forgetting to.
+
+    A SECOND, INDEPENDENT RELEASE CHECK. The serializer already withholds image
+    metadata for an unreleased report; `result_id.state` is re-tested rather
+    than trusted, because an id can be guessed without ever reading a payload.
+
+    NO SUDO. The search runs as the caller, so the record rules on
+    hospital.radiology.image are doing the scoping and this only narrows them.
+
+    EVERY REFUSAL IS THE SAME 404.
+    """
+    image = env["hospital.radiology.image"].search(
+        [
+            ("id", "=", image_id),
+            ("active", "=", True),
+            ("result_id.active", "=", True),
+            ("result_id.state", "=", "released"),
+            ("result_id.request_id.consultation_id", "=", consultation.id),
+        ],
+        limit=1,
+    )
+    if not image:
+        raise ApiError("image_not_found", "Image not found.", 404)
+
+    as_attachment = params.get("disposition") == "attachment"
+    stream = env["ir.binary"]._get_stream_from(
+        image,
+        "file",
+        filename=_safe_download_name(image.filename),
+        mimetype=image.mimetype or None,
+    )
+    response = stream.get_response(as_attachment=as_attachment)
+    # CLINICAL BYTES DO NOT SIT IN A CACHE. `private` alone would still let the
+    # browser serve them from history on a shared workstation.
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
+
+
+def _history_limit_param(raw):
+    if raw in (None, "", False):
+        return HISTORY_DEFAULT_LIMIT
+    limit = parse_int_param("limit", raw)
+    if limit <= 0:
+        raise ApiError("invalid_parameter", "'limit' must be positive.", 400)
+    # CLAMPED, NOT REFUSED. A client asking for more than the ceiling gets the
+    # ceiling; the page is bounded whatever the caller asks for.
+    return min(limit, HISTORY_MAX_LIMIT)
+
+
+def _history_offset_param(raw):
+    if raw in (None, "", False):
+        return 0
+    offset = parse_int_param("offset", raw)
+    if offset < 0:
+        raise ApiError("invalid_parameter", "'offset' must not be negative.", 400)
+    return offset
+
+
+def _history_page_children(env, encounters):
+    """Every clinical child of a WHOLE PAGE of encounters, in bounded queries.
+
+    THE N+1 THIS EXISTS TO PREVENT. Asking each encounter for its own
+    diagnoses, laboratory, radiology and prescriptions would be four queries
+    per card: eighty for a twenty-visit page, before triage and consultations.
+    Instead each model is searched TWICE for the entire page -- once for the
+    bridge-era link and once for the legacy one -- and the rows are bucketed in
+    Python.
+
+    Total queries for a page: 1 encounter search + 1 consultation search
+    + 1 evaluation search + 8 child searches = 11, INDEPENDENT of page size.
+    """
+    consultations = env["hospital.consultation"].search(
+        [("encounter_id", "in", encounters.ids)]
+    )
+    consultation_by_encounter = {
+        consultation.encounter_id.id: consultation for consultation in consultations
+    }
+
+    appointment_ids = [
+        encounter.appointment_id.id
+        for encounter in encounters
+        if encounter.appointment_id
+    ]
+
+    evaluations = (
+        env["hospital.patient.evaluation"].search(
+            [("appointment_id", "in", appointment_ids)],
+            order="evaluation_date desc, id desc",
+        )
+        if appointment_ids
+        else env["hospital.patient.evaluation"].browse()
+    )
+    evaluation_by_appointment = {}
+    for evaluation in evaluations:
+        # First wins: the search is already newest-first, so this keeps the
+        # most recent evaluation for an appointment that legacy data left with
+        # more than one.
+        evaluation_by_appointment.setdefault(
+            evaluation.appointment_id.id, evaluation
+        )
+
+    consultation_ids = [c.id for c in consultations]
+    buckets = {}
+    for key, model, parent_field in (
+        ("diagnoses", "hospital.patient.diagnosis", "appointment_id"),
+        ("laboratory", "hospital.laboratory.request", "appointment_id"),
+        ("radiology", "hospital.radiology.request", "appointment_id"),
+        ("prescriptions", "hospital.prescription", "appointment_id"),
+    ):
+        Model = env[model]
+        by_consultation = {}
+        by_appointment = {}
+        if consultation_ids:
+            for row in Model.search([("consultation_id", "in", consultation_ids)]):
+                by_consultation.setdefault(row.consultation_id.id, Model.browse())
+                by_consultation[row.consultation_id.id] |= row
+        if appointment_ids:
+            # DISJOINT from the branch above by construction: consultation_id
+            # is pinned to False, so a modern row carrying both links is
+            # bucketed once and only once.
+            legacy = Model.search(
+                [
+                    ("consultation_id", "=", False),
+                    (parent_field, "in", appointment_ids),
+                ]
+            )
+            for row in legacy:
+                key_id = row[parent_field].id
+                by_appointment.setdefault(key_id, Model.browse())
+                by_appointment[key_id] |= row
+        buckets[key] = (Model, by_consultation, by_appointment)
+
+    return consultation_by_encounter, evaluation_by_appointment, buckets
+
+
+def _history_children_for(encounter, consultation, buckets):
+    """This encounter's slice of the page-wide buckets."""
+    appointment_id = encounter.appointment_id.id if encounter.appointment_id else None
+    children = {}
+    for key, (Model, by_consultation, by_appointment) in buckets.items():
+        rows = Model.browse()
+        if consultation:
+            rows |= by_consultation.get(consultation.id, Model.browse())
+        if appointment_id:
+            rows |= by_appointment.get(appointment_id, Model.browse())
+        children[key] = rows
+    return children
+
+
+def _history_paginate(env, candidates, limit, offset):
+    """(page_rows, total) after the substance filter, newest first.
+
+    THE FILTER RUNS BEFORE PAGINATION, which is what makes `total` and
+    `has_more` honest: paginating first and filtering after would produce short
+    pages and a total that counted visits the client can never see.
+
+    The children of the CANDIDATE set are read in bounded queries, and only the
+    surviving page is serialized. `candidates` is already newest-first from the
+    model's _order.
+    """
+    if not candidates:
+        return [], 0
+
+    consultation_by_encounter, evaluation_by_appointment, buckets = (
+        _history_page_children(env, candidates)
+    )
+
+    included = []
+    for encounter in candidates:
+        consultation = consultation_by_encounter.get(encounter.id)
+        children = _history_children_for(encounter, consultation, buckets)
+        appointment_id = (
+            encounter.appointment_id.id if encounter.appointment_id else None
+        )
+        evaluation = evaluation_by_appointment.get(appointment_id)
+        if not _history_has_substance(
+            encounter, consultation, children, evaluation
+        ):
+            continue
+        included.append((encounter, consultation, children, evaluation))
+
+    total = len(included)
+    window = included[offset:offset + limit]
+
+    rows = []
+    for encounter, consultation, children, evaluation in window:
+        abnormal, critical = abnormal_counts(children["laboratory"])
+        images = released_image_count(children["radiology"])
+        primary = children["diagnoses"].filtered(
+            lambda row: row.diagnosis_type == "primary"
+        )[:1]
+        # TRIAGE FIRST, THE NOTE SECOND. The nurse records why the patient came
+        # before the physician does, and the consultation's own
+        # presenting_complaint is seeded FROM triage anyway; falling back to it
+        # covers an episode that was documented without a triage record.
+        chief_complaint = evaluation.chief_complaint if evaluation else None
+        if not chief_complaint and consultation:
+            chief_complaint = consultation.presenting_complaint
+        rows.append(
+            serialize_history_visit(
+                encounter,
+                consultation,
+                chief_complaint,
+                primary[0] if primary else None,
+                {
+                    "diagnoses": len(children["diagnoses"]),
+                    "laboratory": len(children["laboratory"]),
+                    "radiology": len(children["radiology"]),
+                    "medications": len(children["prescriptions"]),
+                    "images": images,
+                    "abnormal_results": abnormal,
+                    "critical_results": critical,
+                },
+            )
+        )
+    return rows, total
 
 
 def _load_consultation(env, appointment):
@@ -2310,44 +2739,7 @@ class YoyaEmrDoctorController(http.Controller):
         if not consultation:
             raise ApiError("image_not_found", "Image not found.", 404)
 
-        image = env["hospital.radiology.image"].search(
-            [
-                ("id", "=", image_id),
-                ("active", "=", True),
-                ("result_id.active", "=", True),
-                ("result_id.state", "=", "released"),
-                ("result_id.request_id.consultation_id", "=", consultation.id),
-            ],
-            limit=1,
-        )
-        if not image:
-            raise ApiError("image_not_found", "Image not found.", 404)
-
-        # A PDF may be asked for as a download; everything else is shown in
-        # place. The client asks, the server decides what it is willing to
-        # honour -- an arbitrary Content-Disposition is a header-injection
-        # surface, so only the two literals are accepted.
-        as_attachment = params.get("disposition") == "attachment"
-
-        stream = env["ir.binary"]._get_stream_from(
-            image,
-            "file",
-            # THE STORED FILENAME, SANITISED, and never a client-supplied one.
-            # It ends up in Content-Disposition, so a name carrying CR/LF or a
-            # path separator is a header-splitting and path-confusion surface;
-            # werkzeug quotes it too, but a value that cannot go wrong is
-            # better than one that is escaped correctly today.
-            filename=_safe_download_name(image.filename),
-            # Server-derived at upload from the file's own bytes, so it is the
-            # one mimetype in the system that was never taken on trust.
-            mimetype=image.mimetype or None,
-        )
-        response = stream.get_response(as_attachment=as_attachment)
-        # CLINICAL BYTES DO NOT SIT IN A CACHE. `private` alone would still let
-        # the browser serve them from history on a shared workstation, which is
-        # exactly where a hospital desk lives.
-        response.headers["Cache-Control"] = "private, no-store"
-        return response
+        return _serve_released_image(env, consultation, image_id, params)
 
     # ------------------------------------------------------------------
     # 17. Consultation radiology orders -- read
@@ -2779,3 +3171,195 @@ class YoyaEmrDoctorController(http.Controller):
                 raise MedicationResponseError(str(error)) from error
 
         return response
+
+    # ------------------------------------------------------------------
+    # 26. Longitudinal clinical history -- the patient's PRIOR episodes
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>/history",
+        type="http", auth="user", methods=["GET"], csrf=False,
+    )
+    @doctor_endpoint
+    def history_summary(self, appointment_id, **params):
+        """The compact list of this patient's previous clinical episodes.
+
+        ANCHORED ON THE CURRENT VISIT, NEVER ON A PATIENT ID. The appointment
+        in the path is the caller's own, proven through the normal narrow
+        doctor scope, and the patient is derived from it. A doctor cannot name
+        a patient they are not treating, so this route cannot be used to walk
+        the hospital's census -- which matters because hospital.patient itself
+        carries a read ACL for Hospital Doctor and no record rule at all.
+
+        CROSS-PROVIDER BY DESIGN. Prior episodes conducted by OTHER doctors are
+        included, because continuity of care is the entire clinical point of a
+        history. That is what the Slice 9A care-relationship rules exist to
+        permit, and it lasts exactly as long as the current appointment is
+        active.
+
+        THE CURRENT EPISODE IS EXCLUDED. It is already open in NOTE, DIAGNOSIS,
+        ORDERS and RESULTS; duplicating a record still being written into a
+        second surface is how two screens start disagreeing about it. Excluded
+        by encounter identity, not by date -- two visits can share a day.
+
+        NO SUDO. Encounters are found through the caller's own record rules, so
+        the care-relationship rule is the security boundary and this handler
+        only narrows it further.
+
+        GET ONLY. History records nothing and changes nothing.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+
+        appointment = _load_history_current_visit(env, appointment_id)
+        patient, current_encounter = _history_patient_and_encounter(appointment)
+
+        limit = _history_limit_param(params.get("limit"))
+        offset = _history_offset_param(params.get("offset"))
+
+        Encounter = env["hospital.encounter"]
+        domain = [
+            ("patient_id", "=", patient.id),
+            (
+                "state",
+                "in",
+                list(HISTORY_ENCOUNTER_STATES) + [HISTORY_CANCELLED_STATE],
+            ),
+        ]
+        if current_encounter:
+            domain.append(("id", "!=", current_encounter.id))
+
+        # ORDERED IN SQL by the model's own _order (opened_at desc, id desc),
+        # which is newest-first already and backed by an index on patient_id.
+        candidates = Encounter.search(domain)
+
+        # THE SUBSTANCE FILTER RUNS IN PYTHON, and it has to: "carries at least
+        # one clinical artifact" spans five models with two linkage shapes
+        # each, which no single domain can express. It is bounded by the
+        # candidate set rather than by the whole table, and the child reads
+        # below are BATCHED -- one search per model for the whole page, not one
+        # per encounter. See _history_page_children.
+        page, total = _history_paginate(env, candidates, limit, offset)
+
+        return success_response(
+            serialize_history_summary(patient, page, total, limit, offset)
+        )
+
+    # ------------------------------------------------------------------
+    # 27. Longitudinal clinical history -- ONE prior episode, in full
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>"
+        "/history/<int:historical_appointment_id>",
+        type="http", auth="user", methods=["GET"], csrf=False,
+    )
+    @doctor_endpoint
+    def history_detail(self, appointment_id, historical_appointment_id, **params):
+        """One prior episode, in full, for the read-only history viewer.
+
+        FIVE INDEPENDENT CHECKS, and the fourth is the one that is easy to
+        forget:
+
+          1. the caller holds Doctor Desk;
+          2. the CURRENT appointment is theirs, under the normal narrow scope,
+             which is what proves the care relationship;
+          3. the patient is derived from it, never supplied;
+          4. the historical episode must belong to THAT SAME PATIENT; and
+          5. it must satisfy the same inclusion policy the summary applies.
+
+        CHECK 4 IS NOT REDUNDANT WITH THE RECORD RULES. The care-relationship
+        rule admits every record of every patient this doctor currently treats
+        -- so without an explicit patient match, a historical appointment id
+        belonging to a DIFFERENT patient of the same doctor would resolve
+        happily and be rendered under the wrong patient's name. The rule
+        answers "may I read this?"; only this check answers "is this the
+        patient I am looking at?".
+
+        CHECK 5 STOPS THE SUMMARY AND THE DETAIL DISAGREEING. An episode the
+        list refuses to show must not be readable by typing its id.
+
+        EVERY MISS IS THE SAME 404, exactly as the summary's loader is: a
+        historical id that never existed, one belonging to another patient, one
+        belonging to another hospital and one excluded by policy are
+        indistinguishable in the response.
+
+        THE HISTORICAL APPOINTMENT RECORD IS NEVER READ. It is matched as a
+        COLUMN VALUE on hospital.encounter, which History can read; there is no
+        care-relationship rule on hospital.appointment and this route does not
+        need one. See the security XML for why that rule is deliberately absent.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+
+        appointment = _load_history_current_visit(env, appointment_id)
+        encounter, consultation = _load_history_episode(
+            env, appointment, historical_appointment_id
+        )
+        children = _history_clinical_children(env, encounter, consultation)
+        evaluation = _history_evaluation(env, encounter)
+
+        return success_response(
+            serialize_history_detail(
+                encounter,
+                consultation,
+                evaluation,
+                children["diagnoses"],
+                children["prescriptions"],
+                children["laboratory"],
+                children["radiology"],
+            )
+        )
+
+    # ------------------------------------------------------------------
+    # 28. Longitudinal clinical history -- one PRIOR visit's image bytes
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>"
+        "/history/<int:historical_appointment_id>/images/<int:image_id>",
+        type="http", auth="user", methods=["GET"], csrf=False,
+    )
+    @doctor_endpoint
+    def history_image_content(self, appointment_id, historical_appointment_id,
+                              image_id, **params):
+        """The bytes of one released image from a PRIOR episode.
+
+        WHY THIS IS A SEPARATE ROUTE RATHER THAN A WIDENED /results/images.
+
+        The obvious reuse would be to let /visits/<id>/results/images/<id>
+        accept a historical appointment. It was rejected deliberately. That
+        route is a CURRENT-VISIT endpoint, and widening it would mean a
+        current-visit URL could serve a record from a different episode the
+        moment a care relationship existed -- precisely the class of leak the
+        record-id loaders elsewhere in this controller re-check consultation
+        identity to prevent. A longitudinal read belongs on the longitudinal
+        surface, where both appointments are named and both are checked.
+
+        It is NOT a generic image-by-id route either: it can serve nothing
+        without a current visit the caller owns AND a historical visit of that
+        same visit's patient.
+
+        THE SAME FIVE CHECKS AS THE HISTORY DETAIL ENDPOINT, then the shared
+        image gate:
+
+          1. the caller holds Doctor Desk;
+          2. the CURRENT appointment is theirs, proving the care relationship;
+          3. the patient is derived from it, never supplied;
+          4. the historical episode belongs to THAT SAME PATIENT;
+          5. it satisfies the inclusion policy; and then
+          6. _serve_released_image re-checks release and visit-image pairing.
+
+        EVERY REFUSAL IS THE SAME 404, including a historical visit that
+        exists but is not this patient's, and an image that belongs to a
+        different episode of the same patient.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+
+        appointment = _load_history_current_visit(env, appointment_id)
+        encounter, consultation = _load_history_episode(
+            env, appointment, historical_appointment_id
+        )
+        if not consultation:
+            # No consultation, no request, therefore no image of this episode.
+            raise ApiError("image_not_found", "Image not found.", 404)
+
+        return _serve_released_image(env, consultation, image_id, params)

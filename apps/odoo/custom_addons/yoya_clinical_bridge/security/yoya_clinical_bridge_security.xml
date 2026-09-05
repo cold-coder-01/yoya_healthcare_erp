@@ -1065,5 +1065,266 @@
             <field name="perm_unlink" eval="True"/>
         </record>
 
+
+        <!-- ============================================================
+             SLICE 9A : LONGITUDINAL CLINICAL HISTORY
+             Cross-provider READ, bounded by an ACTIVE care relationship.
+             ============================================================
+
+             THE POLICY, IN ONE SENTENCE
+             ===========================
+             A doctor may read another provider's prior clinical records for
+             patient P only WHILE that doctor holds an active clinical
+             appointment for P (confirmed or in_consultation; see
+             ACTIVE_CARE_APPOINTMENT_STATES in models/res_users.py, which is
+             derived from the live workflow vocabulary, not guessed).
+
+             It is NOT "every patient I have ever treated", NOT hospital-wide,
+             and NOT permanent. When the current episode reaches done or
+             cancelled, this access LAPSES. That is deliberate.
+
+             WHY THESE RULES EXIST AT ALL
+             ============================
+             Every pre-existing doctor rule in this file is anchored on "I am
+             the clinician on THAT record's visit". None is patient-anchored;
+             rule_patient_diagnosis_doctor says so explicitly and defers the
+             question to a History slice. This is that slice, and these rules
+             are the deliberate, bounded answer.
+
+             HOW ODOO COMBINES THEM
+             ======================
+             Odoo ORs the domains of every rule whose groups the user holds, so
+             each rule below WIDENS the doctor scope while the relationship
+             lasts. That is why every one of them is perm_read ONLY: a widened
+             read can never become a widened write, and the visit-anchored
+             rules above keep sole ownership of write/create/unlink.
+
+             THE ENDPOINT LAYER IS UNCHANGED AND STILL NARROW
+             ================================================
+             clinical_scope.build_appointment_scope_domain() is an EXPLICIT
+             domain ANDed by the API; it is not an ir.rule and is not widened
+             by anything here. Every live /doctor/visits/&lt;id&gt;/... endpoint
+             therefore keeps its existing scope, and every record-id loader in
+             controllers/doctor.py re-checks record.consultation_id against the
+             visit being addressed. Those two facts are what stop these rules
+             leaking a historical record into a current-visit endpoint.
+
+             DELIBERATELY ABSENT: hospital.appointment
+             ========================================
+             There is NO care-relationship rule on hospital.appointment, for
+             two independent reasons, either of which alone is sufficient:
+
+             1. NON-DISCLOSURE REGRESSION. find_appointment_in_scope() probes
+                with search_count() as the caller to distinguish "does not
+                exist" from "not yours". Today rule_appointment_doctor hides a
+                colleague's visit BEFORE that probe, so the desk answers a flat
+                404 and cannot be used to enumerate appointment ids; the
+                property test_visit_detail_respects_scope pins by name. A
+                care-relationship rule here would make that probe succeed and
+                flip the answer to 403 for every care-related historical visit,
+                weakening a documented guarantee across the whole Doctor Desk.
+
+             2. RULE-EVALUATION RECURSION. A care-relationship rule on
+                hospital.appointment would be consulted while these domains
+                are themselves resolving an appointment subquery.
+
+             WHY THE DOMAINS TRAVERSE RATHER THAN NAMING A USER FIELD
+             =======================================================
+             res.users.yoya_care_relationship_patient_ids states this policy in
+             one readable place and is the SPECIFICATION; a test asserts the
+             domains below admit exactly the patients it reports. But the rules
+             must NOT be written as ('patient_id', 'in', that_field.ids).
+
+             ir.rule._compute_domain is ormcached on
+             (uid, su, model, mode, context) and caches the EVALUATED domain.
+             Baking today's patient ids into that cache entry would mean
+             nothing invalidates them when an appointment closes, and a
+             doctor's longitudinal access would outlive the care relationship
+             that justified it. That is a lapse failure, and it is silent.
+
+             Traversing hospital.patient.appointment_ids with the `any`
+             operator keeps the relationship inside the SQL the rule generates:
+             the only value baked into the cache is user.id, which is already
+             part of the cache key, and the database re-evaluates the
+             relationship on every query.
+
+             History therefore never needs to READ a hospital.appointment row:
+             hospital.encounter is the episode anchor and already carries
+             name, opened_at, state, encounter_type, primary_doctor_id and
+             department_id, and its appointment_id COLUMN VALUE is readable as
+             part of the encounter without reading the appointment record.
+        -->
+
+        <record id="rule_history_encounter_doctor" model="ir.rule">
+            <field name="name">Encounter: history for patients under my active care (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_encounter"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!-- THE EPISODE ANCHOR. patient_id is required and indexed here, which is why History anchors on the encounter rather than the appointment. -->
+            <field name="domain_force">[('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_consultation_doctor" model="ir.rule">
+            <field name="name">Consultation: history for patients under my active care (doctor)</field>
+            <field name="model_id" ref="model_hospital_consultation"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!-- patient_id is a STORED related column, so this is an index lookup rather than a traversal at query time. -->
+            <field name="domain_force">[('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_patient_diagnosis_doctor" model="ir.rule">
+            <field name="name">Patient Diagnosis: history for patients under my active care (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_patient_diagnosis"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">[('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_patient_evaluation_doctor" model="ir.rule">
+            <field name="name">Patient Evaluation: history for patients under my active care (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_patient_evaluation"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!-- Triage vitals for a prior episode. READ ONLY; the nurse rule above keeps sole ownership of write. -->
+            <field name="domain_force">[('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_laboratory_request_doctor" model="ir.rule">
+            <field name="name">Laboratory Request: history for patients under my active care (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_laboratory_request"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">[('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_laboratory_request_line_doctor" model="ir.rule">
+            <field name="name">Laboratory Request Line: history follows the request (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_laboratory_request_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!-- Lines carry no patient of their own, so they inherit the request scope rather than defining a second one that could drift away from it. -->
+            <field name="domain_force">[('request_id', 'any', [('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_laboratory_result_doctor" model="ir.rule">
+            <field name="name">Laboratory Result: history for patients under my active care (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_laboratory_result"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!-- RELEASE IS NOT CHECKED HERE, deliberately. Released-only is a SERIALIZER guarantee (result_serializers.released_results) applied identically by the Results tab and by History; restating it in a record rule would create a competing definition of released that could drift from it. -->
+            <field name="domain_force">[('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_laboratory_result_line_doctor" model="ir.rule">
+            <field name="name">Laboratory Result Line: history follows the result (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_laboratory_result_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">[('result_id', 'any', [('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_radiology_request_doctor" model="ir.rule">
+            <field name="name">Radiology Request: history for patients under my active care (doctor)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_request"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">[('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_radiology_request_line_doctor" model="ir.rule">
+            <field name="name">Radiology Request Line: history follows the request (doctor)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_request_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">[('request_id', 'any', [('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_radiology_result_doctor" model="ir.rule">
+            <field name="name">Radiology Result: history for patients under my active care (doctor)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_result"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">[('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_radiology_result_line_doctor" model="ir.rule">
+            <field name="name">Radiology Result Line: history follows the result (doctor)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_result_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">[('result_id', 'any', [('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_radiology_image_doctor" model="ir.rule">
+            <field name="name">Radiology Image: history for patients under my active care (doctor)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_image"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!-- Images carry no patient of their own. The BYTE endpoint re-checks result_id.state == released independently, so metadata visibility and byte visibility remain two separate gates. -->
+            <field name="domain_force">[('result_id', 'any', [('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_prescription_doctor" model="ir.rule">
+            <field name="name">Prescription: history for patients under my active care (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_prescription"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">[('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_prescription_line_doctor" model="ir.rule">
+            <field name="name">Prescription Line: history follows the prescription (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_prescription_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">[('prescription_id', 'any', [('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
     </data>
 </odoo>

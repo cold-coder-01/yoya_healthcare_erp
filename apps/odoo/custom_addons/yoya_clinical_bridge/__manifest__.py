@@ -47,7 +47,7 @@ stands between a clinician and another patient's imaging.
 This module never modifies ``hospital_management``, ``hospital_billing`` or
 ``hospital_radiology``.
 """,
-    "version": "18.0.1.8.0",
+    "version": "18.0.1.9.0",
     "category": "Healthcare",
     "author": "YOYA Healthcare",
     "license": "LGPL-3",
