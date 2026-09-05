@@ -21,7 +21,7 @@ export const CONSULTATION_SECTIONS = [
   { key: "diagnosis", label: "Diagnosis", live: true },
   { key: "orders", label: "Orders", live: true },
   { key: "results", label: "Results", live: true },
-  { key: "history", label: "History", live: false },
+  { key: "history", label: "History", live: true },
 ] as const;
 
 export type ConsultationSection = (typeof CONSULTATION_SECTIONS)[number]["key"];

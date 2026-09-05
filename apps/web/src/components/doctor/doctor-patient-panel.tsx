@@ -14,10 +14,24 @@ import {
   doctorLabel,
   visitReadiness,
 } from "@/lib/doctor-format";
+import { hasActiveCareRelationship } from "@/lib/history-format";
 import type { ApiEnvelope, DoctorVisitDetail } from "@/types/doctor";
 
+import HistoryWorkspace from "./consultation/history-workspace";
 import { PriorityBadge, StageBadge, VisitTypeBadge } from "./doctor-badges";
 import DoctorVitalsGrid from "./doctor-vitals-grid";
+
+/**
+ * The two views this PRE-CONSULTATION panel can show.
+ *
+ * DELIBERATELY TWO, AND DELIBERATELY BOTH READ-ONLY. Note, Diagnosis, Orders
+ * and Results are not offered here and must not be: they are the consultation
+ * workspace, they carry writes, and they stay behind Start Consultation and
+ * the four model-layer gates it runs. Only History is added, because Slice 9A
+ * already authorizes reading it from `confirmed` onward and the desk was the
+ * only thing making that unreachable.
+ */
+type PanelView = "overview" | "history";
 
 const SEVERITY_TONE: Record<string, string> = {
   critical: "border-red-400 bg-red-50 text-red-900",
@@ -109,9 +123,26 @@ export default function DoctorPatientPanel({
     message: string;
   } | null>(null);
 
+  /*
+    WHICH VIEW IS OPEN, tagged with the visit it belongs to.
+
+    Storing the id alongside the view is what resets it to Overview when the
+    doctor selects a different patient, WITHOUT an effect that writes state
+    during render -- the same pattern doctor-workstation uses for its section
+    and this component already uses for its start error. A History tab left
+    open must never carry one patient's past onto the next patient's panel.
+  */
+  const [viewState, setViewState] = useState<{
+    appointmentId: number | null;
+    view: PanelView;
+  }>({ appointmentId: null, view: "overview" });
+
   const appointmentId = detail?.visit.appointment_id ?? null;
   const visibleStartError =
     startError && startError.appointmentId === appointmentId ? startError.message : null;
+
+  const view: PanelView =
+    viewState.appointmentId === appointmentId ? viewState.view : "overview";
 
   if (!detail) {
     return (
@@ -124,6 +155,13 @@ export default function DoctorPatientPanel({
   }
 
   const { visit, patient, triage, medical_alerts: alerts, encounter, clearance } = detail;
+
+  /*
+    Whether to OFFER History at all. See hasActiveCareRelationship: it mirrors
+    the server's own active-care states, and it decides what to draw, never
+    what may be read.
+  */
+  const showHistoryTab = hasActiveCareRelationship(visit.state);
 
   // Readiness is the AUTHORITATIVE stage plus the server's own assignment
   // verdict. Nothing here re-derives it from triage state and a billing flag.
@@ -230,6 +268,61 @@ export default function DoctorPatientPanel({
         </div>
       </header>
 
+      {/*
+        ---- View strip ----
+
+        SHOWN ONLY WHEN HISTORY IS ACTUALLY REACHABLE. Slice 9A opens
+        longitudinal reading on an ACTIVE care relationship (confirmed or
+        in_consultation), so a draft or cancelled visit gets no strip at all
+        rather than a tab that could only ever answer "not available".
+
+        It is an affordance, not a gate: the server refuses on every request
+        regardless of what this decides to draw.
+
+        The strip sits BELOW the identity header and ABOVE the scrolling body,
+        so the patient's name, chart number and stage stay on screen whichever
+        view is open -- picking the wrong patient is the most expensive mistake
+        this UI can cause, and identity must not scroll away behind a tab.
+      */}
+      {showHistoryTab ? (
+        <div className="flex shrink-0 items-center gap-1 border-b border-slate-200 bg-white px-3">
+          {(
+            [
+              ["overview", "Overview"],
+              ["history", "History"],
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              aria-current={view === key ? "page" : undefined}
+              onClick={() => setViewState({ appointmentId, view: key })}
+              className={`-mb-px border-b-2 px-1.5 py-1.5 cl-meta font-bold uppercase tracking-[0.07em] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-emerald-600 ${
+                view === key
+                  ? "border-emerald-600 text-slate-900"
+                  : "border-transparent text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {view === "history" && showHistoryTab && appointmentId !== null ? (
+        /*
+          THE ONLY CLINICAL SURFACE THIS PANEL ADDS, and it is read-only end to
+          end: HistoryWorkspace has no write path, and every record it shows is
+          served read-only by Slice 9A's record rules.
+
+          Keyed on the visit for the same reason the consultation workspace is:
+          one patient's history must never survive a selection change onto the
+          next patient's screen.
+        */
+        <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50/40 p-3.5">
+          <HistoryWorkspace key={appointmentId} appointmentId={appointmentId} />
+        </div>
+      ) : (
       <div className="min-h-0 flex-1 space-y-3.5 overflow-y-auto p-3.5">
         {/* ---- Visit metadata ----
             One recessed slab rather than eight fields floating on the page:
@@ -348,6 +441,7 @@ export default function DoctorPatientPanel({
           </Section>
         ) : null}
       </div>
+      )}
 
       {/* ---- The gate ----
           Tinted by readiness so the whole strip answers "may I proceed" before

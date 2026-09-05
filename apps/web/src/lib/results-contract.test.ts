@@ -77,8 +77,10 @@ test("activating Results disturbed no other section", () => {
   assert.ok(SECTIONS.includes('{ key: "note", label: "Note", live: true }'));
   assert.ok(SECTIONS.includes('{ key: "diagnosis", label: "Diagnosis", live: true }'));
   assert.ok(SECTIONS.includes('{ key: "orders", label: "Orders", live: true }'));
-  // History has no endpoint and no model behind it, so it stays honest text.
-  assert.ok(SECTIONS.includes('{ key: "history", label: "History", live: false }'));
+  // History went live in Slice 9B, once the longitudinal API existed behind
+  // it. Asserted here so that turning a section on stays a deliberate,
+  // reviewed edit rather than something that happens by accident.
+  assert.ok(SECTIONS.includes('{ key: "history", label: "History", live: true }'));
 });
 
 test("the workspace is mounted only while the Results section is open", () => {
@@ -515,7 +517,7 @@ test("the viewer receives a row, never an id to resolve", () => {
     URL so the visit travels with the request and Odoo can check the pairing.
   */
   assert.ok(WORKSPACE.includes("row={openResult.row}"));
-  assert.ok(VIEWS.includes("export function LaboratoryResultView({ row }"));
+  assert.ok(VIEWS.includes("export function LaboratoryResultView({"));
   assert.ok(VIEWS.includes("export function RadiologyResultView({"));
   assert.ok(VIEWS.includes("appointmentId,"));
   assert.ok(!code(VIEWS).includes("result_id"), "a view resolves a result id");
@@ -574,9 +576,42 @@ test("EVERY image URL is the BFF path, and no Odoo origin exists anywhere", () =
       assert.ok(!body.includes(banned), `'${banned}' appeared in ${name}`);
     }
   }
-  // Both surfaces compose their src through the one helper.
-  assert.ok(VIEWS.includes("imageContentPath(appointmentId, image.id)"));
-  assert.ok(LIGHTBOX.includes("imageContentPath(appointmentId, image.id)"));
+  /*
+    NEITHER SURFACE BUILDS A PATH ITSELF. Since Slice 9B there are two
+    legitimate byte routes -- the current visit's results images, and a prior
+    episode's images on the longitudinal surface -- so the viewer takes an
+    injected builder instead of assembling a URL from an appointment id. That
+    is what keeps ONE lightbox for both surfaces; two viewers could disagree
+    about what a released image is.
+
+    The builders themselves live in lib and are asserted separately below, so
+    "no raw URL in a component" and "every builder emits a /api/doctor path"
+    remain two checks rather than one loose one.
+  */
+  assert.ok(VIEWS.includes("imageSrc(image.id)"));
+  assert.ok(LIGHTBOX.includes("imageSrc(image.id)"));
+  // The Results tab still resolves through the helper it always used: omitting
+  // the builder IS the current-visit behaviour, unchanged by 9B.
+  assert.ok(VIEWS.includes("imageContentPath(appointmentId, imageId, disposition)"));
+});
+
+test("every image path builder emits a BFF path and nothing else", () => {
+  const format = code(source("lib/results-format.ts"));
+  const history = code(source("lib/history-format.ts"));
+  for (const [name, text] of [
+    ["results-format", format],
+    ["history-format", history],
+  ] as const) {
+    for (const banned of [
+      "/web/content", "/web/image", "access_token", "8171", "localhost", "http://", "https://",
+    ]) {
+      assert.ok(!text.includes(banned), `'${banned}' appeared in ${name}`);
+    }
+  }
+  // Exactly two builders exist, and both compose an /api/doctor path.
+  assert.ok(format.includes("`/api/doctor/visits/${appointmentId}/results/images/${imageId}`"));
+  assert.ok(history.includes("`/api/doctor/visits/${appointmentId}`"));
+  assert.ok(history.includes("/history/${historicalAppointmentId}/images/${imageId}"));
 });
 
 test("no image URL is ever taken from the payload", () => {
@@ -620,7 +655,7 @@ test("a PDF gets a tile with an explicit Open, never an inline frame", () => {
   */
   assert.ok(VIEWS.includes("function PdfTile("));
   assert.ok(VIEWS.includes("Open PDF"));
-  assert.ok(VIEWS.includes('imageContentPath(appointmentId, image.id, "attachment")'));
+  assert.ok(VIEWS.includes('imageSrc(image.id, "attachment")'));
   const body = code(VIEWS);
   for (const banned of ["<iframe", "<object", "<embed"]) {
     assert.ok(!body.includes(banned), `${banned} renders an uploaded file`);

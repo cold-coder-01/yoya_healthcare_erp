@@ -15,11 +15,27 @@ import {
   resultImages,
   viewableImages,
 } from "@/lib/results-format";
+import type { ImageSrcBuilder } from "@/lib/results-format";
 import type {
   LaboratoryReview,
   RadiologyImage,
   RadiologyReview,
 } from "@/types/doctor-results";
+/*
+  THE HISTORY ROWS ARE THE SAME DOCUMENTS, MINUS ONE KEY. Slice 9A strips
+  `billing_blocked` from every historical laboratory and radiology row, so a
+  history row is structurally a Results row less that field. Widening these two
+  components to accept either is what lets the current Results tab and the
+  History viewer render a released result through the SAME code -- which is the
+  only way the two surfaces cannot end up disagreeing about what it says.
+
+  Neither body reads `billing_blocked`; it is a pending-side signal and these
+  render released documents.
+*/
+import type {
+  HistoryLaboratoryReview,
+  HistoryRadiologyReview,
+} from "@/types/doctor-history";
 
 import ImageLightbox from "./image-lightbox";
 
@@ -64,7 +80,11 @@ function ViewerSection({
  * Laboratory
  * ------------------------------------------------------------------ */
 
-export function LaboratoryResultView({ row }: { row: LaboratoryReview }) {
+export function LaboratoryResultView({
+  row,
+}: {
+  row: LaboratoryReview | HistoryLaboratoryReview;
+}) {
   const result = row.result;
   if (!result) return null;
   const noted = result.lines.filter((line) => isDocumented(line.notes));
@@ -220,13 +240,24 @@ export function LaboratoryResultView({ row }: { row: LaboratoryReview }) {
 export function RadiologyResultView({
   row,
   appointmentId,
+  imageSrc,
 }: {
-  row: RadiologyReview;
+  row: RadiologyReview | HistoryRadiologyReview;
   /* Needed to compose the BFF image path. The visit travels in that URL so
      Odoo can verify the image belongs to a released result of THIS
      consultation -- the id alone would be a weaker check. */
   appointmentId: number;
+  /* OPTIONAL, AND OMITTING IT IS THE CURRENT-VISIT BEHAVIOUR. The Results tab
+     passes nothing and keeps the exact path it has always built. The History
+     viewer passes its own builder, because a prior episode's bytes come from
+     the longitudinal route that names both appointments; the results route
+     deliberately refuses a historical visit. */
+  imageSrc?: ImageSrcBuilder;
 }) {
+  const src: ImageSrcBuilder =
+    imageSrc ??
+    ((imageId, disposition) =>
+      imageContentPath(appointmentId, imageId, disposition));
   const result = row.result;
   if (!result) return null;
   const detailed = result.exams.filter(
@@ -316,7 +347,7 @@ export function RadiologyResultView({
           the words rather than instead of them. */}
       {images.length ? (
         <ViewerSection title="Imaging">
-          <ImagingGallery appointmentId={appointmentId} images={images} />
+          <ImagingGallery imageSrc={src} images={images} />
         </ViewerSection>
       ) : null}
     </div>
@@ -332,10 +363,10 @@ export function RadiologyResultView({
  * picture itself.
  */
 function ImagingGallery({
-  appointmentId,
+  imageSrc,
   images,
 }: {
-  appointmentId: number;
+  imageSrc: ImageSrcBuilder;
   images: RadiologyImage[];
 }) {
   /* Only pictures are paged through. A PDF is opened, not flicked past, so it
@@ -369,12 +400,12 @@ function ImagingGallery({
         {images.map((image) =>
           image.kind === "pdf" ? (
             <li key={image.id}>
-              <PdfTile appointmentId={appointmentId} image={image} />
+              <PdfTile imageSrc={imageSrc} image={image} />
             </li>
           ) : (
             <li key={image.id}>
               <Thumbnail
-                appointmentId={appointmentId}
+                imageSrc={imageSrc}
                 image={image}
                 onOpen={(button) => open(image, button)}
               />
@@ -385,7 +416,7 @@ function ImagingGallery({
 
       {openIndex !== null ? (
         <ImageLightbox
-          appointmentId={appointmentId}
+          imageSrc={imageSrc}
           images={viewable}
           startIndex={openIndex}
           onClose={close}
@@ -397,11 +428,11 @@ function ImagingGallery({
 
 /** One picture, as a button that opens it larger. */
 function Thumbnail({
-  appointmentId,
+  imageSrc,
   image,
   onOpen,
 }: {
-  appointmentId: number;
+  imageSrc: ImageSrcBuilder;
   image: RadiologyImage;
   onOpen: (origin: HTMLButtonElement) => void;
 }) {
@@ -428,7 +459,7 @@ function Thumbnail({
              cache, which is a second path to clinical data. The BFF route
              stays the only way an image reaches the browser. */
           <img
-            src={imageContentPath(appointmentId, image.id)}
+            src={imageSrc(image.id)}
             alt=""
             onError={() => setFailed(true)}
             className="h-full w-full object-cover"
@@ -457,10 +488,10 @@ function Thumbnail({
  * viewer instead.
  */
 function PdfTile({
-  appointmentId,
+  imageSrc,
   image,
 }: {
-  appointmentId: number;
+  imageSrc: ImageSrcBuilder;
   image: RadiologyImage;
 }) {
   const size = fileSizeText(image.file_size);
@@ -486,7 +517,7 @@ function PdfTile({
         </span>
       ) : null}
       <a
-        href={imageContentPath(appointmentId, image.id, "attachment")}
+        href={imageSrc(image.id, "attachment")}
         target="_blank"
         rel="noopener noreferrer"
         className="mt-0.5 self-start rounded border border-slate-300 bg-white px-2 py-0.5 cl-meta font-bold uppercase tracking-wide text-slate-700 outline-none transition-colors hover:border-emerald-400 hover:bg-emerald-50 hover:text-emerald-900 focus-visible:ring-2 focus-visible:ring-emerald-600"

@@ -68,12 +68,16 @@ test("note and diagnosis are the live sections after slice 2", () => {
   assert.equal(isLiveSection("diagnosis"), true);
 });
 
-test("history remains inert", () => {
-  // `orders` left this list in slice 3 when laboratory ordering shipped, and
-  // `results` left it in slice 7B. History is the one section that still has
-  // no endpoint and no model behind it, so it stays honest text rather than a
-  // control that looks pressable and does nothing.
-  assert.equal(isLiveSection("history"), false);
+test("every section is live now that history shipped in slice 9B", () => {
+  // `orders` left the inert list in slice 3, `results` in slice 7B, and
+  // `history` in 9B once the longitudinal API existed to stand behind it.
+  // There is no inert section left, so the honest-label branch in the section
+  // bar is now unreachable -- it is kept because the NEXT section to be
+  // designed will need it, and a tab that looks pressable and does nothing is
+  // worse than an honest label in a clinical tool.
+  for (const key of ["note", "diagnosis", "orders", "results", "history"]) {
+    assert.equal(isLiveSection(key), true, `${key} should be live`);
+  }
 });
 
 test("results is live now that it has an endpoint behind it", () => {

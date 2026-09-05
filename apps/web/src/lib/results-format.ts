@@ -308,6 +308,28 @@ export function imageContentPath(
 }
 
 /**
+ * How a surface resolves one image id to a BFF path.
+ *
+ * WHY THE VIEWER TAKES A FUNCTION RATHER THAN AN APPOINTMENT ID. There are two
+ * legitimate byte routes and they are deliberately different endpoints: the
+ * current visit's results images, and a PRIOR episode's images on the
+ * longitudinal surface. Slice 9A refuses to let the results route resolve a
+ * historical appointment, so a viewer that built its own `/results/images/`
+ * path could never render historical imagery -- and duplicating the viewer to
+ * fix that would give the desk two lightboxes that could disagree about what a
+ * released image is.
+ *
+ * Injecting the builder keeps ONE viewer and moves the routing decision to the
+ * surface that knows which episode it is showing. Both implementations live in
+ * lib, both emit an `/api/doctor/...` path, and neither can produce an Odoo
+ * origin because the payload carries no URL to copy.
+ */
+export type ImageSrcBuilder = (
+  imageId: number,
+  disposition?: "attachment",
+) => string;
+
+/**
  * The worklist's one-line imaging note: "1 image", "2 images · 1 PDF".
  *
  * Counted by KIND, because the two are different acts for a doctor -- one is

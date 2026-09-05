@@ -3,9 +3,9 @@
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import type { ImageSrcBuilder } from "@/lib/results-format";
 import {
   IMAGE_UNAVAILABLE_TEXT,
-  imageContentPath,
   lightboxPosition,
   stepIndex,
 } from "@/lib/results-format";
@@ -35,12 +35,15 @@ import type { RadiologyImage } from "@/types/doctor-results";
  * here, and the PDF tile in the viewer is where "open a file" lives.
  */
 export default function ImageLightbox({
-  appointmentId,
+  imageSrc,
   images,
   startIndex,
   onClose,
 }: {
-  appointmentId: number;
+  /* HOW A PATH IS BUILT, injected by the surface that opened this. The current
+     visit's Results tab and the History viewer resolve to different BFF
+     routes, and neither is this component's business to know. */
+  imageSrc: ImageSrcBuilder;
   /** Already loaded. Only `kind: "image"` items should be passed in. */
   images: RadiologyImage[];
   startIndex: number;
@@ -192,7 +195,7 @@ export default function ImageLightbox({
                way an image reaches the browser. */
             <img
               key={image.id}
-              src={imageContentPath(appointmentId, image.id)}
+              src={imageSrc(image.id)}
               alt={image.caption ? `${image.name}. ${image.caption}` : image.name}
               onError={() => setFailed(true)}
               className="max-h-[80vh] max-w-full object-contain"

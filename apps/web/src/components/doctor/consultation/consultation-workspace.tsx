@@ -45,6 +45,7 @@ import { PriorityBadge, StageBadge } from "../doctor-badges";
 import DoctorVitalsGrid from "../doctor-vitals-grid";
 import DiagnosisWorkspace from "./diagnosis-workspace";
 import OrdersWorkspace from "./orders-workspace";
+import HistoryWorkspace from "./history-workspace";
 import ResultsWorkspace from "./results-workspace";
 import ConsultationNoteEditor from "./note-editor";
 import NoteEditorModal from "./note-editor-modal";
@@ -767,6 +768,20 @@ export default function ConsultationWorkspace({
             result is precisely what a doctor does after the visit finishes.
           */
           <ResultsWorkspace key={appointmentId} appointmentId={appointmentId} />
+        ) : section === "history" ? (
+          /*
+            Keyed on the visit, like every other section, and mounted only
+            while HISTORY is open -- which is what makes opening the tab
+            refetch. That matters more here than anywhere else on this screen:
+            longitudinal access is bounded by an ACTIVE care relationship, so a
+            desk left open past the end of the visit must ask again rather than
+            keep a patient's past on display.
+
+            READ-ONLY, unconditionally. A prior episode belongs to the
+            consultation that created it and Slice 9A serves it read-only at
+            the record-rule layer; nothing in this subtree can write.
+          */
+          <HistoryWorkspace key={appointmentId} appointmentId={appointmentId} />
         ) : section === "diagnosis" ? (
           /*
             Keyed on the visit so a patient change cannot carry one patient's
