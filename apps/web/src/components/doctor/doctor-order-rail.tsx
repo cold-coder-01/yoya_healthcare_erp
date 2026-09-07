@@ -1,44 +1,54 @@
 import { doctorLabel } from "@/lib/doctor-format";
 
 /**
- * The Order Key rail: the workspace prepared for clinical documentation.
+ * The Clinical Actions rail: the workspace prepared for ordering.
  *
- * The vendor OPD screen keeps a permanent right-hand grid of order types, and
+ * The vendor OPD screen keeps a permanent right-hand column of order types, and
  * a doctor's hand goes to it the moment a consultation opens. Reserving that
- * column now means documentation lands into a layout doctors already read,
- * instead of forcing a re-teach later.
+ * column now means ordering lands into a layout doctors already read, instead
+ * of forcing a re-teach later.
  *
- * NOTHING HERE IS INTERACTIVE, AND IT DOES NOT PRETEND TO BE.
- * No ordering endpoint exists on the doctor surface yet, so these are rendered
- * as inert labels -- not buttons, not disabled buttons that invite a click and
- * swallow it. A control that looks pressable and does nothing is worse than an
- * honest placeholder, especially in a clinical tool where a doctor may believe
- * an order was placed.
+ * EXACTLY ONE CONTROL HERE IS INTERACTIVE, AND ONLY WHEN IT WORKS.
+ * Diagnosis ships in this slice, so it is a real button that focuses the
+ * Diagnosis section -- and it is rendered ONLY when there is an open
+ * consultation to focus, rather than being present and inert. Everything below
+ * it has no endpoint yet and is rendered as an inert row: not a button, and not
+ * a disabled button that invites a click and swallows it. A control that looks
+ * pressable and does nothing is worse than an honest placeholder, especially in
+ * a clinical tool where a doctor may believe an order was placed.
  *
- * LOCKED MUST READ AS "NOT YET", NOT AS "BROKEN".
- * The rail previously dimmed the whole column to 45% opacity, which made a
- * third of the screen look like a rendering failure and left the reason
- * buried in a paragraph at the bottom. The state is now stated FIRST, in a
- * banner that says what unlocks it, and the items below keep legible contrast
- * -- they are a preview of the workspace, and a preview nobody can read is
- * not worth reserving the column for.
+ * WHY THEY ARE ROWS AND NOT GREYED-OUT TILES.
+ * The previous rail rendered dashed, washed-out chips that read as a broken or
+ * disabled control panel -- the doctor's first question was "why is this
+ * greyed out?", not "what is coming?". These are full-contrast, legible rows
+ * with a leading rule, which read as a roadmap of the workstation rather than
+ * as functionality that has failed to load. Nothing is dimmed; what changes
+ * between the two states is the WORDING, not the opacity.
+ *
+ * THE HEADER BADGE IS ABOUT ORDERING, NOT ABOUT THE CONSULTATION.
+ * It used to read "Open" once a visit reached in_consultation, which became a
+ * lie the moment the consultation note started working in the centre column: a
+ * doctor reading "Open" beside Laboratory would reasonably conclude they could
+ * order a test. ORDERING is still unavailable in every state, so the badge
+ * still says so -- the Diagnosis button above carries its own, separate state.
  */
 
-const ORDER_GROUPS: Array<{ title: string; hint: string; items: string[] }> = [
-  {
-    title: "Diagnostics",
-    hint: "Investigations",
-    items: ["Laboratory", "Radiology", "Pathology", "Endoscopy", "Echocardiography"],
-  },
-  {
-    title: "Treatment",
-    hint: "Therapeutics",
-    items: ["Medication", "Injection", "Procedure", "Physiotherapy", "Anesthesia"],
-  },
+type ActionGroup = { title: string; items: string[] };
+
+/**
+ * The groups that are still ahead. DIAGNOSIS IS NOT AMONG THEM ANY MORE: it
+ * ships in this slice and is rendered above as a real control, so listing it
+ * here as "Soon" would be the same kind of lie the "Open" badge used to be.
+ */
+const ACTION_GROUPS: ActionGroup[] = [
+  // Laboratory is NOT here any more: it ships in this slice and is rendered
+  // above as a real control, so listing it as "Soon" would be the same kind of
+  // lie the old "Open" badge was.
+  { title: "Investigations", items: ["Radiology", "Pathology"] },
+  { title: "Treatment", items: ["Medication", "Procedure", "Injection"] },
   {
     title: "Documentation",
-    hint: "Clinical record",
-    items: ["Progress note", "Diagnosis", "OP note", "Certificate"],
+    items: ["Certificate", "Referral", "Progress note"],
   },
 ];
 
@@ -61,100 +71,135 @@ function LockIcon({ className }: { className: string }) {
 export default function DoctorOrderRail({
   visitState,
   encounterName,
+  diagnosisActive = false,
+  onOpenDiagnosis = null,
+  laboratoryActive = false,
+  onOpenLaboratory = null,
 }: {
   visitState: string | null;
   encounterName: string | null;
+  /** The centre panel is currently showing the Diagnosis section. */
+  diagnosisActive?: boolean;
+  /** The centre panel is currently showing Orders. */
+  laboratoryActive?: boolean;
+  /**
+   * Focuses Orders > Laboratory. Null when there is no open consultation, so
+   * the control is absent rather than present and inert.
+   */
+  onOpenLaboratory?: (() => void) | null;
+  /**
+   * Focuses the Diagnosis section. Null when there is no open consultation to
+   * focus, which is what keeps the control from existing at all rather than
+   * existing and doing nothing.
+   */
+  onOpenDiagnosis?: (() => void) | null;
 }) {
   const active = visitState === "in_consultation";
 
   return (
-    <section className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-      <header className="flex h-9 shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50 px-3">
-        <h2 className="text-[11px] font-bold uppercase tracking-[0.08em] text-slate-700">
-          Order Key
+    <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+      <header className="flex h-9 shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50 px-2.5">
+        <h2 className="cl-meta font-bold uppercase tracking-[0.08em] text-slate-700">
+          Clinical Actions
         </h2>
-        <span
-          className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${
-            active
-              ? "bg-indigo-100 text-indigo-800"
-              : "bg-slate-200 text-slate-600"
-          }`}
-        >
-          {active ? (
-            <>
-              <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
-              Open
-            </>
-          ) : (
-            <>
-              <LockIcon className="h-2.5 w-2.5" />
-              Locked
-            </>
-          )}
+        <span className="inline-flex items-center gap-1 rounded bg-slate-200 px-1.5 py-0.5 cl-micro font-bold uppercase tracking-wide text-slate-600">
+          <LockIcon className="h-2.5 w-2.5" />
+          Not yet
         </span>
       </header>
 
-      {/* The state, stated first. A doctor should never have to scroll to the
-          bottom of a dimmed column to learn why it is dimmed. */}
+      {/* The state, stated first. A doctor should never have to scan the whole
+          column to learn why none of it does anything. */}
       <div
-        className={`shrink-0 border-b px-2.5 py-2 ${
+        className={`shrink-0 border-b px-2.5 py-1.5 ${
           active
-            ? "border-indigo-100 bg-indigo-50/60"
+            ? "border-emerald-100 bg-emerald-50/60"
             : "border-slate-200 bg-slate-50"
         }`}
       >
         {active ? (
-          <p className="text-[10px] leading-snug text-indigo-900">
-            Consultation open on{" "}
+          <p className="cl-meta leading-snug text-emerald-900">
+            <span className="font-semibold">Note open for writing</span> on{" "}
             <span className="font-mono font-semibold">
               {encounterName ?? "this encounter"}
             </span>
-            . Ordering arrives in the next phase.
+            . Diagnosis and laboratory ordering are available.
           </p>
         ) : (
-          <div className="flex gap-2">
-            <LockIcon className="mt-px h-3.5 w-3.5 shrink-0 text-slate-400" />
-            <p className="text-[10px] leading-snug text-slate-600">
-              <span className="font-semibold text-slate-800">
-                Start the consultation to unlock ordering.
-              </span>{" "}
-              This visit is{" "}
-              <span className="font-semibold text-slate-700">
-                {doctorLabel(visitState)}
-              </span>
-              .
-            </p>
-          </div>
+          <p className="cl-meta leading-snug text-slate-600">
+            <span className="font-semibold text-slate-800">
+              Start the consultation to open the clinical note.
+            </span>{" "}
+            This visit is{" "}
+            <span className="font-semibold text-slate-700">
+              {doctorLabel(visitState)}
+            </span>
+            .
+          </p>
         )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
-        <div className="flex flex-col gap-3">
-          {ORDER_GROUPS.map((group) => (
-            <div key={group.title} className="flex flex-col gap-1.5">
-              <div className="flex items-baseline justify-between gap-2">
-                <h3
-                  className={`text-[9px] font-bold uppercase tracking-[0.08em] ${
-                    active ? "text-slate-600" : "text-slate-500"
-                  }`}
-                >
-                  {group.title}
-                </h3>
-                <span className="truncate text-[9px] text-slate-400">
-                  {group.hint}
+      <div className="min-h-0 flex-1 overflow-y-auto px-2.5 py-2">
+        {/* THE ONE LIVE ACTION. A real button when there is a consultation to
+            act on, and simply absent otherwise -- never a dead control. */}
+        {onOpenDiagnosis ? (
+          <div className="mb-2.5 flex flex-col gap-1">
+            <h3 className="cl-micro font-bold uppercase tracking-[0.08em] text-slate-500">
+              Clinical
+            </h3>
+            <button
+              type="button"
+              onClick={onOpenDiagnosis}
+              aria-current={diagnosisActive ? "true" : undefined}
+              className={`flex items-center justify-between gap-1.5 rounded border px-2 py-1.5 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-emerald-600 ${
+                diagnosisActive
+                  ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                  : "border-slate-200 bg-white text-slate-700 hover:border-emerald-300 hover:bg-emerald-50/60"
+              }`}
+            >
+              <span className="truncate cl-secondary font-bold">Diagnosis</span>
+              <span className="shrink-0 cl-micro font-bold uppercase tracking-wide text-emerald-700">
+                {diagnosisActive ? "Open" : "Record"}
+              </span>
+            </button>
+            {onOpenLaboratory ? (
+              <button
+                type="button"
+                onClick={onOpenLaboratory}
+                aria-current={laboratoryActive ? "true" : undefined}
+                className={`flex items-center justify-between gap-1.5 rounded border px-2 py-1.5 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-emerald-600 ${
+                  laboratoryActive
+                    ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                    : "border-slate-200 bg-white text-slate-700 hover:border-emerald-300 hover:bg-emerald-50/60"
+                }`}
+              >
+                <span className="truncate cl-secondary font-bold">Laboratory</span>
+                <span className="shrink-0 cl-micro font-bold uppercase tracking-wide text-emerald-700">
+                  {laboratoryActive ? "Open" : "Order"}
                 </span>
-              </div>
-              <ul className="grid grid-cols-2 gap-1">
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div className="flex flex-col gap-2.5">
+          {ACTION_GROUPS.map((group) => (
+            <div key={group.title} className="flex flex-col gap-1">
+              <h3 className="cl-micro font-bold uppercase tracking-[0.08em] text-slate-500">
+                {group.title}
+              </h3>
+              <ul className="flex flex-col gap-px border-l border-slate-200 pl-2">
                 {group.items.map((item) => (
                   <li
                     key={item}
-                    className={`truncate rounded border px-1.5 py-1 text-[10px] font-semibold transition-colors ${
-                      active
-                        ? "border-slate-200 bg-white text-slate-700"
-                        : "border-dashed border-slate-200 bg-slate-50 text-slate-500"
-                    }`}
+                    className="flex items-center justify-between gap-1.5 py-[3px]"
                   >
-                    {item}
+                    <span className="truncate cl-secondary font-semibold text-slate-700">
+                      {item}
+                    </span>
+                    <span className="shrink-0 cl-micro font-semibold uppercase tracking-wide text-slate-400">
+                      Soon
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -162,9 +207,9 @@ export default function DoctorOrderRail({
           ))}
         </div>
 
-        <p className="mt-3 border-t border-slate-200 pt-2 text-[9px] leading-snug text-slate-400">
-          Ordering and clinical notes arrive in a later phase. This column is
-          reserved so they land where doctors already look.
+        <p className="mt-2.5 border-t border-slate-200 pt-1.5 cl-micro leading-snug text-slate-400">
+          This column is reserved so ordering lands where doctors already look.
+          The consultation note itself is written in the centre panel.
         </p>
       </div>
     </section>

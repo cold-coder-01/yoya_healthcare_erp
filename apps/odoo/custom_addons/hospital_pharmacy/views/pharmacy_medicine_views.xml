@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="action_hospital_pharmacy_medicine" model="ir.actions.act_window">
+        <field name="name">Medicines</field>
+        <field name="res_model">hospital.pharmacy.medicine</field>
+        <field name="view_mode">list,form</field>
+        <field name="context">{'search_default_active': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Add the first medicine to the catalog.
+            </p>
+        </field>
+    </record>
+
+    <record id="view_hospital_pharmacy_medicine_list" model="ir.ui.view">
+        <field name="name">hospital.pharmacy.medicine.list</field>
+        <field name="model">hospital.pharmacy.medicine</field>
+        <field name="arch" type="xml">
+            <list string="Medicines">
+                <field name="code"/>
+                <field name="name"/>
+                <field name="generic_name"/>
+                <field name="brand_name"/>
+                <field name="dosage_form"/>
+                <field name="strength"/>
+                <field name="route"/>
+                <field name="active"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_pharmacy_medicine_form" model="ir.ui.view">
+        <field name="name">hospital.pharmacy.medicine.form</field>
+        <field name="model">hospital.pharmacy.medicine</field>
+        <field name="arch" type="xml">
+            <form string="Medicine">
+                <sheet>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1>
+                            <field name="name"/>
+                        </h1>
+                    </div>
+                    <group string="Medicine Information">
+                        <group>
+                            <field name="code"/>
+                            <field name="generic_name"/>
+                            <field name="brand_name"/>
+                            <field name="strength"/>
+                        </group>
+                        <group>
+                            <field name="dosage_form"/>
+                            <field name="route"/>
+                            <field name="active"/>
+                        </group>
+                    </group>
+                    <group string="Classification">
+                        <group>
+                            <field name="category"/>
+                        </group>
+                    </group>
+                    <group string="Description">
+                        <field name="description" nolabel="1"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_pharmacy_medicine_search" model="ir.ui.view">
+        <field name="name">hospital.pharmacy.medicine.search</field>
+        <field name="model">hospital.pharmacy.medicine</field>
+        <field name="arch" type="xml">
+            <search string="Search Medicines">
+                <field name="name"/>
+                <field name="code"/>
+                <field name="generic_name"/>
+                <field name="brand_name"/>
+                <field name="category"/>
+                <filter name="active" string="Active" domain="[('active', '=', True)]"/>
+                <filter name="archived" string="Archived" domain="[('active', '=', False)]"/>
+                <separator/>
+                <filter name="tablet" string="Tablet" domain="[('dosage_form', '=', 'tablet')]"/>
+                <filter name="capsule" string="Capsule" domain="[('dosage_form', '=', 'capsule')]"/>
+                <filter name="injection" string="Injection" domain="[('dosage_form', '=', 'injection')]"/>
+                <group expand="0" string="Group By">
+                    <filter name="group_by_dosage_form" string="Dosage Form" context="{'group_by': 'dosage_form'}"/>
+                    <filter name="group_by_route" string="Route" context="{'group_by': 'route'}"/>
+                    <filter name="group_by_category" string="Category" context="{'group_by': 'category'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+</odoo>

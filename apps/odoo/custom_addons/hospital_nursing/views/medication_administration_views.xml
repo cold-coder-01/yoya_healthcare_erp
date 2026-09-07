@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         MEDICATION ADMINISTRATION — LIST VIEW
+    ═══════════════════════════════════════════════════════════ -->
+
+    <record id="view_hospital_medication_administration_list" model="ir.ui.view">
+        <field name="name">hospital.medication.administration.list</field>
+        <field name="model">hospital.medication.administration</field>
+        <field name="arch" type="xml">
+            <list string="Medication Administration"
+                decoration-success="administration_status == 'administered'"
+                decoration-danger="administration_status == 'missed'"
+                decoration-warning="administration_status == 'held'"
+                decoration-muted="administration_status in ('refused', 'cancelled')"
+                decoration-info="administration_status == 'scheduled'">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="admission_id"/>
+                <field name="medication_name"/>
+                <field name="dose"/>
+                <field name="route"/>
+                <field name="scheduled_datetime"/>
+                <field name="administered_datetime"/>
+                <field name="nurse_id"/>
+                <field name="administration_status"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         MEDICATION ADMINISTRATION — FORM VIEW
+    ═══════════════════════════════════════════════════════════ -->
+
+    <record id="view_hospital_medication_administration_form" model="ir.ui.view">
+        <field name="name">hospital.medication.administration.form</field>
+        <field name="model">hospital.medication.administration</field>
+        <field name="arch" type="xml">
+            <form string="Medication Administration Record">
+                <header>
+                    <button
+                        name="action_mark_administered"
+                        string="Mark Administered"
+                        type="object"
+                        class="btn-primary"
+                        invisible="administration_status != 'scheduled'"/>
+                    <button
+                        name="action_mark_missed"
+                        string="Mark Missed"
+                        type="object"
+                        invisible="administration_status != 'scheduled'"/>
+                    <button
+                        name="action_mark_refused"
+                        string="Mark Refused"
+                        type="object"
+                        invisible="administration_status != 'scheduled'"/>
+                    <button
+                        name="action_hold"
+                        string="Hold"
+                        type="object"
+                        invisible="administration_status != 'scheduled'"/>
+                    <button
+                        name="action_cancel"
+                        string="Cancel"
+                        type="object"
+                        invisible="administration_status not in ('scheduled', 'held')"/>
+                    <button
+                        name="action_reset_to_scheduled"
+                        string="Reset to Scheduled"
+                        type="object"
+                        invisible="administration_status not in ('missed', 'refused', 'held', 'cancelled')"
+                        groups="hospital_management.group_hospital_nurse,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <field name="administration_status" widget="statusbar"
+                        statusbar_visible="scheduled,administered,missed,refused,held,cancelled"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <h1>
+                            <field name="name" readonly="1"/>
+                        </h1>
+                    </div>
+
+                    <group string="Patient / Admission">
+                        <group>
+                            <field name="patient_id" readonly="administration_status != 'scheduled'"/>
+                            <field name="admission_id"
+                                domain="[('patient_id', '=', patient_id)]"
+                                readonly="administration_status != 'scheduled'"/>
+                            <field name="prescription_id"
+                                domain="[('patient_id', '=', patient_id)]"
+                                readonly="administration_status in ['administered', 'missed', 'refused', 'cancelled']"/>
+                        </group>
+                        <group>
+                            <field name="nurse_id" readonly="administration_status in ['administered', 'missed', 'refused', 'cancelled']"/>
+                            <field name="active" invisible="1"/>
+                        </group>
+                    </group>
+
+                    <group string="Medication">
+                        <group>
+                            <field name="medication_name" readonly="administration_status in ['administered', 'missed', 'refused', 'cancelled']"/>
+                            <field name="dose" readonly="administration_status in ['administered', 'missed', 'refused', 'cancelled']"/>
+                            <field name="route" readonly="administration_status in ['administered', 'missed', 'refused', 'cancelled']"/>
+                        </group>
+                    </group>
+
+                    <group string="Schedule / Administration">
+                        <group>
+                            <field name="scheduled_datetime" readonly="administration_status in ['administered', 'missed', 'refused', 'cancelled']"/>
+                            <field name="administered_datetime" invisible="administration_status != 'administered'" readonly="administration_status in ['administered', 'missed', 'refused', 'cancelled']"/>
+                        </group>
+                    </group>
+
+                    <group string="Reason / Notes"
+                        invisible="administration_status not in ('missed', 'refused', 'held', 'cancelled')">
+                        <field name="reason_not_administered" nolabel="1"
+                            placeholder="Reason medication was not administered..."
+                            readonly="administration_status in ['administered', 'missed', 'refused', 'cancelled']"/>
+                    </group>
+
+                    <group string="Notes">
+                        <field name="notes" nolabel="1" placeholder="Additional notes..."
+                            readonly="administration_status in ['administered', 'missed', 'refused', 'cancelled']"/>
+                    </group>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         MEDICATION ADMINISTRATION — SEARCH VIEW
+    ═══════════════════════════════════════════════════════════ -->
+
+    <record id="view_hospital_medication_administration_search" model="ir.ui.view">
+        <field name="name">hospital.medication.administration.search</field>
+        <field name="model">hospital.medication.administration</field>
+        <field name="arch" type="xml">
+            <search string="Medication Administration">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="admission_id"/>
+                <field name="medication_name"/>
+                <field name="nurse_id"/>
+                <filter string="Scheduled Today" name="scheduled_today"
+                    domain="[('scheduled_datetime', '>=', datetime.datetime.combine(context_today(), datetime.time(0,0,0))),
+                              ('scheduled_datetime', '&lt;=', datetime.datetime.combine(context_today(), datetime.time(23,59,59))),
+                              ('administration_status', '=', 'scheduled')]"/>
+                <filter string="Administered" name="administered" domain="[('administration_status', '=', 'administered')]"/>
+                <filter string="Missed" name="missed" domain="[('administration_status', '=', 'missed')]"/>
+                <filter string="Refused" name="refused" domain="[('administration_status', '=', 'refused')]"/>
+                <filter string="Held" name="held" domain="[('administration_status', '=', 'held')]"/>
+                <filter string="Scheduled" name="scheduled" domain="[('administration_status', '=', 'scheduled')]"/>
+                <filter string="Cancelled" name="cancelled" domain="[('administration_status', '=', 'cancelled')]"/>
+                <separator/>
+                <filter string="Archived" name="archived" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Patient" name="group_patient" context="{'group_by': 'patient_id'}"/>
+                    <filter string="Status" name="group_status" context="{'group_by': 'administration_status'}"/>
+                    <filter string="Route" name="group_route" context="{'group_by': 'route'}"/>
+                    <filter string="Scheduled Date" name="group_date" context="{'group_by': 'scheduled_datetime:day'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         MEDICATION ADMINISTRATION — ACTION
+    ═══════════════════════════════════════════════════════════ -->
+
+    <record id="action_hospital_medication_administration" model="ir.actions.act_window">
+        <field name="name">Medication Administration</field>
+        <field name="res_model">hospital.medication.administration</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_medication_administration_search"/>
+        <field name="context">{}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                No medication administration records found.
+            </p>
+            <p>Create a medication administration record (MAR) to track inpatient medication delivery.</p>
+        </field>
+    </record>
+
+</odoo>

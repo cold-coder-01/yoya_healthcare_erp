@@ -155,5 +155,1176 @@
             <field name="perm_unlink" eval="True"/>
         </record>
 
+        <!-- ============================================================
+             hospital.consultation
+             ============================================================
+
+             THE PHYSICIAN'S NOTE, and the most confidential record this
+             module owns. The same OR semantics described at the top of this
+             file apply, so restriction lives in the ACL rows
+             (security/ir.model.access.csv) and these rules narrow WHICH rows
+             each already-permitted role can reach.
+
+             Only FOUR groups hold an ACL row at all: doctor, manager, system
+             administrator and DPO. Everyone else holds none, so they have no
+             access to consultation notes whatever their access to the
+             appointment or the encounter.
+
+             WHY HOSPITAL NURSE IS NOT ONE OF THEM
+             =====================================
+             An earlier version of this slice granted Hospital Nurse read,
+             scoped by yoya_permitted_department_ids, on a continuity-of-care
+             argument. That was withdrawn because the exclusion it depended on
+             was accidental rather than structural.
+
+             group_hospital_front_desk_nurse IMPLIES group_hospital_nurse
+             (yoya_reception_bridge/security/yoya_reception_groups.xml), and
+             Odoo ORs record rules across a user's groups, so ANY grant to
+             Hospital Nurse reaches the front desk. The only thing keeping the
+             entrance out was that a front desk nurse happens to have no
+             permitted departments today. That is a configuration accident: the
+             field is also consulted by the nurse rules on
+             hospital.patient.evaluation and hospital.appointment, so assigning
+             a department for an unrelated workflow would have silently handed
+             the entrance every physician note in that department. A deny rule
+             cannot repair this either: an empty group rule ORs with the
+             permissive one and loses.
+
+             There is no ward-nurse group to grant instead. The repository
+             defines thirteen groups and the only nurse-shaped ones are
+             Hospital Nurse and Hospital Front Desk Nurse; hospital_nursing
+             declares no res.groups of its own. So the honest options were to
+             grant nothing or to invent a group, and inventing security
+             architecture is not this slice's business.
+
+             ABSENCE OF AN ACL ROW IS THE CONTROL, and it is the one control
+             that cannot be widened by OR: no rule anywhere can grant a row on
+             a model the group may not touch at all. When ward nursing becomes
+             real, the grant should hang off a group the front desk does not
+             imply, not off Hospital Nurse.
+        -->
+
+        <record id="rule_consultation_doctor" model="ir.rule">
+            <field name="name">Consultation: my patients (doctor)</field>
+            <field name="model_id" ref="model_hospital_consultation"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!--
+                Exactly the shape of rule_encounter_doctor and
+                rule_patient_evaluation_doctor, so a doctor's consultation
+                scope cannot be wider than the visits and encounters it
+                documents. A PURE doctor therefore never reaches a colleague's
+                consultation, which is the property test_doctor_consultation_api
+                pins.
+
+                appointment_id is a STORED related column, so this branch is a
+                real index lookup rather than a traversal of a computed field.
+            -->
+            <field name="domain_force">
+                ['|',
+                    ('doctor_id.user_id', '=', user.id),
+                    ('appointment_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_consultation_manager" model="ir.rule">
+            <field name="name">Consultation: all (manager / system administrator)</field>
+            <field name="model_id" ref="model_hospital_consultation"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_consultation_dpo" model="ir.rule">
+            <field name="name">Consultation: full read for oversight (data protection officer)</field>
+            <field name="model_id" ref="model_hospital_consultation"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_data_protection_officer'))]"/>
+            <!-- Deliberately unrestricted, not unrestricted by omission: the
+                 DPO audits clinical record handling. The ACL (1,0,0,0) keeps
+                 this strictly read-only. -->
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_consultation_no_clinical_access" model="ir.rule">
+            <field name="name">Consultation: no access (nursing / front office / finance / pharmacy / laboratory)</field>
+            <field name="model_id" ref="model_hospital_consultation"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_nurse')), (4, ref('hospital_management.group_hospital_receptionist')), (4, ref('hospital_management.group_hospital_pharmacist')), (4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_accountant')), (4, ref('hospital_billing.group_hospital_cashier')), (4, ref('hospital_billing.group_hospital_insurance_officer'))]"/>
+            <!--
+                A STANDING DEFAULT, NOT TODAY'S ENFORCEMENT, and the difference
+                matters: none of these groups holds an ACL row for
+                hospital.consultation, so none has any access right now and this
+                rule grants nothing. THE ACL IS THE CONTROL. This rule cannot be
+                one, because Odoo ORs group rules and a [(0,'=',1)] domain loses
+                to any permissive rule the same user picks up elsewhere.
+
+                It is declared so that if a future module ever adds a read ACL
+                for one of them (the obvious accident, since they all already
+                read hospital.appointment or hospital.encounter), the
+                consultation set is clamped to empty for anyone holding ONLY
+                these groups, rather than silently opening the whole hospital's
+                physician notes.
+
+                Hospital Nurse is named here for exactly that reason: it is the
+                group most likely to be granted a read ACL by a well-meaning
+                later change. Hospital Front Desk Nurse is NOT named, and does
+                not need to be: it IMPLIES Hospital Nurse, so every front desk
+                nurse already matches the nurse clamp. It also could not be
+                named here even if we wanted to, because it is declared in
+                yoya_reception_bridge, which DEPENDS on this module and
+                therefore loads after it.
+
+                Safe for multi-role users: because group rules OR, a manager
+                (who implies receptionist and nurse) still gets the unrestricted
+                manager rule above.
+            -->
+            <field name="domain_force">[(0, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <!-- ============================================================
+             hospital.patient.diagnosis
+             ============================================================
+
+             THE STATE THIS INHERITS. hospital_management ships ACL rows for
+             this model and NO record rules whatsoever, so before this module
+             every role holding a read ACL saw every diagnosis in the hospital,
+             and Hospital Nurse held perm_create. The rules below give each
+             role a deliberate scope; the ACL override underneath corrects a
+             permission that was simply wrong.
+
+             THIS NARROWS EXISTING ACCESS. A doctor previously saw the whole
+             hospital's diagnoses in the Odoo backend and now sees their own.
+             That is the intended correction, not a side effect.
+        -->
+
+        <record id="rule_patient_diagnosis_doctor" model="ir.rule">
+            <field name="name">Patient Diagnosis: my patients (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_patient_diagnosis"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!--
+                Three ways a diagnosis is legitimately this doctor's: they
+                recorded it, it belongs to a visit assigned to them, or it
+                belongs to a consultation they are conducting. The third branch
+                is what makes a diagnosis reachable in the same request that
+                creates it, before physician_id has been read back.
+
+                DELIBERATELY NOT A PATIENT-WIDE READ. Showing a doctor every
+                past diagnosis for any patient they are treating is a HISTORY
+                feature with its own consent and confidentiality questions, and
+                it is a later slice. Scoping tightly now is the conservative
+                direction: widening later is a decision, narrowing later is a
+                regression someone has already relied on.
+            -->
+            <field name="domain_force">
+                ['|', '|',
+                    ('physician_id.user_id', '=', user.id),
+                    ('appointment_id.doctor_id.user_id', '=', user.id),
+                    ('consultation_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_patient_diagnosis_manager" model="ir.rule">
+            <field name="name">Patient Diagnosis: all (manager / system administrator)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_patient_diagnosis"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_patient_diagnosis_dpo" model="ir.rule">
+            <field name="name">Patient Diagnosis: full read for oversight (data protection officer)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_patient_diagnosis"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_data_protection_officer'))]"/>
+            <!-- Same mandate, and the same read-only ACL, the DPO already has
+                 on evaluations and consultations. -->
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_patient_diagnosis_no_clinical_access" model="ir.rule">
+            <field name="name">Patient Diagnosis: no access (nursing / front office / finance / pharmacy / laboratory)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_patient_diagnosis"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_nurse')), (4, ref('hospital_management.group_hospital_receptionist')), (4, ref('hospital_management.group_hospital_pharmacist')), (4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_accountant')), (4, ref('hospital_billing.group_hospital_cashier')), (4, ref('hospital_billing.group_hospital_insurance_officer'))]"/>
+            <!--
+                UNLIKE the consultation clamp, this one is doing real work
+                today: hospital_management grants Hospital Nurse and Hospital
+                Receptionist a read ACL on this model, so without this rule they
+                would read every diagnosis in the hospital.
+
+                THE DOMAIN IS STRUCTURALLY EMPTY, not configuration-dependent.
+                Slice 1's nurse rule kept the front desk out only because a
+                front desk nurse happened to have no permitted departments,
+                which any unrelated workflow change could have undone.
+                [(0,'=',1)] cannot be undone by configuration.
+
+                Front Desk Nurse is covered without being named: it IMPLIES
+                Hospital Nurse. It also could not be named here, because it is
+                declared in yoya_reception_bridge, which depends on this module.
+
+                Safe for multi-role users: rules OR, so a manager (who implies
+                receptionist and nurse) still gets the unrestricted manager rule
+                above, and a doctor still gets the doctor rule.
+            -->
+            <field name="domain_force">[(0, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <!-- ============================================================
+             ACL corrections on hospital_management's diagnosis rows
+             ============================================================
+
+             Referenced by their full external id so this module amends the
+             existing row rather than adding a competing one, because ACLs UNION
+             across rows, so a second row could only ever widen access. Same
+             technique hospital_billing_accounting uses to amend groups it does
+             not own.
+        -->
+
+        <record id="hospital_management.access_hospital_patient_diagnosis_nurse" model="ir.model.access">
+            <!-- Hospital Nurse shipped with perm_create=1 on diagnoses. Making
+                 a diagnosis is a physician's act; nursing observations belong
+                 on hospital.patient.evaluation, which nurses own outright. The
+                 read bit is left in place so no existing screen hard-errors,
+                 and the clamp rule above reduces what it returns to nothing. -->
+            <field name="perm_create" eval="False"/>
+        </record>
+
+        <!-- ============================================================
+             hospital.laboratory.request
+             ============================================================
+
+             THE STATE THIS INHERITS. hospital_management ships ACL rows for
+             the laboratory models and NO record rules, so before this module
+             every doctor could read and write every laboratory request in the
+             hospital. The rules below give the DOCTOR a deliberate scope.
+
+             WHAT IS DELIBERATELY LEFT ALONE. Laboratory Technician, Nurse,
+             Receptionist and the DPO get no rule here, so their access is
+             exactly what it was. That is not an oversight: a rule for a group
+             only ever narrows it, the bench's cross-patient worklist is the
+             point of the laboratory role, and narrowing the front office is a
+             separate decision that belongs with whoever owns those screens.
+             This slice tightens the one role it is adding a feature for.
+
+             Laboratory Technician IS given an explicit unrestricted rule even
+             though omitting it would have the same effect today, because the
+             consequence of getting this wrong is a bench that cannot see the
+             work it has been asked to do. Stating it means a future global
+             rule cannot quietly take it away.
+        -->
+
+        <record id="rule_laboratory_request_doctor" model="ir.rule">
+            <field name="name">Laboratory Request: my orders and my visits (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_laboratory_request"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!--
+                Three ways a request is legitimately this doctor's: they ordered
+                it, it belongs to a visit assigned to them, or it came from a
+                consultation they are conducting. The third branch is what makes
+                a request readable in the same transaction that creates it.
+            -->
+            <field name="domain_force">
+                ['|', '|',
+                    ('physician_id.user_id', '=', user.id),
+                    ('appointment_id.doctor_id.user_id', '=', user.id),
+                    ('consultation_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_laboratory_request_line_doctor" model="ir.rule">
+            <field name="name">Laboratory Request Line: follows the request (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_laboratory_request_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!-- Lines carry no patient of their own, so they inherit the
+                 request's scope rather than defining a second one that could
+                 drift away from it. -->
+            <field name="domain_force">
+                ['|', '|',
+                    ('request_id.physician_id.user_id', '=', user.id),
+                    ('request_id.appointment_id.doctor_id.user_id', '=', user.id),
+                    ('request_id.consultation_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_laboratory_request_operations" model="ir.rule">
+            <field name="name">Laboratory Request: all (laboratory technician / manager / system administrator)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_laboratory_request"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <!-- The bench works a cross-patient queue; scoping it would break
+                 the laboratory. Manager and administrator are named here for the
+                 usual reason: Manager IMPLIES Doctor, so without this rule the
+                 doctor scope above would silently become a manager's ceiling. -->
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_laboratory_request_line_operations" model="ir.rule">
+            <field name="name">Laboratory Request Line: all (laboratory technician / manager / system administrator)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_laboratory_request_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <!-- ============================================================
+             hospital.laboratory.result / .line
+             ============================================================
+
+             THE GAP THIS CLOSES, AND WHY IT OUTLIVED THE RULES ABOVE.
+             The laboratory request rules were added for the slice that let a
+             doctor ORDER laboratory work, and they scoped exactly the models
+             that slice touched. The RESULT models were left as
+             hospital_management shipped them: an ACL row for the doctor group
+             and no record rule at all, on either model. Every Hospital Doctor
+             could therefore read every laboratory result in the building:
+             another department's patient, another physician's investigation,
+             values and reference ranges included.
+
+             The radiology block below has had the equivalent rules since the
+             imaging slice, which added them BEFORE any endpoint went near those
+             models rather than alongside one. These four bring laboratory to
+             the same standard, on the same argument and in the same shape, so a
+             doctor's laboratory scope and their imaging scope cannot drift
+             apart. No endpoint reads these models yet; the ORM boundary is
+             being made right first.
+
+             READ-ONLY, AND THE RULE CANNOT CHANGE THAT. The shipped ACL is
+             1,0,0,0 for the doctor group on both models. The rules below narrow
+             WHICH results a doctor reads and grant nothing: reporting,
+             validating and releasing are the laboratory's acts, and every
+             perm_* except read is False so this cannot be misread as an opening.
+
+             WHAT IS DELIBERATELY LEFT ALONE. Nurse, Receptionist and the DPO
+             hold their own read ACL rows, are not in the doctor group, and get
+             no rule here  so their access is exactly what it was. Narrowing
+             them is a separate decision belonging to whoever owns those screens.
+        -->
+
+        <record id="rule_laboratory_result_doctor" model="ir.rule">
+            <field name="name">Laboratory Result: for my requests and my visits (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_laboratory_result"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!--
+                The REQUEST's scope, reached through request_id, plus the
+                result's own physician_id, which hospital.laboratory.result
+                copies from the request in create() and which the bench may also
+                set when reporting for a named referrer.
+
+                Four branches, identical to rule_radiology_result_doctor. The
+                consultation branch is not redundant with the request-physician
+                branch by accident of the data: yoya_clinical_bridge's
+                _check_consultation_references refuses a consultation-linked
+                request whose physician disagrees with the consultation's
+                doctor, so today the two coincide. It is stated anyway, because
+                the branch that is load-bearing on radiology must be present
+                here too: a scope that is the same shape in both services is
+                one a reader can check, and one a later change to either
+                constraint cannot quietly hollow out.
+            -->
+            <field name="domain_force">
+                ['|', '|', '|',
+                    ('physician_id.user_id', '=', user.id),
+                    ('request_id.physician_id.user_id', '=', user.id),
+                    ('request_id.appointment_id.doctor_id.user_id', '=', user.id),
+                    ('request_id.consultation_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_laboratory_result_line_doctor" model="ir.rule">
+            <field name="name">Laboratory Result Line: follows the result (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_laboratory_result_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!-- Lines carry no patient and no physician of their own, so they
+                 inherit the result's scope rather than defining a second one
+                 that could drift away from it. A line holds the actual measured
+                 value, so a line the doctor may read but a result they may not
+                 (or the reverse) would be the worst of both. -->
+            <field name="domain_force">
+                ['|', '|', '|',
+                    ('result_id.physician_id.user_id', '=', user.id),
+                    ('result_id.request_id.physician_id.user_id', '=', user.id),
+                    ('result_id.request_id.appointment_id.doctor_id.user_id', '=', user.id),
+                    ('result_id.request_id.consultation_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <!--
+            THESE TWO ARE NOT OPTIONAL AND MUST LAND IN THE SAME CHANGE.
+
+            group_hospital_manager IMPLIES group_hospital_doctor, and
+            group_hospital_system_administrator implies manager in turn. Odoo ORs
+            the domains of every rule whose groups a user holds, so with only the
+            doctor rules above, a manager's laboratory-result visibility would
+            silently collapse to a doctor's scope: a regression that stays
+            invisible until somebody senior cannot see a record.
+
+            Laboratory Technician does not inherit the doctor group and would be
+            unaffected today, but is named for the reason the request rules give:
+            the consequence of getting it wrong is a bench that cannot see the
+            work it has been asked to do, and stating it means a future rule
+            cannot quietly take it away.
+
+            perm_* are all True so the rule is never the limiting factor; what
+            each role may actually DO stays decided by the ACL rows in
+            hospital_management, which this module does not touch.
+        -->
+
+        <record id="rule_laboratory_result_operations" model="ir.rule">
+            <field name="name">Laboratory Result: all (laboratory technician / manager / system administrator)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_laboratory_result"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_laboratory_result_line_operations" model="ir.rule">
+            <field name="name">Laboratory Result Line: all (laboratory technician / manager / system administrator)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_laboratory_result_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <!-- ============================================================
+             hospital.radiology.request / .result
+             ============================================================
+
+             THE STATE THIS INHERITS, AND IT IS WORSE THAN LABORATORY'S WAS.
+             hospital_radiology ships ACL rows for all five of its models and
+             NO record rules whatsoever: not one, on any model, in any
+             installed module. Before this slice every Hospital Doctor could
+             read AND WRITE every radiology request in the hospital, and read
+             every radiology result: a doctor in one department could open the
+             imaging history of a patient they have never seen.
+
+             The rules below give the DOCTOR a deliberate scope, in exactly the
+             shape rule_laboratory_request_doctor already defines, so a doctor's
+             imaging scope and their laboratory scope cannot drift apart.
+
+             WHAT IS DELIBERATELY LEFT ALONE, AND WHY THAT IS NOT AN OVERSIGHT.
+             Lab Technician (which is the operational imaging role, there being
+             no radiographer group in this repository), Nurse, Receptionist and
+             the DPO get no rule here, so their access is exactly what it was.
+             A rule for a group only ever narrows it; the imaging bench works a
+             cross-patient queue and scoping it would break the department; and
+             narrowing the front office or the DPO is a separate decision
+             belonging to whoever owns those screens. This slice tightens the
+             one role it is adding a feature for, and no other.
+
+             THE OPERATIONAL ROLES ARE GIVEN AN EXPLICIT UNRESTRICTED RULE even
+             though omitting them would have the same effect today, for the
+             reason the laboratory rules state: the consequence of getting this
+             wrong is a department that cannot see the work it has been asked to
+             do, and Manager IMPLIES Doctor, so without naming Manager here,
+             the doctor scope above would silently become a manager's ceiling.
+
+             RESULTS ARE READ-ONLY FOR THE DOCTOR AND STAY THAT WAY. The shipped
+             ACL is 1,0,0,0 for the doctor group; the rule below narrows WHICH
+             results they read and grants nothing. Reporting, validating and
+             releasing belong to the imaging department. Slice 5 does not
+             serialize a report's contents at all (that is the Results slice),
+             but the rule is added now so the ORM boundary is right before
+             any endpoint goes near these models.
+        -->
+
+        <record id="rule_radiology_request_doctor" model="ir.rule">
+            <field name="name">Radiology Request: my orders and my visits (doctor)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_request"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!--
+                Three ways a request is legitimately this doctor's: they ordered
+                it, it belongs to a visit assigned to them, or it came from a
+                consultation they are conducting. The third branch is what makes
+                a request readable in the same transaction that creates it,
+                before physician_id has been read back.
+            -->
+            <field name="domain_force">
+                ['|', '|',
+                    ('physician_id.user_id', '=', user.id),
+                    ('appointment_id.doctor_id.user_id', '=', user.id),
+                    ('consultation_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_radiology_request_line_doctor" model="ir.rule">
+            <field name="name">Radiology Request Line: follows the request (doctor)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_request_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!-- Lines carry no patient of their own, so they inherit the
+                 request's scope rather than defining a second one that could
+                 drift away from it. -->
+            <field name="domain_force">
+                ['|', '|',
+                    ('request_id.physician_id.user_id', '=', user.id),
+                    ('request_id.appointment_id.doctor_id.user_id', '=', user.id),
+                    ('request_id.consultation_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_radiology_result_doctor" model="ir.rule">
+            <field name="name">Radiology Result: for my requests and my visits (doctor)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_result"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!--
+                The REQUEST's scope, reached through request_id, plus the
+                result's own physician_id, which hospital.radiology.result
+                populates from the request and which a radiologist may also set
+                when reporting for a named referrer.
+
+                Read-only by ACL (1,0,0,0); every perm_* below except read is
+                False so this rule cannot be mistaken for a grant of write.
+            -->
+            <field name="domain_force">
+                ['|', '|', '|',
+                    ('physician_id.user_id', '=', user.id),
+                    ('request_id.physician_id.user_id', '=', user.id),
+                    ('request_id.appointment_id.doctor_id.user_id', '=', user.id),
+                    ('request_id.consultation_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_radiology_result_line_doctor" model="ir.rule">
+            <field name="name">Radiology Result Line: follows the result (doctor)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_result_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">
+                ['|', '|', '|',
+                    ('result_id.physician_id.user_id', '=', user.id),
+                    ('result_id.request_id.physician_id.user_id', '=', user.id),
+                    ('result_id.request_id.appointment_id.doctor_id.user_id', '=', user.id),
+                    ('result_id.request_id.consultation_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_radiology_request_operations" model="ir.rule">
+            <field name="name">Radiology Request: all (imaging bench / manager / system administrator)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_request"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_radiology_request_line_operations" model="ir.rule">
+            <field name="name">Radiology Request Line: all (imaging bench / manager / system administrator)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_request_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_radiology_result_operations" model="ir.rule">
+            <field name="name">Radiology Result: all (imaging bench / manager / system administrator)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_result"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_radiology_result_line_operations" model="ir.rule">
+            <field name="name">Radiology Result Line: all (imaging bench / manager / system administrator)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_result_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <!-- ============================================================
+             hospital.radiology.image
+             ============================================================
+
+             WHY A RULE HERE PROTECTS THE FILE ITSELF, and not merely a row.
+             `file` is Binary(attachment=True), so the bytes live in an
+             ir.attachment carrying res_model='hospital.radiology.image'.
+             ir.attachment.check() resolves access by browsing that
+             res_model/res_id pair and calling check_access() on the record, so
+             the domain below is what stands between a doctor and another
+             doctor's patient's images. There is no ir.rule on ir.attachment
+             itself anywhere in this database; the parent's rule IS the
+             protection, which is exactly why it has to be right.
+
+             THE SAME FOUR BRANCHES AS THE RESULT, one level deeper, so a
+             doctor's access to a report and to the images inside it can never
+             drift apart. Read-only, and every perm_* below except read is
+             False: uploading and removing imaging is the department's act, and
+             the shipped ACL is 1,0,0,0 for the doctor group.
+        -->
+
+        <record id="rule_radiology_image_doctor" model="ir.rule">
+            <field name="name">Radiology Image: for my results and my visits (doctor)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_image"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">
+                ['|', '|', '|',
+                    ('result_id.physician_id.user_id', '=', user.id),
+                    ('result_id.request_id.physician_id.user_id', '=', user.id),
+                    ('result_id.request_id.appointment_id.doctor_id.user_id', '=', user.id),
+                    ('result_id.request_id.consultation_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <!--
+            MANDATORY, for the reason the laboratory and radiology result rules
+            above already state: group_hospital_manager IMPLIES
+            group_hospital_doctor, and the system administrator implies manager
+            in turn. Odoo ORs the domains of every rule whose groups a user
+            holds, so without this the doctor scope would silently become a
+            manager's ceiling and the imaging bench could lose sight of the
+            department's own work.
+        -->
+
+        <record id="rule_radiology_image_operations" model="ir.rule">
+            <field name="name">Radiology Image: all (imaging bench / manager / system administrator)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_image"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <!-- ============================================================
+             hospital.prescription / .line / hospital.pharmacy.dispense
+             ============================================================
+
+             THE STATE THIS INHERITS, AND IT IS THE WORST OF THE THREE.
+             hospital_management ships ACL rows for the prescription models and
+             hospital_pharmacy ships them for the dispense models, and between
+             them there was not one record rule on any of the four, so every
+             Hospital Doctor could read AND WRITE every prescription in the
+             hospital, and read every dispense. A doctor in one department could
+             open, and alter, the complete medication history of a patient they
+             have never seen.
+
+             The rules below give the DOCTOR the same scope their laboratory and
+             radiology orders already have, so one clinician's view of what they
+             prescribed and what they ordered cannot drift apart.
+
+             CONSULTATION IS NOW PART OF THESE DOMAINS. Slice 6A wrote them
+             without it because hospital.prescription had no consultation_id and
+             referencing a missing field would have made this file fail to load.
+             Slice 6B adds the column in this module, so the third branch
+             arrives here, exactly as 6A said it would and in the shape
+             rule_laboratory_request_doctor already shows.
+
+             That branch is what makes a prescription readable in the SAME
+             transaction that creates it. create_from_consultation() derives
+             physician_id from the consultation, so the first branch usually
+             matches as well; a visit reassigned mid-episode would leave only
+             this one.
+
+             WHAT IS DELIBERATELY LEFT ALONE. Nurse, Receptionist, Accountant
+             and the DPO get no rule here, so their access is exactly what it
+             was: a rule attached to a group can only ever NARROW that group,
+             and narrowing the front office, the finance desk or the compliance
+             role is a separate decision belonging to whoever owns those screens.
+             This slice tightens the one role it is about to expose an API for.
+
+             THE PHARMACIST IS GIVEN AN EXPLICIT UNRESTRICTED RULE even though
+             omitting it would have the same effect today, for the reason the
+             laboratory block states: the counter works a cross-patient queue,
+             and a future global rule must not be able to take it away quietly.
+        -->
+
+        <record id="rule_prescription_doctor" model="ir.rule">
+            <field name="name">Prescription: my prescriptions and my visits (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_prescription"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!--
+                Two ways a prescription is legitimately this doctor's: they
+                prescribed it, or it belongs to a visit assigned to them. Slice
+                6B adds the third, ('consultation_id.doctor_id.user_id', '=',
+                user.id), which is what will make a prescription readable in the
+                same transaction that creates it from a consultation.
+            -->
+            <field name="domain_force">
+                ['|', '|',
+                    ('physician_id.user_id', '=', user.id),
+                    ('appointment_id.doctor_id.user_id', '=', user.id),
+                    ('consultation_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_prescription_line_doctor" model="ir.rule">
+            <field name="name">Prescription Line: follows the prescription (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_prescription_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!-- Lines carry no patient of their own, so they inherit the
+                 prescription's scope rather than defining a second one that
+                 could drift away from it. -->
+            <field name="domain_force">
+                ['|', '|',
+                    ('prescription_id.physician_id.user_id', '=', user.id),
+                    ('prescription_id.appointment_id.doctor_id.user_id', '=', user.id),
+                    ('prescription_id.consultation_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_pharmacy_dispense_doctor" model="ir.rule">
+            <field name="name">Pharmacy Dispense: for my prescriptions and my visits (doctor)</field>
+            <field name="model_id" ref="hospital_pharmacy.model_hospital_pharmacy_dispense"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!--
+                READ ONLY, AND THAT IS NOT AN OVERSIGHT. hospital_pharmacy's ACL
+                now grants Hospital Doctor read and nothing else on the dispense,
+                so this rule decides WHICH dispenses a doctor may see and never
+                grants an operation. Setting perm_write here would not widen the
+                ACL, but it would state a permission this system has just
+                decided the doctor must not have, and the next reader would
+                believe it.
+
+                The dispense's own physician_id is copied from the prescription
+                at creation, so the two branches mirror the prescription rule.
+            -->
+            <field name="domain_force">
+                ['|', '|', '|',
+                    ('physician_id.user_id', '=', user.id),
+                    ('appointment_id.doctor_id.user_id', '=', user.id),
+                    ('prescription_id.physician_id.user_id', '=', user.id),
+                    ('prescription_id.consultation_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_pharmacy_dispense_line_doctor" model="ir.rule">
+            <field name="name">Pharmacy Dispense Line: follows the dispense (doctor)</field>
+            <field name="model_id" ref="hospital_pharmacy.model_hospital_pharmacy_dispense_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">
+                ['|', '|', '|',
+                    ('dispense_id.physician_id.user_id', '=', user.id),
+                    ('dispense_id.appointment_id.doctor_id.user_id', '=', user.id),
+                    ('dispense_id.prescription_id.physician_id.user_id', '=', user.id),
+                    ('dispense_id.prescription_id.consultation_id.doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_prescription_operations" model="ir.rule">
+            <field name="name">Prescription: all (pharmacist / manager / system administrator)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_prescription"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_pharmacist')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <!-- The counter works a cross-patient queue; scoping it would break
+                 the pharmacy. Manager and administrator are named here for the
+                 usual reason: group_hospital_manager IMPLIES group_hospital_
+                 doctor, so without this rule the doctor scope above would
+                 silently become a manager's ceiling, and group_hospital_
+                 system_administrator implies manager in turn. -->
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_prescription_line_operations" model="ir.rule">
+            <field name="name">Prescription Line: all (pharmacist / manager / system administrator)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_prescription_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_pharmacist')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_pharmacy_dispense_operations" model="ir.rule">
+            <field name="name">Pharmacy Dispense: all (pharmacist / manager / system administrator)</field>
+            <field name="model_id" ref="hospital_pharmacy.model_hospital_pharmacy_dispense"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_pharmacist')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_pharmacy_dispense_line_operations" model="ir.rule">
+            <field name="name">Pharmacy Dispense Line: all (pharmacist / manager / system administrator)</field>
+            <field name="model_id" ref="hospital_pharmacy.model_hospital_pharmacy_dispense_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_pharmacist')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+
+        <!-- ============================================================
+             SLICE 9A : LONGITUDINAL CLINICAL HISTORY
+             Cross-provider READ, bounded by an ACTIVE care relationship.
+             ============================================================
+
+             THE POLICY, IN ONE SENTENCE
+             ===========================
+             A doctor may read another provider's prior clinical records for
+             patient P only WHILE that doctor holds an active clinical
+             appointment for P (confirmed or in_consultation; see
+             ACTIVE_CARE_APPOINTMENT_STATES in models/res_users.py, which is
+             derived from the live workflow vocabulary, not guessed).
+
+             It is NOT "every patient I have ever treated", NOT hospital-wide,
+             and NOT permanent. When the current episode reaches done or
+             cancelled, this access LAPSES. That is deliberate.
+
+             WHY THESE RULES EXIST AT ALL
+             ============================
+             Every pre-existing doctor rule in this file is anchored on "I am
+             the clinician on THAT record's visit". None is patient-anchored;
+             rule_patient_diagnosis_doctor says so explicitly and defers the
+             question to a History slice. This is that slice, and these rules
+             are the deliberate, bounded answer.
+
+             HOW ODOO COMBINES THEM
+             ======================
+             Odoo ORs the domains of every rule whose groups the user holds, so
+             each rule below WIDENS the doctor scope while the relationship
+             lasts. That is why every one of them is perm_read ONLY: a widened
+             read can never become a widened write, and the visit-anchored
+             rules above keep sole ownership of write/create/unlink.
+
+             THE ENDPOINT LAYER IS UNCHANGED AND STILL NARROW
+             ================================================
+             clinical_scope.build_appointment_scope_domain() is an EXPLICIT
+             domain ANDed by the API; it is not an ir.rule and is not widened
+             by anything here. Every live /doctor/visits/&lt;id&gt;/... endpoint
+             therefore keeps its existing scope, and every record-id loader in
+             controllers/doctor.py re-checks record.consultation_id against the
+             visit being addressed. Those two facts are what stop these rules
+             leaking a historical record into a current-visit endpoint.
+
+             DELIBERATELY ABSENT: hospital.appointment
+             ========================================
+             There is NO care-relationship rule on hospital.appointment, for
+             two independent reasons, either of which alone is sufficient:
+
+             1. NON-DISCLOSURE REGRESSION. find_appointment_in_scope() probes
+                with search_count() as the caller to distinguish "does not
+                exist" from "not yours". Today rule_appointment_doctor hides a
+                colleague's visit BEFORE that probe, so the desk answers a flat
+                404 and cannot be used to enumerate appointment ids; the
+                property test_visit_detail_respects_scope pins by name. A
+                care-relationship rule here would make that probe succeed and
+                flip the answer to 403 for every care-related historical visit,
+                weakening a documented guarantee across the whole Doctor Desk.
+
+             2. RULE-EVALUATION RECURSION. A care-relationship rule on
+                hospital.appointment would be consulted while these domains
+                are themselves resolving an appointment subquery.
+
+             WHY THE DOMAINS TRAVERSE RATHER THAN NAMING A USER FIELD
+             =======================================================
+             res.users.yoya_care_relationship_patient_ids states this policy in
+             one readable place and is the SPECIFICATION; a test asserts the
+             domains below admit exactly the patients it reports. But the rules
+             must NOT be written as ('patient_id', 'in', that_field.ids).
+
+             ir.rule._compute_domain is ormcached on
+             (uid, su, model, mode, context) and caches the EVALUATED domain.
+             Baking today's patient ids into that cache entry would mean
+             nothing invalidates them when an appointment closes, and a
+             doctor's longitudinal access would outlive the care relationship
+             that justified it. That is a lapse failure, and it is silent.
+
+             Traversing hospital.patient.appointment_ids with the `any`
+             operator keeps the relationship inside the SQL the rule generates:
+             the only value baked into the cache is user.id, which is already
+             part of the cache key, and the database re-evaluates the
+             relationship on every query.
+
+             History therefore never needs to READ a hospital.appointment row:
+             hospital.encounter is the episode anchor and already carries
+             name, opened_at, state, encounter_type, primary_doctor_id and
+             department_id, and its appointment_id COLUMN VALUE is readable as
+             part of the encounter without reading the appointment record.
+        -->
+
+        <record id="rule_history_encounter_doctor" model="ir.rule">
+            <field name="name">Encounter: history for patients under my active care (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_encounter"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!-- THE EPISODE ANCHOR. patient_id is required and indexed here, which is why History anchors on the encounter rather than the appointment. -->
+            <field name="domain_force">[('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_consultation_doctor" model="ir.rule">
+            <field name="name">Consultation: history for patients under my active care (doctor)</field>
+            <field name="model_id" ref="model_hospital_consultation"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!-- patient_id is a STORED related column, so this is an index lookup rather than a traversal at query time. -->
+            <field name="domain_force">[('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_patient_diagnosis_doctor" model="ir.rule">
+            <field name="name">Patient Diagnosis: history for patients under my active care (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_patient_diagnosis"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">[('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_patient_evaluation_doctor" model="ir.rule">
+            <field name="name">Patient Evaluation: history for patients under my active care (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_patient_evaluation"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!-- Triage vitals for a prior episode. READ ONLY; the nurse rule above keeps sole ownership of write. -->
+            <field name="domain_force">[('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_laboratory_request_doctor" model="ir.rule">
+            <field name="name">Laboratory Request: history for patients under my active care (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_laboratory_request"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">[('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_laboratory_request_line_doctor" model="ir.rule">
+            <field name="name">Laboratory Request Line: history follows the request (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_laboratory_request_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!-- Lines carry no patient of their own, so they inherit the request scope rather than defining a second one that could drift away from it. -->
+            <field name="domain_force">[('request_id', 'any', [('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_laboratory_result_doctor" model="ir.rule">
+            <field name="name">Laboratory Result: history for patients under my active care (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_laboratory_result"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!-- RELEASE IS NOT CHECKED HERE, deliberately. Released-only is a SERIALIZER guarantee (result_serializers.released_results) applied identically by the Results tab and by History; restating it in a record rule would create a competing definition of released that could drift from it. -->
+            <field name="domain_force">[('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_laboratory_result_line_doctor" model="ir.rule">
+            <field name="name">Laboratory Result Line: history follows the result (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_laboratory_result_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">[('result_id', 'any', [('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_radiology_request_doctor" model="ir.rule">
+            <field name="name">Radiology Request: history for patients under my active care (doctor)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_request"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">[('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_radiology_request_line_doctor" model="ir.rule">
+            <field name="name">Radiology Request Line: history follows the request (doctor)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_request_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">[('request_id', 'any', [('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_radiology_result_doctor" model="ir.rule">
+            <field name="name">Radiology Result: history for patients under my active care (doctor)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_result"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">[('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_radiology_result_line_doctor" model="ir.rule">
+            <field name="name">Radiology Result Line: history follows the result (doctor)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_result_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">[('result_id', 'any', [('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_radiology_image_doctor" model="ir.rule">
+            <field name="name">Radiology Image: history for patients under my active care (doctor)</field>
+            <field name="model_id" ref="hospital_radiology.model_hospital_radiology_image"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <!-- Images carry no patient of their own. The BYTE endpoint re-checks result_id.state == released independently, so metadata visibility and byte visibility remain two separate gates. -->
+            <field name="domain_force">[('result_id', 'any', [('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_prescription_doctor" model="ir.rule">
+            <field name="name">Prescription: history for patients under my active care (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_prescription"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">[('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_history_prescription_line_doctor" model="ir.rule">
+            <field name="name">Prescription Line: history follows the prescription (doctor)</field>
+            <field name="model_id" ref="hospital_management.model_hospital_prescription_line"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">[('prescription_id', 'any', [('patient_id', 'any', [('appointment_ids', 'any', ['&amp;', ('doctor_id.user_id', '=', user.id), ('state', 'in', ['confirmed', 'in_consultation'])])])])]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
     </data>
 </odoo>

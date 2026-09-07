@@ -3,7 +3,7 @@
 import { DOCTOR_BUCKETS, type DoctorBucket } from "@/lib/doctor-format";
 
 /**
- * The All / Wait / Review / Finished strip.
+ * The All / Wait / Review / Open / Finished strip.
  *
  * Read as a SEGMENTED CONTROL rather than four loose boxes: one enclosing
  * track, the active segment lifted onto white with a coloured underline. That
@@ -40,11 +40,21 @@ const TONE: Record<
     bar: "bg-emerald-500",
     label: "Ready to review",
   },
+  open: {
+    // Sky, matching the "In consultation" badge the cashier desk uses for the
+    // same fact. Deliberately NOT emerald: Review is the set the doctor should
+    // call through next, and two accents competing for that role is exactly the
+    // ambiguity this split exists to remove.
+    text: "text-sky-800",
+    rule: "bg-sky-600",
+    bar: "bg-sky-400",
+    label: "With the doctor",
+  },
   finished: {
     text: "text-slate-600",
     rule: "bg-slate-400",
     bar: "bg-slate-300",
-    label: "Seen today",
+    label: "Signed off",
   },
 };
 
@@ -58,7 +68,13 @@ export default function DoctorBucketBar({
   active,
   onChange,
 }: {
-  counts: { all: number; wait: number; review: number; finished: number };
+  counts: {
+    all: number;
+    wait: number;
+    review: number;
+    open: number;
+    finished: number;
+  };
   active: DoctorBucket;
   onChange: (bucket: DoctorBucket) => void;
 }) {
@@ -82,21 +98,21 @@ export default function DoctorBucketBar({
               type="button"
               onClick={() => onChange(bucket.key)}
               aria-pressed={selected}
-              className={`relative flex min-w-[62px] flex-col items-center justify-center rounded px-2.5 py-1 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-emerald-600 ${
+              className={`relative flex min-w-[56px] flex-col items-center justify-center rounded px-2.5 py-1 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-emerald-600 ${
                 selected
                   ? "bg-white shadow-sm"
                   : "text-slate-500 hover:bg-white/60 hover:text-slate-700"
               }`}
             >
               <span
-                className={`text-[9px] font-bold uppercase tracking-[0.08em] ${
+                className={`cl-micro font-bold uppercase tracking-[0.08em] ${
                   selected ? tone.text : ""
                 }`}
               >
                 {bucket.label}
               </span>
               <span
-                className={`text-[15px] font-bold leading-none tabular-nums ${
+                className={`cl-head font-bold leading-none tabular-nums ${
                   selected ? tone.text : "text-slate-600"
                 }`}
               >
@@ -119,9 +135,9 @@ export default function DoctorBucketBar({
           <div
             className="flex h-1.5 overflow-hidden rounded-full bg-slate-100"
             role="img"
-            aria-label={`${counts.wait} still waiting, ${counts.review} ready to review, ${counts.finished} seen today`}
+            aria-label={`${counts.wait} still waiting, ${counts.review} ready to review, ${counts.open} with the doctor, ${counts.finished} signed off`}
           >
-            {(["wait", "review", "finished"] as const).map((key) =>
+            {(["wait", "review", "open", "finished"] as const).map((key) =>
               counts[key] > 0 ? (
                 <span
                   key={key}
@@ -134,10 +150,10 @@ export default function DoctorBucketBar({
           </div>
           {/* A legend, so the bar is readable without hovering it. */}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
-            {(["wait", "review", "finished"] as const).map((key) => (
+            {(["wait", "review", "open", "finished"] as const).map((key) => (
               <span
                 key={key}
-                className="flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wide text-slate-500"
+                className="flex items-center gap-1 cl-micro font-semibold uppercase tracking-wide text-slate-500"
               >
                 <span
                   aria-hidden

@@ -173,9 +173,13 @@ test("buckets are driven by the authoritative stage", () => {
   assert.equal(bucketOf(row({ queue_stage: "triage" })), "wait");
   assert.equal(bucketOf(row({ queue_stage: "awaiting_cashier" })), "wait");
   assert.equal(bucketOf(row({ queue_stage: "ready_doctor" })), "review");
+  // Slice 4 split these two. `in_consultation` used to be filed as "finished",
+  // which put the patient the doctor was CURRENTLY EXAMINING into the tab they
+  // use to confirm nothing is left to finish. Tolerable only while nothing
+  // could ever leave in_consultation; completion ended that.
   assert.equal(
     bucketOf(row({ queue_stage: "in_consultation", state: "in_consultation" })),
-    "finished",
+    "open",
   );
   assert.equal(bucketOf(row({ queue_stage: "completed", state: "done" })), "finished");
 });
@@ -198,7 +202,10 @@ test("Review also requires the visit to still be confirmed", () => {
   );
 });
 
-test("a started consultation counts as finished even if triage never completed", () => {
+test("a started consultation is OPEN even if triage never completed", () => {
+  // The claim being pinned is unchanged: the STAGE decides, and a stale
+  // triage_status cannot drag a started consultation back into Wait. Only the
+  // bucket it lands in moved, from finished to open.
   assert.equal(
     bucketOf(
       row({
@@ -207,7 +214,7 @@ test("a started consultation counts as finished even if triage never completed",
         triage_status: "waiting",
       }),
     ),
-    "finished",
+    "open",
   );
 });
 
@@ -224,7 +231,11 @@ test("bucket counts sum to the total", () => {
   assert.equal(counts.wait, 2);
   assert.equal(counts.review, 2);
   assert.equal(counts.finished, 1);
-  assert.equal(counts.wait + counts.review + counts.finished, counts.all);
+  assert.equal(counts.open, 0);
+  assert.equal(
+    counts.wait + counts.review + counts.open + counts.finished,
+    counts.all,
+  );
 });
 
 test("stat labels stay within the vendor column's short register", () => {
@@ -247,12 +258,40 @@ test("stat labels stay within the vendor column's short register", () => {
 test("a missing vital renders as an em dash, never as zero", () => {
   assert.equal(vitalText(null, "°C"), "—");
   assert.equal(vitalText(undefined), "—");
-  assert.equal(vitalText(0, "°C"), "0 °C");
+  /*
+    THE ASSERTION THIS TEST WAS ALWAYS NAMED FOR. hospital.patient.evaluation
+    stores every vital as a plain Float with no null sentinel, so a reading
+    nobody took arrives as 0.0 -- and the serializer forwards it raw, by
+    design, for the client to interpret. Rendering it produced "0 °C" on a
+    live Doctor Desk: not a missing reading, a fabricated one.
+  */
+  assert.equal(vitalText(0, "°C"), "—");
+  assert.equal(vitalText(0, "%", 0), "—");
 });
 
-test("blood pressure needs both halves", () => {
+test("a real reading still renders, including a small fractional one", () => {
+  // The guard must not swallow genuine values on its way to catching zeros.
+  assert.equal(vitalText(37.2, "°C"), "37.2 °C");
+  assert.equal(vitalText(98, "%", 0), "98 %");
+  assert.equal(vitalText(0.5, "°C"), "0.5 °C");
+});
+
+test("blood pressure needs both halves, and neither may be a zero", () => {
   assert.equal(bloodPressureText({ ...EMPTY_VITALS, systolic_bp: 120 }), "—");
   assert.equal(bloodPressureText({ ...EMPTY_VITALS, diastolic_bp: 80 }), "—");
+  /*
+    "0/0" and "120/0" are not blood pressures with a missing half. They are
+    readings that describe shock, and a triage record saved with the pressure
+    left blank produced exactly them.
+  */
+  assert.equal(
+    bloodPressureText({ ...EMPTY_VITALS, systolic_bp: 0, diastolic_bp: 0 }),
+    "—",
+  );
+  assert.equal(
+    bloodPressureText({ ...EMPTY_VITALS, systolic_bp: 120, diastolic_bp: 0 }),
+    "—",
+  );
   assert.equal(
     bloodPressureText({ ...EMPTY_VITALS, systolic_bp: 120, diastolic_bp: 80 }),
     "120/80",
@@ -263,6 +302,47 @@ test("hasAnyVital ignores the non-numeric bmi_state so an empty grid says so", (
   assert.equal(hasAnyVital(EMPTY_VITALS), false);
   assert.equal(hasAnyVital({ ...EMPTY_VITALS, bmi_state: "normal" }), false);
   assert.equal(hasAnyVital({ ...EMPTY_VITALS, temperature: 37 }), true);
+});
+
+test("an evaluation whose vitals are ALL unrecorded zeros reports none", () => {
+  /*
+    THE REACHABLE SHAPE. The UAT database holds triage records saved with every
+    vital left blank; each column is 0.0, so before this the grid answered
+    "yes, there are vitals" and then drew a full row of zeros.
+
+    It must use the same recorded-ness test the cells use, or the grid claims
+    to hold vitals and then renders nothing but em dashes.
+  */
+  const allZero = {
+    ...EMPTY_VITALS,
+    weight: 0,
+    height: 0,
+    temperature: 0,
+    heart_rate: 0,
+    respiratory_rate: 0,
+    systolic_bp: 0,
+    diastolic_bp: 0,
+    spo2: 0,
+    rbs: 0,
+    head_circumference: 0,
+    bmi: 0,
+  };
+  assert.equal(hasAnyVital(allZero), false);
+  // One real reading among the zeros is still a grid worth drawing.
+  assert.equal(hasAnyVital({ ...allZero, heart_rate: 83 }), true);
+});
+
+test("a reported pain score of ZERO still counts as a recorded vital", () => {
+  /*
+    THE EXCEPTION THAT MAKES THE ZERO RULE SAFE. Pain is the one reading on
+    this grid whose zero is an answer rather than an absence -- the patient
+    said they have no pain -- and the grid draws it behind hasAnyVital. It is
+    a Selection keyed '0'..'10' on the model and arrives as a STRING, so it
+    never reaches the numeric guard at all.
+  */
+  assert.equal(hasAnyVital({ ...EMPTY_VITALS, pain_level: "0" }), true);
+  assert.equal(hasAnyVital({ ...EMPTY_VITALS, pain_level: "7" }), true);
+  assert.equal(hasAnyVital(EMPTY_VITALS), false);
 });
 
 test("payer labels cover the sponsorship categories and nothing commercial", () => {

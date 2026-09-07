@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_fiscal_payment_log_list" model="ir.ui.view">
+        <field name="name">hospital.fiscal.payment.log.list</field>
+        <field name="model">hospital.fiscal.payment.log</field>
+        <field name="arch" type="xml">
+            <list string="Fiscal Logs" create="false" edit="false" delete="false"
+                  decoration-danger="event_type == 'error'"
+                  decoration-success="event_type == 'payment_success'"
+                  decoration-warning="event_type == 'payment_failure'">
+                <field name="created_at"/>
+                <field name="event_type"/>
+                <field name="direction" optional="show"/>
+                <field name="transaction_id"/>
+                <field name="device_id" optional="show"/>
+                <field name="terminal_code" optional="hide"/>
+                <field name="status_code"/>
+                <field name="external_receipt_no" optional="show"/>
+                <field name="external_transaction_id" optional="hide"/>
+                <field name="idempotency_key" optional="hide"/>
+                <field name="ip_address" optional="hide"/>
+                <field name="error_message" optional="show"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_fiscal_payment_log_form" model="ir.ui.view">
+        <field name="name">hospital.fiscal.payment.log.form</field>
+        <field name="model">hospital.fiscal.payment.log</field>
+        <field name="arch" type="xml">
+            <form string="Fiscal Log" create="false" edit="false" delete="false">
+                <sheet>
+                    <group>
+                        <group string="Event">
+                            <field name="created_at" readonly="1"/>
+                            <field name="event_type" readonly="1"/>
+                            <field name="direction" readonly="1"/>
+                            <field name="status_code" readonly="1"/>
+                        </group>
+                        <group string="Source">
+                            <field name="transaction_id" readonly="1"/>
+                            <field name="device_id" readonly="1"/>
+                            <field name="terminal_code" readonly="1"/>
+                            <field name="ip_address" readonly="1"/>
+                            <field name="user_agent" readonly="1"/>
+                        </group>
+                    </group>
+                    <group>
+                        <group string="External References">
+                            <field name="external_reference" readonly="1"/>
+                            <field name="external_transaction_id" readonly="1"/>
+                            <field name="external_receipt_no" readonly="1"/>
+                            <field name="idempotency_key" readonly="1"/>
+                        </group>
+                        <group string="Error">
+                            <field name="error_message" readonly="1"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Request Payload" name="request">
+                            <field name="request_payload" readonly="1"/>
+                        </page>
+                        <page string="Response Payload" name="response">
+                            <field name="response_payload" readonly="1"/>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_fiscal_payment_log_search" model="ir.ui.view">
+        <field name="name">hospital.fiscal.payment.log.search</field>
+        <field name="model">hospital.fiscal.payment.log</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="transaction_id"/>
+                <field name="device_id"/>
+                <field name="terminal_code"/>
+                <field name="external_receipt_no"/>
+                <field name="external_transaction_id"/>
+                <field name="idempotency_key"/>
+                <filter string="Lookups" name="lookups" domain="[('event_type', '=', 'terminal_lookup')]"/>
+                <filter string="Payment Success" name="success" domain="[('event_type', '=', 'payment_success')]"/>
+                <filter string="Payment Failure" name="failure" domain="[('event_type', '=', 'payment_failure')]"/>
+                <filter string="Errors" name="errors" domain="[('event_type', '=', 'error')]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Event Type" name="group_by_event" context="{'group_by': 'event_type'}"/>
+                    <filter string="Device" name="group_by_device" context="{'group_by': 'device_id'}"/>
+                    <filter string="Transaction" name="group_by_transaction" context="{'group_by': 'transaction_id'}"/>
+                    <filter string="Date" name="group_by_date" context="{'group_by': 'created_at:day'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_fiscal_payment_log" model="ir.actions.act_window">
+        <field name="name">Fiscal Logs</field>
+        <field name="res_model">hospital.fiscal.payment.log</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_fiscal_payment_log_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">No fiscal API activity yet</p>
+            <p>Every terminal lookup, callback and error is recorded here for fiscal audit.</p>
+        </field>
+    </record>
+</odoo>

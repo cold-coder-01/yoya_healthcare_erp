@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_hospital_inventory_provenance_archive_list" model="ir.ui.view">
+        <field name="name">hospital.inventory.provenance.archive.list</field>
+        <field name="model">hospital.inventory.provenance.archive</field>
+        <field name="arch" type="xml">
+            <list string="Provenance Migration Snapshots" create="0" edit="0" delete="0">
+                <field name="snapshot_date"/>
+                <field name="consumption_ref"/>
+                <field name="consumption_id"/>
+                <field name="field_name"/>
+                <field name="comodel"/>
+                <field name="old_res_id"/>
+                <field name="old_display"/>
+                <field name="migration_version"/>
+                <field name="reason"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_inventory_provenance_archive_form" model="ir.ui.view">
+        <field name="name">hospital.inventory.provenance.archive.form</field>
+        <field name="model">hospital.inventory.provenance.archive</field>
+        <field name="arch" type="xml">
+            <form string="Provenance Migration Snapshot" create="0" edit="0" delete="0">
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="consumption_ref"/>
+                            <field name="consumption_id"/>
+                            <field name="field_name"/>
+                            <field name="comodel"/>
+                        </group>
+                        <group>
+                            <field name="old_res_id"/>
+                            <field name="old_display"/>
+                            <field name="migration_version"/>
+                            <field name="snapshot_date"/>
+                        </group>
+                    </group>
+                    <group string="Reason">
+                        <field name="reason" nolabel="1"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_hospital_inventory_provenance_archive" model="ir.actions.act_window">
+        <field name="name">Provenance Snapshots</field>
+        <field name="res_model">hospital.inventory.provenance.archive</field>
+        <field name="view_mode">list,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">No provenance snapshots.</p>
+            <p>Immutable audit rows written by remediation migrations before any
+               legacy source reference is cleared.</p>
+        </field>
+    </record>
+
+    <menuitem
+        id="menu_hospital_inventory_provenance_archive"
+        name="Provenance Snapshots"
+        parent="menu_hospital_inventory_configuration"
+        action="action_hospital_inventory_provenance_archive"
+        sequence="90"
+        groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+
+</odoo>

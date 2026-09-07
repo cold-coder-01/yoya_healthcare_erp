@@ -8,6 +8,8 @@ below closes that at model level, not in the API.
 from odoo import api, fields, models
 from odoo.exceptions import AccessError, UserError
 
+from odoo.addons.hospital_billing.models.charge_line import AMOUNT_TOLERANCE
+
 from .reception_capability import has_reception_workflow_capability
 
 G_MANAGER = "hospital_management.group_hospital_manager"
@@ -17,6 +19,12 @@ G_FRONT_DESK_NURSE = "yoya_reception_bridge.group_hospital_front_desk_nurse"
 
 CONSULTATION_OVERRIDE_GROUPS = (G_MANAGER, G_ADMIN)
 DIRECT_CREATE_GROUPS = (G_MANAGER, G_ADMIN)
+
+# Resetting a finished or cancelled visit back to draft is a supervisory
+# correction, not day-to-day work. Same tuple as CONSULTATION_OVERRIDE_GROUPS
+# and stated separately on purpose: the two answer different questions, and a
+# future read-only supervisor role belongs in one and not the other.
+RESET_TO_DRAFT_GROUPS = (G_MANAGER, G_ADMIN)
 
 # Roles holding perm_create here that must still go through
 # hospital.reception.workflow.create_visit(). See
@@ -58,6 +66,54 @@ LEGACY_STAGE_BY_FRONT_DESK = {
     "completed": "completed",
     "cancelled": "cancelled",
 }
+
+# ----------------------------------------------------------------------
+# THE SECOND CASHIER LANE: ACTIVE SERVICE CLEARANCE.
+#
+# front_desk_stage answers ONE question -- where is this patient in the
+# pre-consultation handoff -- and it answers 'in_consultation' the moment care
+# starts, deliberately and correctly. Its 'awaiting_cashier' arm is not even
+# reached once the doctor has begun, because _resolve_front_desk_stage returns
+# on the appointment state first.
+#
+# That is why a charge raised DURING a consultation was invisible to the cashier
+# queue: laboratory today, and radiology, medication and procedures on exactly
+# the same billing path. The lab request rendered AWAITING CLEARANCE to the
+# doctor while the patient existed in no cashier queue at all.
+#
+# The fix is a SECOND LANE, not a wider stage. front_desk_stage keeps its
+# meaning, its vocabulary and its early return; the appointment stays
+# state='in_consultation' throughout; and no combined
+# 'in_consultation_awaiting_cashier' state is invented. Clinical state and
+# financial state are separate facts, and merging them is what would make one of
+# them a lie.
+#
+# Membership is derived from BILLING TRUTH ONLY -- no queue flag is written and
+# none is cleared, so a visit leaves this lane the instant the money it was
+# waiting on is received.
+# ----------------------------------------------------------------------
+# BOTH live states, and 'done' is here because of Slice 4.
+#
+# Completing a consultation moves the appointment in_consultation -> done. When
+# this tuple held only 'in_consultation', that transition made an unpaid patient
+# VANISH from the cashier queue at the exact moment the doctor signed off: money
+# still owed, no queue anywhere, and the laboratory still refusing to collect the
+# specimen. The Defect A report flagged the exclusion as a deliberate scope
+# decision; Slice 4 is the event that invalidates it.
+#
+# Widening the tuple is the whole change. The predicate below is untouched, so a
+# 'done' visit with nothing outstanding never appears, and one that owes money
+# leaves the lane the instant it is paid. No new lane, no new state, no
+# front_desk_stage semantics touched, and the appointment stays 'done'
+# throughout -- paying is not a clinical transition.
+ACTIVE_SERVICE_CLEARANCE_STATES = ("in_consultation", "done")
+
+# The charge states a live obligation can be in. Identical to the scope
+# hospital.billing.engine.check_financial_clearance sums over, so a charge this
+# lane names as blocking is a charge that engine really is blocking on.
+# Cancelled and reversed charges are absent here for that reason, not as a
+# separate policy.
+LIVE_CHARGE_STATES = ("draft", "active")
 
 
 class HospitalAppointment(models.Model):
@@ -246,6 +302,229 @@ class HospitalAppointment(models.Model):
         # No encounter yet (never confirmed): fall back to the appointment's own
         # signal, which is all that exists at that point.
         return bool(self.billing_blocked)
+
+    # ------------------------------------------------------------------
+    # Active service clearance
+    # ------------------------------------------------------------------
+    def _is_active_service_clearance_pending(self):
+        """Care is already under way AND money blocks the next service.
+
+        THE DISCOVERY PREDICATE FOR THE SECOND CASHIER LANE. It answers a
+        different question from front_desk_stage and does not touch it: the
+        appointment is and stays state='in_consultation', and nothing here is
+        written, mirrored or cached.
+
+        GENERIC BY CONSTRUCTION. It names no clinical model. The blocking
+        judgement is _is_payment_blocking(), which is encounter-wide live
+        clearance from hospital.billing.engine -- so a radiology, medication or
+        procedure charge raised mid-consultation surfaces here on the day it is
+        first raised, with no code added to this method or to the cashier API.
+
+        Emergency bypass and fully-authorized sponsorship both resolve to False
+        through _is_payment_blocking(), exactly as they do for
+        'awaiting_cashier'. One predicate, two lanes.
+
+        Covers BOTH in_consultation and done. A visit whose consultation has
+        been completed can still be holding an undelivered, unpaid service --
+        that is the ordinary outpatient shape, where the doctor signs off and
+        the patient walks to the cashier and then to the laboratory. Dropping it
+        from the lane at completion would strand exactly that patient.
+        """
+        self.ensure_one()
+        if self.state not in ACTIVE_SERVICE_CLEARANCE_STATES:
+            return False
+        if not self.encounter_id:
+            return False
+        return self._is_payment_blocking()
+
+    def _active_service_blocking_charges(self):
+        """The live charges whose unpaid patient side is holding this visit.
+
+        THE SAME SET the engine's cash arm sums, filtered by the SAME
+        per-charge figure: amount_due_for_clearance is already mode-aware
+        (patient residual under 'enforce', legacy gross otherwise) and already
+        zero for a delivery-basis charge, so no formula is restated here.
+
+        Used for presentation only -- which generic service categories the
+        cashier is collecting for, and how recently they were ordered.
+        _is_active_service_clearance_pending() remains the membership test; an
+        empty result here never removes a visit from the lane, because the
+        engine can block on grounds no single charge figure expresses (an
+        unauthorized sponsor share, for one).
+        """
+        self.ensure_one()
+        encounter = self.encounter_id
+        account = encounter.billing_account_id if encounter else None
+        if not account:
+            return self.env["hospital.charge.line"]
+        return account.charge_line_ids.filtered(
+            lambda line: line.charge_state in LIVE_CHARGE_STATES
+            and line.amount_due_for_clearance > AMOUNT_TOLERANCE
+        )
+
+    # ------------------------------------------------------------------
+    # Completion and reset authorization
+    # ------------------------------------------------------------------
+    def _assert_may_complete_visit(self):
+        """Who may finish a visit. SAME ANSWER as who may start one.
+
+        hospital_management.action_done() carries no authorization at all, and
+        the ACL grants write on hospital.appointment to Receptionist, Nurse and
+        Doctor alike -- the receptionist's record rule being [(1,'=',1)]. Before
+        Slice 4 that was merely untidy, because 'done' was a scheduling fact.
+        It is not untidy now: action_done() is what freezes a clinical note,
+        delivers the consultation charge and completes the encounter, and a
+        front-desk clerk must not be able to do any of that to a record they
+        hold no rights to read.
+
+        Deliberately the SAME rule as _assert_may_start_consultation rather than
+        a new one. A visit somebody may open and somebody else may close would
+        make the clinical author of the episode ambiguous.
+        """
+        self.ensure_one()
+
+        # ELEVATED CODE KEEPS ITS AUTHORITY, and this is a deliberate
+        # DIFFERENCE from _assert_may_start_consultation above -- which does
+        # NOT honour su, because starting a consultation is only ever a human
+        # act at a desk.
+        #
+        # Completion is not only that. action_done() is called by workflow code
+        # in other modules and by fixtures that have already established their
+        # own authority, and it is the method a future cron closing stale visits
+        # would use. Refusing an explicit .sudo() would not close a hole -- the
+        # caller already holds superuser rights -- it would only push that code
+        # into writing `state` directly and skipping the billing chain entirely.
+        #
+        # Same bypass, same reasoning and same one-line shape as
+        # _assert_appointment_creation_allowed in this file. The API layer never
+        # sudo()s, so every Doctor Desk path is still fully guarded, and
+        # hospital.consultation.action_complete() deliberately calls this AS THE
+        # CALLER so an authorization bug there surfaces rather than hides.
+        if self.env.su:
+            return
+
+        user = self.env.user
+
+        if any(user.has_group(group) for group in CONSULTATION_OVERRIDE_GROUPS):
+            return
+
+        doctor = self.doctor_id
+        if doctor and doctor.user_id and doctor.user_id.id == user.id:
+            return
+
+        if not doctor:
+            raise AccessError(
+                "Visit %s has no assigned doctor. Only a Hospital Manager or "
+                "Hospital System Administrator may complete it."
+                % (self.appointment_code or self.id)
+            )
+        raise AccessError(
+            "Only %s, the doctor assigned to visit %s, may complete it. "
+            "Hospital Managers and Hospital System Administrators may also do "
+            "so." % (doctor.display_name, self.appointment_code or self.id)
+        )
+
+    def action_done(self):
+        """Authorize, then defer to the billing-aware parent.
+
+        super() is hospital_billing's override, which marks the consultation
+        charge delivered and moves the encounter active -> completed. NONE of
+        that is reimplemented or bypassed here; this adds the authorization the
+        vendor method never had.
+
+        FILTERED ON THE STATES action_done ACTUALLY ACTS ON, matching
+        action_start_consultation's shape. Calling it on an already-done or
+        cancelled visit is a no-op in the parent, and raising AccessError at a
+        caller whose no-op was previously harmless would be a behaviour change
+        this slice has no business making.
+        """
+        for appointment in self.filtered(
+            lambda record: record.state in ("confirmed", "in_consultation")
+        ):
+            appointment._assert_may_complete_visit()
+        return super().action_done()
+
+    def action_reset_to_draft(self):
+        """Supervisory only, and NEVER over a completed consultation.
+
+        TWO SEPARATE HAZARDS, CLOSED SEPARATELY.
+
+        First, authorization. The vendor method is protected by nothing but the
+        `groups=` attribute on its form-view button, which stops nobody reaching
+        it over RPC or through a future API. The model-level check is the real
+        control.
+
+        Second, and worse: the method writes state and NOTHING else. It does not
+        reset the encounter, does not unfreeze the consultation and does not
+        reverse the delivered consultation charge. Run against a completed
+        visit it produces appointment=draft with encounter=completed and
+        consultation=completed -- a visit that looks startable and is not,
+        because action_start_consultation would then try to open a SECOND
+        consultation on an encounter whose unique index already refuses one.
+        The doctor's clinical note stays frozen throughout (the freeze keys on
+        consultation.state, not on the appointment), so nothing is silently
+        editable -- but the visit is wedged.
+
+        Reopening a completed consultation is an AMENDMENT, and no amendment
+        workflow exists. Rather than half-invent one, this refuses and says so.
+        """
+        self._assert_may_reset_to_draft()
+        return super().action_reset_to_draft()
+
+    def _assert_may_reset_to_draft(self):
+        """Two checks, and only ONE of them yields to sudo().
+
+        The group check does, for the reason _assert_may_complete_visit
+        documents: elevated code already holds the rights it is being asked
+        for.
+
+        The completed-consultation refusal below does NOT, and must not. That
+        is an INTEGRITY rule, not an authorization one -- resetting a signed
+        clinical visit leaves the appointment in draft with the encounter
+        completed and the note locked, and it is no safer done by a migration
+        than by a receptionist. Same reasoning as _assert_no_active_episode,
+        which also refuses the superuser.
+        """
+        for appointment in self:
+            if not self.env.su and not any(
+                self.env.user.has_group(group) for group in RESET_TO_DRAFT_GROUPS
+            ):
+                raise AccessError(
+                    "Only a Hospital Manager or Hospital System Administrator "
+                    "may reset visit %s to draft."
+                    % (appointment.appointment_code or appointment.id)
+                )
+            appointment._assert_no_completed_consultation()
+
+    def _assert_no_completed_consultation(self):
+        """A signed clinical record is not undone by a scheduling action.
+
+        sudo() on the LOOKUP only: whether a completed consultation exists is a
+        property of the visit, not of the acting user's clinical read rights --
+        a Hospital Manager holds no ACL on hospital.consultation unless granted
+        one, and the guard must refuse either way. It reads one column and
+        returns nothing to the caller.
+        """
+        self.ensure_one()
+        consultation = (
+            self.env["hospital.consultation"]
+            .sudo()
+            .search(
+                [("appointment_id", "=", self.id), ("state", "=", "completed")],
+                limit=1,
+            )
+        )
+        if not consultation:
+            return
+        raise UserError(
+            "Visit %s cannot be reset to draft: its consultation has been "
+            "completed and the clinical record is signed. Resetting would "
+            "leave the visit in draft while the encounter stays completed and "
+            "the note stays locked.\n\nThere is no amendment or reopen "
+            "workflow for a completed consultation. Raise this with a Hospital "
+            "System Administrator if the record genuinely has to be corrected."
+            % (self.appointment_code or self.id)
+        )
 
     # ------------------------------------------------------------------
     # Reception-workflow-only creation

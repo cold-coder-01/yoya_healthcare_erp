@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- INVENTORY BATCH — LIST VIEW -->
+    <record id="view_hospital_inventory_batch_list" model="ir.ui.view">
+        <field name="name">hospital.inventory.batch.list</field>
+        <field name="model">hospital.inventory.batch</field>
+        <field name="arch" type="xml">
+            <list string="Batches / Lots"
+                decoration-danger="is_expired"
+                decoration-warning="is_near_expiry and not is_expired"
+                decoration-muted="state in ('depleted', 'blocked')">
+                <field name="name"/>
+                <field name="item_id"/>
+                <field name="batch_number"/>
+                <field name="location_id"/>
+                <field name="department_id"/>
+                <field name="quantity_on_hand"/>
+                <field name="available_quantity"/>
+                <field name="unit_cost"/>
+                <field name="inventory_value"/>
+                <field name="currency_id" column_invisible="1"/>
+                <field name="expiry_date"/>
+                <field name="days_to_expiry"/>
+                <field name="state"/>
+                <field name="is_expired" column_invisible="1"/>
+                <field name="is_near_expiry" column_invisible="1"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- INVENTORY BATCH — FORM VIEW -->
+    <record id="view_hospital_inventory_batch_form" model="ir.ui.view">
+        <field name="name">hospital.inventory.batch.form</field>
+        <field name="model">hospital.inventory.batch</field>
+        <field name="arch" type="xml">
+            <form string="Batch / Lot">
+                <sheet>
+                    <field name="active" invisible="1"/>
+                    <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active"/>
+                    <widget name="web_ribbon" title="Expired" bg_color="text-bg-danger" invisible="not is_expired"/>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1>
+                            <field name="name" readonly="1"/>
+                        </h1>
+                    </div>
+
+                    <div class="alert alert-warning" role="alert"
+                        invisible="not is_near_expiry or is_expired">
+                        This batch is approaching its expiry date.
+                    </div>
+                    <div class="alert alert-danger" role="alert" invisible="not is_expired">
+                        This batch has expired and cannot be issued.
+                    </div>
+
+                    <group>
+                        <group string="Batch Information">
+                            <field name="item_id" options="{'no_create': True}"/>
+                            <field name="batch_number"/>
+                            <field name="received_date"/>
+                        </group>
+                        <group string="Quantity / Availability">
+                            <field name="quantity_on_hand"/>
+                            <field name="reserved_quantity"/>
+                            <field name="available_quantity"/>
+                            <field name="state"/>
+                        </group>
+                    </group>
+
+                    <group>
+                        <group string="Expiry">
+                            <field name="expiry_date"/>
+                            <field name="days_to_expiry"/>
+                            <field name="is_expired"/>
+                            <field name="is_near_expiry"/>
+                        </group>
+                        <group string="Department / Location">
+                            <field name="location_id" options="{'no_create': True}"/>
+                            <field name="location_type"/>
+                            <field name="department_id"/>
+                            <field name="location_name"/>
+                        </group>
+                    </group>
+
+                    <group string="Costing">
+                        <group>
+                            <field name="unit_cost"/>
+                            <field name="currency_id"/>
+                        </group>
+                        <group>
+                            <field name="inventory_value"/>
+                            <field name="available_value"/>
+                        </group>
+                    </group>
+
+                    <notebook>
+                        <page string="Notes" name="notes">
+                            <field name="notes" nolabel="1" placeholder="Notes..."/>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <!-- INVENTORY BATCH — SEARCH VIEW -->
+    <record id="view_hospital_inventory_batch_search" model="ir.ui.view">
+        <field name="name">hospital.inventory.batch.search</field>
+        <field name="model">hospital.inventory.batch</field>
+        <field name="arch" type="xml">
+            <search string="Batches / Lots">
+                <field name="name"/>
+                <field name="item_id"/>
+                <field name="batch_number"/>
+                <field name="location_id"/>
+                <field name="department_id"/>
+                <filter string="Available" name="available" domain="[('state', '=', 'available')]"/>
+                <filter string="Reserved" name="reserved" domain="[('state', '=', 'reserved')]"/>
+                <filter string="Expired" name="expired" domain="[('is_expired', '=', True)]"/>
+                <filter string="Near Expiry" name="near_expiry" domain="[('is_near_expiry', '=', True), ('is_expired', '=', False)]"/>
+                <filter string="Depleted" name="depleted" domain="[('state', '=', 'depleted')]"/>
+                <filter string="Blocked" name="blocked" domain="[('state', '=', 'blocked')]"/>
+                <separator/>
+                <filter string="Archived" name="archived" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Item" name="group_item" context="{'group_by': 'item_id'}"/>
+                    <filter string="Location" name="group_location" context="{'group_by': 'location_id'}"/>
+                    <filter string="Department" name="group_department" context="{'group_by': 'department_id'}"/>
+                    <filter string="Status" name="group_state" context="{'group_by': 'state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- INVENTORY BATCH — ACTION -->
+    <record id="action_hospital_inventory_batch" model="ir.actions.act_window">
+        <field name="name">Batches / Lots</field>
+        <field name="res_model">hospital.inventory.batch</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_inventory_batch_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">No batches yet.</p>
+            <p>Create a batch/lot to track stock quantity and expiry for an item.</p>
+        </field>
+    </record>
+
+</odoo>

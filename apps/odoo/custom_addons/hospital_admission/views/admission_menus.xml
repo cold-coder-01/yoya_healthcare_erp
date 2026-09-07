@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         APP ROOT MENU
+    ═══════════════════════════════════════════════════════════ -->
+
+    <menuitem id="menu_hospital_admission_root" name="Admissions" sequence="45" web_icon="hospital_admission,static/description/icon.png" groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_doctor,hospital_management.group_hospital_nurse,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         MAIN OPERATIONAL MENUS
+    ═══════════════════════════════════════════════════════════ -->
+
+    <menuitem id="menu_hospital_admission_admissions" name="Admissions" parent="menu_hospital_admission_root" action="action_hospital_admission" sequence="10" groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_doctor,hospital_management.group_hospital_nurse,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+
+    <menuitem id="menu_hospital_admission_transfers" name="Transfers" parent="menu_hospital_admission_root" action="action_hospital_admission_transfer" sequence="20" groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_doctor,hospital_management.group_hospital_nurse,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+
+    <menuitem id="menu_hospital_admission_wards" name="Wards" parent="menu_hospital_admission_root" action="action_hospital_ward" sequence="30" groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_doctor,hospital_management.group_hospital_nurse,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+
+    <menuitem id="menu_hospital_admission_rooms" name="Rooms" parent="menu_hospital_admission_root" action="action_hospital_room" sequence="40" groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_doctor,hospital_management.group_hospital_nurse,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+
+    <menuitem id="menu_hospital_admission_beds" name="Beds" parent="menu_hospital_admission_root" action="action_hospital_bed" sequence="50" groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_doctor,hospital_management.group_hospital_nurse,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         CONFIGURATION SUBMENU
+    ═══════════════════════════════════════════════════════════ -->
+
+    <menuitem id="menu_hospital_admission_configuration" name="Configuration" parent="menu_hospital_admission_root" sequence="100" groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+
+    <menuitem id="menu_hospital_admission_config_wards" name="Wards" parent="menu_hospital_admission_configuration" action="action_hospital_ward" sequence="10" groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+
+    <menuitem id="menu_hospital_admission_config_rooms" name="Rooms" parent="menu_hospital_admission_configuration" action="action_hospital_room" sequence="20" groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+
+    <menuitem id="menu_hospital_admission_config_beds" name="Beds" parent="menu_hospital_admission_configuration" action="action_hospital_bed" sequence="30" groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+
+</odoo>

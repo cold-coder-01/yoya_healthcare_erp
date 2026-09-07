@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Nested under the existing Billing app root, next to Accounting Bridge -->
+    <record id="menu_hospital_fiscal_bridge" model="ir.ui.menu">
+        <field name="name">Fiscal POS Bridge</field>
+        <field name="parent_id" ref="hospital_billing.menu_hospital_billing_root"/>
+        <field name="sequence">75</field>
+        <field name="groups_id" eval="[(6, 0, [
+            ref('hospital_management.group_hospital_system_administrator'),
+            ref('hospital_management.group_hospital_manager'),
+            ref('hospital_management.group_hospital_accountant'),
+            ref('hospital_management.group_hospital_receptionist'),
+            ref('hospital_management.group_hospital_data_protection_officer'),
+            ref('base.group_system')
+        ])]"/>
+    </record>
+
+    <record id="menu_hospital_fiscal_transactions" model="ir.ui.menu">
+        <field name="name">Fiscal Transactions</field>
+        <field name="parent_id" ref="menu_hospital_fiscal_bridge"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_fiscal_transaction')"/>
+        <field name="sequence">10</field>
+    </record>
+
+    <record id="menu_hospital_fiscal_devices" model="ir.ui.menu">
+        <field name="name">Fiscal Devices</field>
+        <field name="parent_id" ref="menu_hospital_fiscal_bridge"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_fiscal_device')"/>
+        <field name="sequence">20</field>
+        <field name="groups_id" eval="[(6, 0, [
+            ref('hospital_management.group_hospital_system_administrator'),
+            ref('hospital_management.group_hospital_manager'),
+            ref('hospital_management.group_hospital_accountant'),
+            ref('base.group_system')
+        ])]"/>
+    </record>
+
+    <record id="menu_hospital_fiscal_logs" model="ir.ui.menu">
+        <field name="name">Fiscal Logs</field>
+        <field name="parent_id" ref="menu_hospital_fiscal_bridge"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_fiscal_payment_log')"/>
+        <field name="sequence">30</field>
+        <field name="groups_id" eval="[(6, 0, [
+            ref('hospital_management.group_hospital_system_administrator'),
+            ref('hospital_management.group_hospital_manager'),
+            ref('hospital_management.group_hospital_accountant'),
+            ref('hospital_management.group_hospital_data_protection_officer'),
+            ref('base.group_system')
+        ])]"/>
+    </record>
+
+    <!-- Also expose device registry under Billing > Configuration -->
+    <record id="menu_hospital_fiscal_devices_config" model="ir.ui.menu">
+        <field name="name">Fiscal Devices</field>
+        <field name="parent_id" ref="hospital_billing.menu_hospital_billing_configuration"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_fiscal_device')"/>
+        <field name="sequence">20</field>
+    </record>
+</odoo>

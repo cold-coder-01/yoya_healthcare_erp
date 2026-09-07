@@ -1,0 +1,364 @@
+/* ================================================================
+   Hospital Fiscal Bridge — Fiscal Transaction Form
+   Scoped under .o_hospital_fiscal_transaction_form
+   Follows the Hospital Billing UI Pattern V1 (emerald theme).
+   ================================================================ */
+
+.o_hospital_fiscal_transaction_form {
+    --fiscal-primary:      #006A4F;
+    --fiscal-primary-dark: #005A43;
+    --fiscal-primary-soft: rgba(0, 106, 79, 0.08);
+    --fiscal-primary-chip: #E6F4F0;
+    --fiscal-border:       #e5e7eb;
+    --fiscal-card:         #ffffff;
+    --fiscal-page:         #f7faf9;
+    --fiscal-text:         #1f2933;
+    --fiscal-muted:        #6b7280;
+    --fiscal-shadow:       0 6px 18px rgba(0, 0, 0, 0.05);
+    --fiscal-shadow-sm:    0 2px 6px rgba(31, 41, 51, 0.04);
+    --fiscal-radius:       12px;
+    --fiscal-amber:        #B45309;
+    --fiscal-amber-chip:   #FEF3C7;
+    --fiscal-blue:         #1D4ED8;
+    --fiscal-blue-chip:    #DBEAFE;
+    --fiscal-danger:       #DC2626;
+    --fiscal-danger-chip:  #FEE2E2;
+    --fiscal-gray-chip:    #F3F4F6;
+}
+
+/* ── Sheet & statusbar ─────────────────────────── */
+
+.o_hospital_fiscal_transaction_form .o_form_sheet,
+.o_form_sheet.o_hospital_fiscal_transaction_form {
+    background-color: var(--fiscal-page) !important;
+    border: 1px solid var(--fiscal-border) !important;
+    border-radius: var(--fiscal-radius) !important;
+    box-shadow: var(--fiscal-shadow) !important;
+    color: var(--fiscal-text);
+    max-width: none !important;
+    padding: 18px 22px 24px !important;
+}
+
+.o_hospital_fiscal_transaction_form .o_statusbar_status .o_arrow_button_current,
+.o_hospital_fiscal_transaction_form .o_statusbar_status .o_arrow_button_current.disabled,
+.o_hospital_fiscal_transaction_form .o_statusbar_status .o_arrow_button_current:disabled {
+    background-color: var(--fiscal-primary) !important;
+    border-color: var(--fiscal-primary) !important;
+    color: #ffffff !important;
+}
+
+.o_hospital_fiscal_transaction_form header .btn-primary {
+    background-color: var(--fiscal-primary) !important;
+    border-color: var(--fiscal-primary) !important;
+    font-weight: 600 !important;
+}
+
+.o_hospital_fiscal_transaction_form header .btn-primary:hover,
+.o_hospital_fiscal_transaction_form header .btn-primary:focus {
+    background-color: var(--fiscal-primary-dark) !important;
+    border-color: var(--fiscal-primary-dark) !important;
+}
+
+/* ── Hero header ───────────────────────────────── */
+
+.o_hospital_fiscal_transaction_form .fiscal_hero {
+    align-items: center;
+    background: var(--fiscal-card);
+    border: 1px solid var(--fiscal-border);
+    border-radius: var(--fiscal-radius);
+    box-shadow: var(--fiscal-shadow-sm);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-bottom: 14px;
+    padding: 16px 20px;
+}
+
+.o_hospital_fiscal_transaction_form .fiscal_hero_icon {
+    align-items: center;
+    background: var(--fiscal-primary);
+    border-radius: 14px;
+    color: #ffffff;
+    display: flex;
+    flex: 0 0 auto;
+    font-size: 26px;
+    height: 60px;
+    justify-content: center;
+    width: 60px;
+}
+
+.o_hospital_fiscal_transaction_form .fiscal_hero_content {
+    flex: 1 1 260px;
+    min-width: 220px;
+}
+
+.o_hospital_fiscal_transaction_form .fiscal_hero_label {
+    color: var(--fiscal-muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.o_hospital_fiscal_transaction_form .fiscal_hero_ref,
+.o_hospital_fiscal_transaction_form .fiscal_hero_ref .o_field_widget,
+.o_hospital_fiscal_transaction_form .fiscal_hero_ref span {
+    color: var(--fiscal-text);
+    font-size: 26px;
+    font-weight: 800;
+    line-height: 1.2;
+}
+
+.o_hospital_fiscal_transaction_form .fiscal_hero_help {
+    color: var(--fiscal-muted);
+    font-size: 12px;
+    margin-top: 4px;
+}
+
+/* ── State chips ───────────────────────────────── */
+
+.o_hospital_fiscal_transaction_form .fiscal_state_chip {
+    align-items: center;
+    border-radius: 999px;
+    display: inline-flex;
+    font-size: 12px;
+    font-weight: 700;
+    gap: 6px;
+    margin-top: 6px;
+    padding: 4px 12px;
+    width: fit-content;
+}
+
+.o_hospital_fiscal_transaction_form .fiscal_chip_draft     { background: var(--fiscal-gray-chip);    color: var(--fiscal-muted); }
+.o_hospital_fiscal_transaction_form .fiscal_chip_ready     { background: var(--fiscal-blue-chip);    color: var(--fiscal-blue); }
+.o_hospital_fiscal_transaction_form .fiscal_chip_locked    { background: var(--fiscal-amber-chip);   color: var(--fiscal-amber); }
+.o_hospital_fiscal_transaction_form .fiscal_chip_paid      { background: var(--fiscal-primary-chip); color: var(--fiscal-primary); }
+.o_hospital_fiscal_transaction_form .fiscal_chip_danger    { background: var(--fiscal-danger-chip);  color: var(--fiscal-danger); }
+.o_hospital_fiscal_transaction_form .fiscal_chip_muted     { background: var(--fiscal-gray-chip);    color: var(--fiscal-muted); }
+
+/* ── KPI row ───────────────────────────────────── */
+
+.o_hospital_fiscal_transaction_form .fiscal_kpi_row {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin-bottom: 14px;
+}
+
+@media (max-width: 1100px) {
+    .o_hospital_fiscal_transaction_form .fiscal_kpi_row {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+.o_hospital_fiscal_transaction_form .fiscal_kpi_card {
+    align-items: center;
+    background: var(--fiscal-card);
+    border: 1px solid var(--fiscal-border);
+    border-radius: var(--fiscal-radius);
+    box-shadow: var(--fiscal-shadow-sm);
+    display: flex;
+    gap: 12px;
+    padding: 12px 14px;
+}
+
+.o_hospital_fiscal_transaction_form .fiscal_kpi_icon {
+    align-items: center;
+    background: var(--fiscal-primary-chip);
+    border-radius: 10px;
+    color: var(--fiscal-primary);
+    display: flex;
+    flex: 0 0 auto;
+    font-size: 16px;
+    height: 38px;
+    justify-content: center;
+    width: 38px;
+}
+
+.o_hospital_fiscal_transaction_form .fiscal_kpi_icon_amber {
+    background: var(--fiscal-amber-chip);
+    color: var(--fiscal-amber);
+}
+
+.o_hospital_fiscal_transaction_form .fiscal_kpi_label {
+    color: var(--fiscal-muted);
+    display: block;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.o_hospital_fiscal_transaction_form .fiscal_kpi_value,
+.o_hospital_fiscal_transaction_form .fiscal_kpi_value .o_field_widget {
+    color: var(--fiscal-text);
+    font-size: 17px;
+    font-weight: 800;
+}
+
+/* ── Card grid ─────────────────────────────────── */
+
+.o_hospital_fiscal_transaction_form .fiscal_card_grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin-bottom: 14px;
+}
+
+@media (max-width: 1200px) {
+    .o_hospital_fiscal_transaction_form .fiscal_card_grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 768px) {
+    .o_hospital_fiscal_transaction_form .fiscal_card_grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.o_hospital_fiscal_transaction_form .fiscal_card {
+    background: var(--fiscal-card);
+    border: 1px solid var(--fiscal-border);
+    border-radius: var(--fiscal-radius);
+    box-shadow: var(--fiscal-shadow-sm);
+    padding: 14px 16px;
+}
+
+.o_hospital_fiscal_transaction_form .fiscal_card_title {
+    align-items: center;
+    border-bottom: 1px solid var(--fiscal-border);
+    color: var(--fiscal-text);
+    display: flex;
+    font-size: 13px;
+    font-weight: 700;
+    gap: 8px;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+}
+
+.o_hospital_fiscal_transaction_form .fiscal_card_title i {
+    align-items: center;
+    background: var(--fiscal-primary-chip);
+    border-radius: 8px;
+    color: var(--fiscal-primary);
+    display: inline-flex;
+    font-size: 13px;
+    height: 26px;
+    justify-content: center;
+    width: 26px;
+}
+
+.o_hospital_fiscal_transaction_form .fiscal_card .o_inner_group {
+    grid-gap: 2px 8px;
+}
+
+.o_hospital_fiscal_transaction_form .fiscal_card .o_form_label {
+    color: var(--fiscal-muted);
+    font-size: 12px;
+}
+
+/* Highlighted payable row inside Amount Summary */
+.o_hospital_fiscal_transaction_form .fiscal_amount_payable,
+.o_hospital_fiscal_transaction_form .fiscal_amount_payable .o_field_widget {
+    color: var(--fiscal-primary);
+    font-size: 15px;
+    font-weight: 800;
+}
+
+.o_hospital_fiscal_transaction_form .fiscal_amount_due_hl,
+.o_hospital_fiscal_transaction_form .fiscal_amount_due_hl .o_field_widget {
+    color: var(--fiscal-danger);
+    font-weight: 700;
+}
+
+/* ── Quick actions ─────────────────────────────── */
+
+.o_hospital_fiscal_transaction_form .fiscal_quick_actions {
+    display: grid;
+    gap: 8px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.o_hospital_fiscal_transaction_form .fiscal_quick_actions .btn {
+    align-items: center;
+    background: #ffffff;
+    border: 1px solid var(--fiscal-border);
+    border-radius: 10px;
+    color: var(--fiscal-text);
+    display: flex;
+    font-size: 12px;
+    font-weight: 600;
+    gap: 8px;
+    justify-content: flex-start;
+    padding: 10px 12px;
+    text-align: left;
+}
+
+.o_hospital_fiscal_transaction_form .fiscal_quick_actions .btn:hover {
+    background: var(--fiscal-primary-soft);
+    border-color: var(--fiscal-primary);
+    color: var(--fiscal-primary-dark);
+}
+
+.o_hospital_fiscal_transaction_form .fiscal_quick_actions .btn i {
+    color: var(--fiscal-primary);
+}
+
+/* ── Info + exception banners ──────────────────── */
+
+.o_hospital_fiscal_transaction_form .fiscal_info_note {
+    align-items: center;
+    background: #EFF6FF;
+    border: 1px solid #BFDBFE;
+    border-radius: 10px;
+    color: #1E40AF;
+    display: flex;
+    font-size: 12px;
+    gap: 8px;
+    margin-top: 8px;
+    padding: 8px 12px;
+}
+
+.o_hospital_fiscal_transaction_form .fiscal_exception_banner {
+    align-items: flex-start;
+    background: var(--fiscal-danger-chip);
+    border: 1px solid #FCA5A5;
+    border-radius: var(--fiscal-radius);
+    color: #991B1B;
+    display: flex;
+    font-size: 13px;
+    gap: 10px;
+    margin-bottom: 14px;
+    padding: 12px 16px;
+}
+
+.o_hospital_fiscal_transaction_form .fiscal_exception_banner i {
+    font-size: 18px;
+    margin-top: 1px;
+}
+
+/* ── Notebook / tables ─────────────────────────── */
+
+.o_hospital_fiscal_transaction_form .o_notebook {
+    background: var(--fiscal-card);
+    border: 1px solid var(--fiscal-border);
+    border-radius: var(--fiscal-radius);
+    box-shadow: var(--fiscal-shadow-sm);
+    padding: 4px 12px 12px;
+}
+
+.o_hospital_fiscal_transaction_form .o_notebook .nav-link.active {
+    color: var(--fiscal-primary) !important;
+    border-bottom-color: var(--fiscal-primary) !important;
+    font-weight: 700;
+}
+
+.o_hospital_fiscal_transaction_form .o_notebook .o_list_renderer .o_list_table thead th {
+    background: var(--fiscal-page) !important;
+    color: var(--fiscal-muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}

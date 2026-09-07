@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- PATIENT FORM — Inventory Usage Smart Button + Tab -->
+    <record id="view_hospital_patient_inventory_inherit" model="ir.ui.view">
+        <field name="name">hospital.patient.inventory.inherit</field>
+        <field name="model">hospital.patient</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_patient_form"/>
+        <field name="arch" type="xml">
+
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button
+                    name="action_view_inventory_movements"
+                    type="object"
+                    class="oe_stat_button"
+                    icon="fa-exchange"
+                    invisible="not id">
+                    <field name="inventory_movement_count" widget="statinfo" string="Inventory Usage"/>
+                </button>
+            </xpath>
+
+            <xpath expr="//notebook" position="inside">
+                <page string="Inventory Usage" name="inventory_usage">
+                    <separator string="Stock Movements"/>
+                    <field name="inventory_movement_ids" nolabel="1" readonly="1">
+                        <list string="Inventory Usage" limit="20">
+                            <field name="name"/>
+                            <field name="movement_date"/>
+                            <field name="movement_type"/>
+                            <field name="item_id"/>
+                            <field name="batch_id"/>
+                            <field name="quantity"/>
+                            <field name="from_location_id"/>
+                            <field name="to_location_id"/>
+                            <field name="movement_value"/>
+                            <field name="currency_id" column_invisible="1"/>
+                            <field name="consumption_id" optional="show"/>
+                        </list>
+                    </field>
+                    <separator string="Stock Consumptions"/>
+                    <field name="inventory_consumption_ids" nolabel="1" readonly="1">
+                        <list string="Stock Consumptions" limit="20">
+                            <field name="name"/>
+                            <field name="consumption_date"/>
+                            <field name="consumption_type"/>
+                            <field name="department_id"/>
+                            <field name="state"/>
+                        </list>
+                    </field>
+                </page>
+            </xpath>
+
+        </field>
+    </record>
+
+    <!-- ADMISSION FORM — Inventory Usage Smart Button -->
+    <record id="view_hospital_admission_inventory_inherit" model="ir.ui.view">
+        <field name="name">hospital.admission.inventory.inherit</field>
+        <field name="model">hospital.admission</field>
+        <field name="inherit_id" ref="hospital_admission.view_hospital_admission_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button
+                    name="action_view_admission_inventory_movements"
+                    type="object"
+                    class="oe_stat_button"
+                    icon="fa-exchange"
+                    invisible="not id">
+                    <field name="inventory_movement_count" widget="statinfo" string="Inventory Usage"/>
+                </button>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- PROCEDURE FORM — Inventory Usage Smart Button -->
+    <record id="view_hospital_procedure_inventory_inherit" model="ir.ui.view">
+        <field name="name">hospital.procedure.request.inventory.inherit</field>
+        <field name="model">hospital.procedure.request</field>
+        <field name="inherit_id" ref="hospital_procedure.view_hospital_procedure_request_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button
+                    name="action_view_procedure_inventory_movements"
+                    type="object"
+                    class="oe_stat_button"
+                    icon="fa-exchange"
+                    invisible="not id">
+                    <field name="inventory_movement_count" widget="statinfo" string="Inventory Usage"/>
+                </button>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

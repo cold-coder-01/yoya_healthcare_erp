@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <template id="report_stock_consumption_summary_template">
+        <t t-call="web.html_container">
+            <t t-foreach="docs" t-as="doc">
+                <t t-call="web.external_layout">
+                    <div class="page">
+                        <style>
+                            .hospital-section-title {
+                                color: #006A4F;
+                                font-size: 14px;
+                                font-weight: 700;
+                                margin: 14px 0 6px;
+                                border-bottom: 1px solid #006A4F;
+                                padding-bottom: 3px;
+                            }
+                            .hospital-report-table {
+                                width: 100%;
+                                border-collapse: collapse;
+                                margin-bottom: 10px;
+                            }
+                            .hospital-report-table th,
+                            .hospital-report-table td {
+                                border: 1px solid #DDDDDD;
+                                padding: 5px 7px;
+                                font-size: 11px;
+                                vertical-align: top;
+                            }
+                            .hospital-info-table td:first-child,
+                            .hospital-info-table td:nth-child(3) {
+                                width: 18%;
+                                color: #555555;
+                                font-weight: 700;
+                                background: #F9FAFB;
+                            }
+                            .hospital-empty-note {
+                                color: #666666;
+                                font-style: italic;
+                                margin: 4px 0 10px;
+                                font-size: 11px;
+                            }
+                            .hospital-footer-note {
+                                color: #555555;
+                                font-size: 11px;
+                                margin-top: 20px;
+                                border-top: 1px solid #DDDDDD;
+                                padding-top: 6px;
+                            }
+                            .badge-state {
+                                display: inline-block;
+                                padding: 2px 7px;
+                                border-radius: 4px;
+                                font-size: 10px;
+                                font-weight: 700;
+                                background: #e8f4f0;
+                                color: #006A4F;
+                            }
+                            .text-right { text-align: right; }
+                        </style>
+
+                        <t t-set="report_title" t-value="'Inventory Consumption Summary'"/>
+                        <t t-set="report_ref_label" t-value="'Consumption Ref'"/>
+                        <t t-set="report_ref" t-value="doc.name"/>
+                        <t t-set="report_date_label" t-value="'Consumption Date'"/>
+                        <t t-set="report_date" t-value="doc.consumption_date"/>
+                        <t t-call="hospital_management.hospital_report_header"/>
+
+                        <!-- Consumption Information -->
+                        <div class="hospital-section-title">Consumption Information</div>
+                        <table class="hospital-report-table hospital-info-table">
+                            <tbody>
+                                <tr>
+                                    <td>Consumption Ref</td>
+                                    <td><span t-field="doc.name"/></td>
+                                    <td>Type</td>
+                                    <td><span t-field="doc.consumption_type"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Patient</td>
+                                    <td><span t-out="doc.patient_id.display_name or 'N/A'"/></td>
+                                    <td>Department</td>
+                                    <td><span t-out="doc.department_id.display_name or 'N/A'"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Status</td>
+                                    <td><span class="badge-state" t-field="doc.state"/></td>
+                                    <td>Consumption Date</td>
+                                    <td><span t-field="doc.consumption_date"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Source Location</td>
+                                    <td><span t-out="doc.source_location_id.display_name or 'N/A'"/></td>
+                                    <td>Consumption Location</td>
+                                    <td><span t-out="doc.consumption_location_id.display_name or 'N/A'"/></td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <!-- Source &amp; Responsibility -->
+                        <div class="hospital-section-title">Source &amp; Responsibility</div>
+                        <table class="hospital-report-table hospital-info-table">
+                            <tbody>
+                                <tr>
+                                    <td>Procedure</td>
+                                    <td><span t-out="doc.procedure_id.display_name or 'N/A'"/></td>
+                                    <td>Pharmacy Dispense</td>
+                                    <td><span t-out="doc.pharmacy_dispense_id.display_name or 'N/A'"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Nursing Round</td>
+                                    <td><span t-out="doc.nursing_round_id.display_name or 'N/A'"/></td>
+                                    <td>Lab Request</td>
+                                    <td><span t-out="doc.lab_request_id.display_name or 'N/A'"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Radiology Request</td>
+                                    <td><span t-out="doc.radiology_request_id.display_name or 'N/A'"/></td>
+                                    <td>Admission</td>
+                                    <td><span t-out="doc.admission_id.display_name or 'N/A'"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Requested By</td>
+                                    <td><span t-out="doc.requested_by.display_name or 'N/A'"/></td>
+                                    <td>Approved By</td>
+                                    <td><span t-out="doc.approved_by.display_name or 'N/A'"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Consumed By</td>
+                                    <td><span t-out="doc.consumed_by.display_name or 'N/A'"/></td>
+                                    <td>Consumed Date</td>
+                                    <td><span t-out="doc.consumed_date or 'N/A'"/></td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <!-- Consumption Lines -->
+                        <div class="hospital-section-title">Consumption Lines</div>
+                        <table class="hospital-report-table">
+                            <thead>
+                                <tr>
+                                    <th>Item</th>
+                                    <th>Batch / Lot</th>
+                                    <th class="text-right">Quantity</th>
+                                    <th class="text-right">Unit Cost</th>
+                                    <th class="text-right">Subtotal</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <t t-if="doc.line_ids">
+                                    <tr t-foreach="doc.line_ids" t-as="line">
+                                        <td><span t-field="line.item_id"/></td>
+                                        <td><span t-out="line.batch_id.name or 'N/A'"/></td>
+                                        <td class="text-right"><span t-field="line.quantity"/></td>
+                                        <td class="text-right"><span t-field="line.unit_cost"/></td>
+                                        <td class="text-right"><span t-field="line.subtotal"/></td>
+                                    </tr>
+                                </t>
+                                <tr>
+                                    <td colspan="4" class="text-right"><strong>Total Estimated Cost</strong></td>
+                                    <td class="text-right"><strong><span t-field="doc.amount_total"/></strong></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        <t t-if="not doc.line_ids">
+                            <p class="hospital-empty-note">No consumption lines recorded.</p>
+                        </t>
+
+                        <!-- Notes -->
+                        <div class="hospital-section-title">Notes</div>
+                        <table class="hospital-report-table hospital-info-table">
+                            <tbody>
+                                <tr>
+                                    <td>Notes</td>
+                                    <td colspan="3"><span t-out="doc.notes or 'N/A'"/></td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <div class="hospital-footer-note">
+                            This report is generated from YOYA Hospital — Ethiopian Hospital ERP.
+                            Costs shown are estimates based on batch unit cost and are not a
+                            billing or accounting valuation document.
+                        </div>
+                    </div>
+                </t>
+            </t>
+        </t>
+    </template>
+</odoo>

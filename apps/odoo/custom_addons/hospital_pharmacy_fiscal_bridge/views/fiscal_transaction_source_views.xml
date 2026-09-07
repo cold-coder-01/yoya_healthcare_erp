@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_hospital_fiscal_transaction_source_inherit" model="ir.ui.view">
+        <field name="name">hospital.fiscal.transaction.source.inherit</field>
+        <field name="model">hospital.fiscal.transaction</field>
+        <field name="inherit_id" ref="hospital_fiscal_bridge.view_hospital_fiscal_transaction_form"/>
+        <field name="arch" type="xml">
+
+            <xpath expr="//header" position="inside">
+                <button name="action_view_pharmacy_dispense"
+                    string="Open Pharmacy Dispense" type="object"
+                    invisible="not pharmacy_dispense_id"/>
+            </xpath>
+
+            <xpath expr="//sheet" position="inside">
+                <group string="Source Document" name="fiscal_source"
+                    invisible="not source_model">
+                    <field name="source_reference" readonly="1"/>
+                    <field name="pharmacy_dispense_id" readonly="1"/>
+                    <field name="source_model" readonly="1" groups="base.group_no_one"/>
+                    <field name="source_record_id" readonly="1" groups="base.group_no_one"/>
+                </group>
+            </xpath>
+
+        </field>
+    </record>
+
+</odoo>

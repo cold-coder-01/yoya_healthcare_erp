@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         NURSING NOTE — LIST VIEW
+    ═══════════════════════════════════════════════════════════ -->
+
+    <record id="view_hospital_nursing_note_list" model="ir.ui.view">
+        <field name="name">hospital.nursing.note.list</field>
+        <field name="model">hospital.nursing.note</field>
+        <field name="arch" type="xml">
+            <list string="Nursing Notes"
+                decoration-success="state == 'reviewed'"
+                decoration-info="state == 'submitted'"
+                decoration-muted="state == 'cancelled'"
+                decoration-warning="state == 'draft'">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="admission_id"/>
+                <field name="note_datetime"/>
+                <field name="nurse_id"/>
+                <field name="note_type"/>
+                <field name="action_required" widget="boolean_toggle"/>
+                <field name="state"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         NURSING NOTE — FORM VIEW
+    ═══════════════════════════════════════════════════════════ -->
+
+    <record id="view_hospital_nursing_note_form" model="ir.ui.view">
+        <field name="name">hospital.nursing.note.form</field>
+        <field name="model">hospital.nursing.note</field>
+        <field name="arch" type="xml">
+            <form string="Nursing Note">
+                <header>
+                    <button
+                        name="action_submit"
+                        string="Submit"
+                        type="object"
+                        class="btn-primary"
+                        invisible="state != 'draft'"/>
+                    <button
+                        name="action_review"
+                        string="Review"
+                        type="object"
+                        class="btn-primary"
+                        invisible="state != 'submitted'"
+                        groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_doctor,hospital_management.group_hospital_system_administrator"/>
+                    <button
+                        name="action_cancel"
+                        string="Cancel"
+                        type="object"
+                        invisible="state not in ('draft', 'submitted')"/>
+                    <button
+                        name="action_reset_to_draft"
+                        string="Reset to Draft"
+                        type="object"
+                        invisible="state != 'cancelled'"
+                        groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,submitted,reviewed,cancelled"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <h1>
+                            <field name="name" readonly="1"/>
+                        </h1>
+                    </div>
+
+                    <group string="Patient / Admission">
+                        <group>
+                            <field name="patient_id" readonly="state != 'draft'"/>
+                            <field name="admission_id"
+                                domain="[('patient_id', '=', patient_id)]"
+                                readonly="state != 'draft'"/>
+                            <field name="nurse_id" readonly="state in ['reviewed', 'cancelled']"/>
+                            <field name="note_datetime" readonly="state in ['reviewed', 'cancelled']"/>
+                        </group>
+                        <group>
+                            <field name="note_type" readonly="state in ['reviewed', 'cancelled']"/>
+                            <field name="active" invisible="1"/>
+                        </group>
+                    </group>
+
+                    <group string="Note Details">
+                        <field name="note" nolabel="1" placeholder="Enter nursing note..." readonly="state in ['reviewed', 'cancelled']"/>
+                    </group>
+
+                    <group string="Action Required">
+                        <group>
+                            <field name="action_required" readonly="state in ['reviewed', 'cancelled']"/>
+                        </group>
+                        <group invisible="not action_required">
+                            <field name="action_required_note" nolabel="1" placeholder="Describe the required action..." readonly="state in ['reviewed', 'cancelled']"/>
+                        </group>
+                    </group>
+
+                    <group string="Review" invisible="state not in ('reviewed',)">
+                        <group>
+                            <field name="reviewed_by" readonly="1"/>
+                            <field name="reviewed_date" readonly="1"/>
+                        </group>
+                    </group>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         NURSING NOTE — SEARCH VIEW
+    ═══════════════════════════════════════════════════════════ -->
+
+    <record id="view_hospital_nursing_note_search" model="ir.ui.view">
+        <field name="name">hospital.nursing.note.search</field>
+        <field name="model">hospital.nursing.note</field>
+        <field name="arch" type="xml">
+            <search string="Nursing Notes">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="admission_id"/>
+                <field name="nurse_id"/>
+                <field name="note_type"/>
+                <filter string="Today" name="today"
+                    domain="[('note_datetime', '>=', datetime.datetime.combine(context_today(), datetime.time(0,0,0))),
+                              ('note_datetime', '&lt;=', datetime.datetime.combine(context_today(), datetime.time(23,59,59)))]"/>
+                <filter string="Action Required" name="action_required" domain="[('action_required', '=', True)]"/>
+                <filter string="Draft" name="draft" domain="[('state', '=', 'draft')]"/>
+                <filter string="Submitted" name="submitted" domain="[('state', '=', 'submitted')]"/>
+                <filter string="Reviewed" name="reviewed" domain="[('state', '=', 'reviewed')]"/>
+                <filter string="Cancelled" name="cancelled" domain="[('state', '=', 'cancelled')]"/>
+                <separator/>
+                <filter string="Archived" name="archived" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Patient" name="group_patient" context="{'group_by': 'patient_id'}"/>
+                    <filter string="Note Type" name="group_type" context="{'group_by': 'note_type'}"/>
+                    <filter string="State" name="group_state" context="{'group_by': 'state'}"/>
+                    <filter string="Date" name="group_date" context="{'group_by': 'note_datetime:day'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         NURSING NOTE — ACTION
+    ═══════════════════════════════════════════════════════════ -->
+
+    <record id="action_hospital_nursing_note" model="ir.actions.act_window">
+        <field name="name">Nursing Notes</field>
+        <field name="res_model">hospital.nursing.note</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_nursing_note_search"/>
+        <field name="context">{}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                No nursing notes found.
+            </p>
+            <p>Create a nursing note to document observations, interventions, and communications.</p>
+        </field>
+    </record>
+
+</odoo>

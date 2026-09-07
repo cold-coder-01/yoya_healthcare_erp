@@ -1,0 +1,200 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_radiology_exam_list" model="ir.ui.view">
+        <field name="name">hospital.radiology.exam.list</field>
+        <field name="model">hospital.radiology.exam</field>
+        <field name="arch" type="xml">
+            <list string="Radiology Exams">
+                <field name="code"/>
+                <field name="name"/>
+                <field name="modality"/>
+                <field name="body_part"/>
+                <field name="contrast_required"/>
+                <field name="active"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_radiology_exam_form" model="ir.ui.view">
+        <field name="name">hospital.radiology.exam.form</field>
+        <field name="model">hospital.radiology.exam</field>
+        <field name="arch" type="xml">
+            <form string="Radiology Exam">
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_view_requests" type="object" class="oe_stat_button" icon="fa-file-text-o" invisible="not id">
+                            <field name="request_count" widget="statinfo" string="Requests"/>
+                        </button>
+                        <button name="action_view_results" type="object" class="oe_stat_button" icon="fa-check-square-o" invisible="not id">
+                            <field name="result_count" widget="statinfo" string="Results"/>
+                        </button>
+                        <button name="toggle_active" type="object" class="oe_stat_button" icon="fa-archive">
+                            <field name="active" widget="boolean_button" options='{"terminology": "archive"}'/>
+                        </button>
+                    </div>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1><field name="name"/></h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="code"/>
+                            <field name="modality"/>
+                            <field name="body_part"/>
+                        </group>
+                        <group>
+                            <field name="contrast_required"/>
+                            <field name="active"/>
+                        </group>
+                    </group>
+                    <group>
+                        <field name="description"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_radiology_exam_search" model="ir.ui.view">
+        <field name="name">hospital.radiology.exam.search</field>
+        <field name="model">hospital.radiology.exam</field>
+        <field name="arch" type="xml">
+            <search string="Radiology Exams">
+                <field name="name"/>
+                <field name="code"/>
+                <field name="modality"/>
+                <field name="body_part"/>
+                <filter string="Archived" name="inactive" domain="[('active', '=', False)]"/>
+                <filter string="Contrast Required" name="contrast_required" domain="[('contrast_required', '=', True)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Modality" name="group_modality" context="{'group_by': 'modality'}"/>
+                    <filter string="Body Part" name="group_body_part" context="{'group_by': 'body_part'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="view_hospital_radiology_request_list" model="ir.ui.view">
+        <field name="name">hospital.radiology.request.list</field>
+        <field name="model">hospital.radiology.request</field>
+        <field name="arch" type="xml">
+            <list string="Radiology Requests">
+                <field name="name"/>
+                <field name="request_date"/>
+                <field name="patient_id"/>
+                <field name="physician_id"/>
+                <field name="priority"/>
+                <field name="state"/>
+                <field name="active"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_radiology_request_form" model="ir.ui.view">
+        <field name="name">hospital.radiology.request.form</field>
+        <field name="model">hospital.radiology.request</field>
+        <field name="arch" type="xml">
+            <form string="Radiology Request" class="hospital_radiology_request_profile">
+                <header>
+                    <button name="action_confirm_request" string="Confirm Request" type="object" class="btn-primary" invisible="state != 'draft'"/>
+                    <button name="action_schedule" string="Schedule" type="object" class="btn-primary" invisible="state != 'requested'"/>
+                    <button name="action_mark_in_progress" string="Mark In Progress" type="object" class="btn-primary" invisible="state != 'scheduled'"/>
+                    <button name="action_cancel" string="Cancel" type="object" invisible="state not in ('draft', 'requested', 'scheduled')"/>
+                    <button name="action_reset_to_draft" string="Reset to Draft" type="object" invisible="state != 'cancelled'"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,requested,scheduled,in_progress,completed,cancelled"/>
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_view_results" type="object" class="oe_stat_button" icon="fa-check-square-o" invisible="not id">
+                            <field name="result_count" widget="statinfo" string="Results"/>
+                        </button>
+                        <button name="toggle_active" type="object" class="oe_stat_button" icon="fa-archive">
+                            <field name="active" widget="boolean_button" options='{"terminology": "archive"}'/>
+                        </button>
+                    </div>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1><field name="name" readonly="1"/></h1>
+                    </div>
+                    <group>
+                        <group string="Request Information">
+                            <field name="patient_id"/>
+                            <field name="physician_id"/>
+                            <field name="request_date"/>
+                            <field name="priority"/>
+                        </group>
+                        <group string="Clinical Context">
+                            <field name="appointment_id" domain="[('patient_id', '=', patient_id)]"/>
+                            <field name="evaluation_id" domain="[('patient_id', '=', patient_id)]"/>
+                            <field name="diagnosis_id" domain="[('patient_id', '=', patient_id)]"/>
+                            <field name="active"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Requested Exams">
+                            <field name="line_ids">
+                                <list string="Requested Exams" editable="bottom">
+                                    <field name="sequence" widget="handle"/>
+                                    <field name="exam_id"/>
+                                    <field name="modality"/>
+                                    <field name="body_part"/>
+                                    <field name="contrast_required"/>
+                                    <field name="state"/>
+                                    <field name="special_instruction"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Clinical Indication">
+                            <group>
+                                <field name="clinical_indication"/>
+                                <field name="instructions"/>
+                            </group>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_radiology_request_search" model="ir.ui.view">
+        <field name="name">hospital.radiology.request.search</field>
+        <field name="model">hospital.radiology.request</field>
+        <field name="arch" type="xml">
+            <search string="Radiology Requests">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="physician_id"/>
+                <field name="request_date"/>
+                <filter string="Draft" name="draft" domain="[('state', '=', 'draft')]"/>
+                <filter string="Requested" name="requested" domain="[('state', '=', 'requested')]"/>
+                <filter string="Scheduled" name="scheduled" domain="[('state', '=', 'scheduled')]"/>
+                <filter string="In Progress" name="in_progress" domain="[('state', '=', 'in_progress')]"/>
+                <filter string="Completed" name="completed" domain="[('state', '=', 'completed')]"/>
+                <filter string="Cancelled" name="cancelled" domain="[('state', '=', 'cancelled')]"/>
+                <filter string="Archived" name="inactive" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Patient" name="group_patient" context="{'group_by': 'patient_id'}"/>
+                    <filter string="Physician" name="group_physician" context="{'group_by': 'physician_id'}"/>
+                    <filter string="Priority" name="group_priority" context="{'group_by': 'priority'}"/>
+                    <filter string="State" name="group_state" context="{'group_by': 'state'}"/>
+                    <filter string="Request Date" name="group_request_date" context="{'group_by': 'request_date'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_radiology_exam" model="ir.actions.act_window">
+        <field name="name">Radiology Exams</field>
+        <field name="res_model">hospital.radiology.exam</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_radiology_exam_search"/>
+    </record>
+
+    <record id="action_hospital_radiology_request" model="ir.actions.act_window">
+        <field name="name">Radiology Requests</field>
+        <field name="res_model">hospital.radiology.request</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_radiology_request_search"/>
+        <field name="context">{'default_state': 'draft', 'default_priority': 'routine'}</field>
+    </record>
+</odoo>

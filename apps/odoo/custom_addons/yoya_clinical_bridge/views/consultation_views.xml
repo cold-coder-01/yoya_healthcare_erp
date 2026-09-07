@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    ADMIN FALLBACK ONLY.
+
+    The Doctor Desk in Next.js is the daily consultation workstation; this is
+    the recovery, audit and support surface an Odoo-hosted clinical record needs
+    in order not to be a black box. It is deliberately small: a list, a form and
+    a search, with no wizard, no ordering and no completion button. Completion
+    does not exist in this slice, and a button that appeared here would be a
+    second workflow entry point competing with the one the Doctor Desk will call.
+
+    The narrative fields are readonly in the form. The authoritative write path
+    is hospital.consultation.save_narrative(), which is version-checked; a form
+    that wrote around it would reintroduce exactly the last-write-wins defect the
+    concurrency token exists to close.
+-->
+<odoo>
+
+    <record id="view_hospital_consultation_list" model="ir.ui.view">
+        <field name="name">hospital.consultation.list</field>
+        <field name="model">hospital.consultation</field>
+        <field name="arch" type="xml">
+            <list string="Consultations" create="false" delete="false" edit="false">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="appointment_id" optional="show"/>
+                <field name="encounter_id"/>
+                <field name="doctor_id"/>
+                <field name="started_at"/>
+                <field name="completed_at" optional="hide"/>
+                <field name="state"
+                       widget="badge"
+                       decoration-info="state == 'draft'"
+                       decoration-success="state == 'completed'"/>
+                <field name="company_id" column_invisible="True"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_consultation_form" model="ir.ui.view">
+        <field name="name">hospital.consultation.form</field>
+        <field name="model">hospital.consultation</field>
+        <field name="arch" type="xml">
+            <form string="Consultation" create="false" edit="false">
+                <header>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,completed"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <h1><field name="name" readonly="1"/></h1>
+                    </div>
+                    <group>
+                        <group string="Episode">
+                            <field name="patient_id" readonly="1"/>
+                            <field name="encounter_id" readonly="1"/>
+                            <field name="appointment_id" readonly="1"/>
+                            <field name="doctor_id" readonly="1"/>
+                        </group>
+                        <group string="Timing">
+                            <field name="started_at" readonly="1"/>
+                            <field name="completed_at" readonly="1"/>
+                            <field name="company_id" readonly="1" groups="base.group_multi_company"/>
+                            <field name="active" readonly="1"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Consultation Note" name="consultation_note">
+                            <!--
+                                Readonly on purpose. See the file header: the
+                                Doctor Desk writes through save_narrative(),
+                                which takes a version token; an editable form
+                                here would be an unversioned second writer.
+                            -->
+                            <group string="Presenting Complaint">
+                                <field name="presenting_complaint" nolabel="1" readonly="1"/>
+                            </group>
+                            <group string="History of Presenting Illness">
+                                <field name="history_of_presenting_illness" nolabel="1" readonly="1"/>
+                            </group>
+                            <group string="Review of Systems">
+                                <field name="review_of_systems" nolabel="1" readonly="1"/>
+                            </group>
+                            <group string="Examination Findings">
+                                <field name="examination_findings" nolabel="1" readonly="1"/>
+                            </group>
+                            <group string="Assessment">
+                                <field name="assessment" nolabel="1" readonly="1"/>
+                            </group>
+                            <group string="Plan">
+                                <field name="plan" nolabel="1" readonly="1"/>
+                            </group>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_consultation_search" model="ir.ui.view">
+        <field name="name">hospital.consultation.search</field>
+        <field name="model">hospital.consultation</field>
+        <field name="arch" type="xml">
+            <search string="Consultations">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="doctor_id"/>
+                <field name="encounter_id"/>
+                <field name="appointment_id"/>
+                <filter string="Draft" name="state_draft" domain="[('state', '=', 'draft')]"/>
+                <filter string="Completed" name="state_completed" domain="[('state', '=', 'completed')]"/>
+                <separator/>
+                <filter string="Archived" name="inactive" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Physician" name="group_by_doctor" context="{'group_by': 'doctor_id'}"/>
+                    <filter string="Status" name="group_by_state" context="{'group_by': 'state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_consultation" model="ir.actions.act_window">
+        <field name="name">Consultations</field>
+        <field name="res_model">hospital.consultation</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_consultation_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">No consultations yet.</p>
+            <p>
+                Consultations are opened from the Doctor Desk when a clinician
+                starts a consultation. This screen is a read-only audit and
+                support view.
+            </p>
+        </field>
+    </record>
+
+    <!--
+        Restricted to supervisory roles. Doctors work in the Doctor Desk, and
+        surfacing a second, read-only place to look for the note they are
+        writing would only invite them to wonder which one is authoritative.
+    -->
+    <record id="menu_hospital_consultations" model="ir.ui.menu">
+        <field name="name">Consultations</field>
+        <field name="parent_id" ref="hospital_management.menu_hospital_patient_root"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_hospital_consultation')"/>
+        <field name="sequence">40</field>
+        <field name="web_icon" eval="False"/>
+        <field name="groups_id" eval="[(6, 0, [ref('hospital_management.group_hospital_manager'), ref('hospital_management.group_hospital_system_administrator')])]"/>
+    </record>
+
+</odoo>

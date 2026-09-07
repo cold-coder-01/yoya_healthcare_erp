@@ -1,0 +1,472 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         NURSING ROUND — LIST VIEW
+    ═══════════════════════════════════════════════════════════ -->
+
+    <record id="view_hospital_nursing_round_list" model="ir.ui.view">
+        <field name="name">hospital.nursing.round.list</field>
+        <field name="model">hospital.nursing.round</field>
+        <field name="arch" type="xml">
+            <list string="Nursing Rounds"
+                decoration-success="state == 'reviewed'"
+                decoration-info="state == 'recorded'"
+                decoration-muted="state == 'cancelled'"
+                decoration-warning="state == 'draft'">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="admission_id"/>
+                <field name="round_datetime"/>
+                <field name="nurse_id"/>
+                <field name="temperature"/>
+                <field name="pulse_rate"/>
+                <field name="systolic_bp"/>
+                <field name="diastolic_bp"/>
+                <field name="oxygen_saturation"/>
+                <field name="pain_level"/>
+                <field name="state"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         NURSING ROUND — FORM VIEW  (Task 27B-2A Blueprint Fix)
+    ═══════════════════════════════════════════════════════════ -->
+
+    <record id="view_hospital_nursing_round_form" model="ir.ui.view">
+        <field name="name">hospital.nursing.round.form</field>
+        <field name="model">hospital.nursing.round</field>
+        <field name="arch" type="xml">
+            <form string="Nursing Round">
+                <header>
+                    <button
+                        name="action_record_round"
+                        string="Record Round"
+                        type="object"
+                        class="btn-primary"
+                        invisible="state != 'draft'"/>
+                    <button
+                        name="action_review"
+                        string="Review"
+                        type="object"
+                        class="btn-primary"
+                        invisible="state != 'recorded'"
+                        groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_doctor,hospital_management.group_hospital_system_administrator"/>
+                    <button
+                        name="action_cancel"
+                        string="Cancel"
+                        type="object"
+                        invisible="state not in ('draft', 'recorded')"/>
+                    <button
+                        name="action_reset_to_draft"
+                        string="Reset to Draft"
+                        type="object"
+                        invisible="state != 'cancelled'"
+                        groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,recorded,reviewed,cancelled"/>
+                </header>
+
+                <sheet class="hospital_nursing_round_profile">
+                    <field name="active" invisible="1"/>
+
+                    <!-- ── HERO ─────────────────────────────────────────────── -->
+                    <div class="nursing-hero">
+
+                        <!-- Icon + Title -->
+                        <div class="nursing-hero-left">
+                            <div class="nursing-hero-icon">
+                                <i class="fa fa-heartbeat"/>
+                            </div>
+                            <div class="nursing-hero-title-block">
+                                <div class="nursing-hero-eyebrow">Nursing Round</div>
+                                <div class="nursing-hero-name">
+                                    <h1><field name="name" readonly="1"/></h1>
+                                </div>
+                                <div class="nursing-hero-subtitle">Vital Signs &amp; Observation Record</div>
+                            </div>
+                        </div>
+
+                        <!-- 2×2 Meta chip grid -->
+                        <div class="nursing-hero-meta">
+
+                            <!-- State chip -->
+                            <div class="nursing-chip">
+                                <div class="nursing-chip-icon"><i class="fa fa-check-circle"/></div>
+                                <div class="nursing-chip-body">
+                                    <span class="nursing-chip-label">State</span>
+                                    <div class="nursing-chip-value">
+                                        <span class="nursing-state-badge nursing-state-reviewed" invisible="state != 'reviewed'">Reviewed</span>
+                                        <span class="nursing-state-badge nursing-state-recorded" invisible="state != 'recorded'">Recorded</span>
+                                        <span class="nursing-state-badge nursing-state-draft" invisible="state != 'draft'">Draft</span>
+                                        <span class="nursing-state-badge nursing-state-cancelled" invisible="state != 'cancelled'">Cancelled</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Nurse chip -->
+                            <div class="nursing-chip">
+                                <div class="nursing-chip-icon"><i class="fa fa-user"/></div>
+                                <div class="nursing-chip-body">
+                                    <span class="nursing-chip-label">Nurse</span>
+                                    <div class="nursing-chip-value">
+                                        <field name="nurse_id" readonly="1" options="{'no_open': True}"/>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Round Date/Time chip -->
+                            <div class="nursing-chip">
+                                <div class="nursing-chip-icon"><i class="fa fa-calendar"/></div>
+                                <div class="nursing-chip-body">
+                                    <span class="nursing-chip-label">Round Date / Time</span>
+                                    <div class="nursing-chip-value">
+                                        <field name="round_datetime" readonly="1"/>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Admission Ref chip -->
+                            <div class="nursing-chip">
+                                <div class="nursing-chip-icon"><i class="fa fa-hospital-o"/></div>
+                                <div class="nursing-chip-body">
+                                    <span class="nursing-chip-label">Admission Ref</span>
+                                    <div class="nursing-chip-value">
+                                        <field name="admission_id" readonly="1" options="{'no_open': True}"/>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                        <!-- /Meta chips -->
+
+                        <!-- Tall ribbon banner -->
+                        <div class="nursing-hero-ribbon">
+                            <div class="nursing-hero-status-ribbon reviewed" invisible="state != 'reviewed'">
+                                <i class="fa fa-check"/>
+                                <span>Reviewed</span>
+                            </div>
+                            <div class="nursing-hero-status-ribbon recorded" invisible="state != 'recorded'">
+                                <i class="fa fa-check-circle"/>
+                                <span>Recorded</span>
+                            </div>
+                            <div class="nursing-hero-status-ribbon draft" invisible="state != 'draft'">
+                                <i class="fa fa-pencil"/>
+                                <span>Draft</span>
+                            </div>
+                            <div class="nursing-hero-status-ribbon cancelled" invisible="state != 'cancelled'">
+                                <i class="fa fa-times-circle"/>
+                                <span>Cancelled</span>
+                            </div>
+                        </div>
+
+                    </div>
+                    <!-- /HERO -->
+
+                    <!-- ── KPI VITAL SIGN CARDS (5 cards) ───────────────────── -->
+                    <div class="nursing-kpi-grid">
+
+                        <!-- Temperature -->
+                        <div class="nursing-kpi-card">
+                            <div class="nursing-kpi-icon"><i class="fa fa-thermometer-half"/></div>
+                            <div class="nursing-kpi-content">
+                                <div class="nursing-kpi-label">Temperature</div>
+                                <div class="nursing-kpi-value">
+                                    <field name="temperature" nolabel="1" readonly="state in ['reviewed', 'cancelled']"/>
+                                    <span class="nursing-kpi-unit">°C</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Pulse Rate -->
+                        <div class="nursing-kpi-card">
+                            <div class="nursing-kpi-icon"><i class="fa fa-heartbeat"/></div>
+                            <div class="nursing-kpi-content">
+                                <div class="nursing-kpi-label">Pulse Rate</div>
+                                <div class="nursing-kpi-value">
+                                    <field name="pulse_rate" nolabel="1" readonly="state in ['reviewed', 'cancelled']"/>
+                                    <span class="nursing-kpi-unit">bpm</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Blood Pressure — bp-value class for tighter font -->
+                        <div class="nursing-kpi-card">
+                            <div class="nursing-kpi-icon"><i class="fa fa-tint"/></div>
+                            <div class="nursing-kpi-content">
+                                <div class="nursing-kpi-label">Blood Pressure</div>
+                                <div class="nursing-kpi-value nursing-kpi-bp-value">
+                                    <field name="systolic_bp" nolabel="1" readonly="state in ['reviewed', 'cancelled']"/>
+                                    <span class="nursing-kpi-sep">/</span>
+                                    <field name="diastolic_bp" nolabel="1" readonly="state in ['reviewed', 'cancelled']"/>
+                                    <span class="nursing-kpi-unit">mmHg</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Oxygen Saturation (SpO₂) -->
+                        <div class="nursing-kpi-card">
+                            <div class="nursing-kpi-icon"><i class="fa fa-medkit"/></div>
+                            <div class="nursing-kpi-content">
+                                <div class="nursing-kpi-label">SpO₂</div>
+                                <div class="nursing-kpi-value">
+                                    <field name="oxygen_saturation" nolabel="1" readonly="state in ['reviewed', 'cancelled']"/>
+                                    <span class="nursing-kpi-unit">%</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Pain Level -->
+                        <div class="nursing-kpi-card">
+                            <div class="nursing-kpi-icon"><i class="fa fa-exclamation-circle"/></div>
+                            <div class="nursing-kpi-content">
+                                <div class="nursing-kpi-label">Pain Level</div>
+                                <div class="nursing-kpi-value">
+                                    <field name="pain_level" nolabel="1" readonly="state in ['reviewed', 'cancelled']"/>
+                                    <span class="nursing-kpi-unit">/ 10</span>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                    <!-- /KPI VITAL SIGN CARDS -->
+
+                    <!-- ── MAIN 3-COLUMN INFO GRID ───────────────────────────── -->
+                    <div class="nursing-main-grid">
+
+                        <!-- Col 1: Patient & Admission (editable fields) -->
+                        <div class="nursing-info-card">
+                            <div class="nursing-card-title">
+                                <i class="fa fa-id-card-o"/>
+                                Patient &amp; Admission
+                            </div>
+                            <group class="nursing-compact-group">
+                                <group>
+                                    <field name="patient_id"
+                                        readonly="state != 'draft'"
+                                        options="{'no_create': True}"/>
+                                    <field name="admission_id"
+                                        domain="[('patient_id', '=', patient_id)]"
+                                        readonly="state != 'draft'"
+                                        options="{'no_create': True}"/>
+                                    <field name="nurse_id" options="{'no_create': True}" readonly="state in ['reviewed', 'cancelled']"/>
+                                    <field name="round_datetime" readonly="state in ['reviewed', 'cancelled']"/>
+                                    <field name="consciousness_level" readonly="state in ['reviewed', 'cancelled']"/>
+                                </group>
+                            </group>
+                        </div>
+
+                        <!-- Col 2: Clinical Status (CS rows) -->
+                        <div class="nursing-info-card">
+                            <div class="nursing-card-title">
+                                <i class="fa fa-stethoscope"/>
+                                Clinical Status
+                            </div>
+                            <div class="nursing-cs-rows">
+
+                                <div class="nursing-cs-row">
+                                    <span class="nursing-cs-label">Respiratory Rate</span>
+                                    <div class="nursing-cs-value-wrap">
+                                        <field name="respiratory_rate" nolabel="1" readonly="state in ['reviewed', 'cancelled']"/>
+                                        <span class="nursing-cs-unit">br/min</span>
+                                    </div>
+                                </div>
+
+                                <div class="nursing-cs-row">
+                                    <span class="nursing-cs-label">Blood Sugar</span>
+                                    <div class="nursing-cs-value-wrap">
+                                        <field name="blood_sugar" nolabel="1" readonly="state in ['reviewed', 'cancelled']"/>
+                                        <span class="nursing-cs-unit">mg/dL</span>
+                                    </div>
+                                </div>
+
+                                <div class="nursing-cs-row">
+                                    <span class="nursing-cs-label">Intake Notes</span>
+                                    <div class="nursing-cs-value-wrap">
+                                        <field name="intake_notes" nolabel="1" placeholder="—" readonly="state in ['reviewed', 'cancelled']"/>
+                                    </div>
+                                </div>
+
+                                <div class="nursing-cs-row">
+                                    <span class="nursing-cs-label">Output Notes</span>
+                                    <div class="nursing-cs-value-wrap">
+                                        <field name="output_notes" nolabel="1" placeholder="—" readonly="state in ['reviewed', 'cancelled']"/>
+                                    </div>
+                                </div>
+
+                                <div class="nursing-cs-row" invisible="state != 'reviewed'">
+                                    <span class="nursing-cs-label">Reviewed By</span>
+                                    <div class="nursing-cs-value-wrap">
+                                        <field name="reviewed_by" readonly="1" nolabel="1"/>
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
+
+                        <!-- Col 3: Status insight panel (narrow) -->
+                        <div class="nursing-info-card nursing-insight-card">
+                            <div class="nursing-card-title">
+                                <i class="fa fa-info-circle"/>
+                                Status
+                            </div>
+                            <div class="nursing-status-panel">
+
+                                <!-- Draft -->
+                                <div class="nursing-status-card nursing-status-action" invisible="state != 'draft'">
+                                    <i class="fa fa-pencil-square-o"/>
+                                    <div>
+                                        <span class="nursing-status-card-label">Draft</span>
+                                        <span class="nursing-status-card-sub">Awaiting submission</span>
+                                    </div>
+                                </div>
+
+                                <!-- Recorded -->
+                                <div class="nursing-status-card nursing-status-observation" invisible="state != 'recorded'">
+                                    <i class="fa fa-clock-o"/>
+                                    <div>
+                                        <span class="nursing-status-card-label">Recorded</span>
+                                        <span class="nursing-status-card-sub">Pending review</span>
+                                    </div>
+                                </div>
+
+                                <!-- Reviewed -->
+                                <div class="nursing-status-card nursing-status-review" invisible="state != 'reviewed'">
+                                    <i class="fa fa-check-circle"/>
+                                    <div>
+                                        <span class="nursing-status-card-label">Reviewed</span>
+                                        <span class="nursing-status-card-sub">Clinically confirmed</span>
+                                    </div>
+                                </div>
+
+                                <!-- Cancelled -->
+                                <div class="nursing-status-card nursing-status-cancelled" invisible="state != 'cancelled'">
+                                    <i class="fa fa-times-circle"/>
+                                    <div>
+                                        <span class="nursing-status-card-label">Cancelled</span>
+                                        <span class="nursing-status-card-sub">No longer active</span>
+                                    </div>
+                                </div>
+
+                                <!-- Observation documented -->
+                                <div class="nursing-status-card nursing-status-review" invisible="not nursing_observation">
+                                    <i class="fa fa-file-text-o"/>
+                                    <div>
+                                        <span class="nursing-status-card-label">Observation</span>
+                                        <span class="nursing-status-card-sub">Recorded</span>
+                                    </div>
+                                </div>
+
+                                <!-- Action documented -->
+                                <div class="nursing-status-card nursing-status-observation" invisible="not action_taken">
+                                    <i class="fa fa-tasks"/>
+                                    <div>
+                                        <span class="nursing-status-card-label">Action</span>
+                                        <span class="nursing-status-card-sub">Documented</span>
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
+
+                    </div>
+                    <!-- /MAIN 3-COLUMN GRID -->
+
+                    <!-- ── NOTEBOOK TABS ─────────────────────────────────────── -->
+                    <notebook class="nursing-tab-notebook">
+
+                        <page string="Nursing Observation" name="observation_tab">
+                            <div class="nursing-tab-page nursing-textarea-lg">
+                                <field name="nursing_observation" nolabel="1"
+                                    readonly="state in ['reviewed', 'cancelled']"
+                                    placeholder="Document all patient observations, findings, and nursing assessment..."/>
+                            </div>
+                        </page>
+
+                        <page string="Action Taken" name="action_taken_tab">
+                            <div class="nursing-tab-page nursing-textarea-lg">
+                                <field name="action_taken" nolabel="1"
+                                    readonly="state in ['reviewed', 'cancelled']"
+                                    placeholder="Document all nursing actions, interventions, and patient responses..."/>
+                            </div>
+                        </page>
+
+                        <page string="Review" name="review_tab">
+                            <div class="nursing-tab-page">
+                                <div invisible="state == 'reviewed'">
+                                    <p class="nursing-no-review-msg">
+                                        <i class="fa fa-info-circle"/>
+                                        This round has not been reviewed yet.
+                                        Review details will appear here once a doctor or manager marks it as reviewed.
+                                    </p>
+                                </div>
+                                <group class="nursing-review-group" invisible="state != 'reviewed'">
+                                    <group>
+                                        <field name="reviewed_by" readonly="1"/>
+                                        <field name="reviewed_date" readonly="1"/>
+                                    </group>
+                                </group>
+                            </div>
+                        </page>
+
+                    </notebook>
+                    <!-- /NOTEBOOK TABS -->
+
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         NURSING ROUND — SEARCH VIEW
+    ═══════════════════════════════════════════════════════════ -->
+
+    <record id="view_hospital_nursing_round_search" model="ir.ui.view">
+        <field name="name">hospital.nursing.round.search</field>
+        <field name="model">hospital.nursing.round</field>
+        <field name="arch" type="xml">
+            <search string="Nursing Rounds">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="admission_id"/>
+                <field name="nurse_id"/>
+                <filter string="Today" name="today"
+                    domain="[('round_datetime', '>=', datetime.datetime.combine(context_today(), datetime.time(0,0,0))),
+                              ('round_datetime', '&lt;=', datetime.datetime.combine(context_today(), datetime.time(23,59,59)))]"/>
+                <filter string="Draft" name="draft" domain="[('state', '=', 'draft')]"/>
+                <filter string="Recorded" name="recorded" domain="[('state', '=', 'recorded')]"/>
+                <filter string="Reviewed" name="reviewed" domain="[('state', '=', 'reviewed')]"/>
+                <filter string="Cancelled" name="cancelled" domain="[('state', '=', 'cancelled')]"/>
+                <separator/>
+                <filter string="Archived" name="archived" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Patient" name="group_patient" context="{'group_by': 'patient_id'}"/>
+                    <filter string="Admission" name="group_admission" context="{'group_by': 'admission_id'}"/>
+                    <filter string="Nurse" name="group_nurse" context="{'group_by': 'nurse_id'}"/>
+                    <filter string="State" name="group_state" context="{'group_by': 'state'}"/>
+                    <filter string="Date" name="group_date" context="{'group_by': 'round_datetime:day'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         NURSING ROUND — ACTION
+    ═══════════════════════════════════════════════════════════ -->
+
+    <record id="action_hospital_nursing_round" model="ir.actions.act_window">
+        <field name="name">Nursing Rounds</field>
+        <field name="res_model">hospital.nursing.round</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_nursing_round_search"/>
+        <field name="context">{}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                No nursing rounds found.
+            </p>
+            <p>Create a nursing round to record patient vital signs and observations.</p>
+        </field>
+    </record>
+
+</odoo>

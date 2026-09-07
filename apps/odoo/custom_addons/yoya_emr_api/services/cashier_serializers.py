@@ -425,6 +425,125 @@ def serialize_cashier_worklist_row(appointment, stage):
     }
 
 
+# ----------------------------------------------------------------------
+# THE ACTIVE SERVICE CLEARANCE LANE.
+#
+# A visit whose consultation has already started and whose NEXT service is held
+# up by patient money. Discovered from billing truth by
+# hospital.appointment._is_active_service_clearance_pending(); this module only
+# renders it.
+#
+# WHAT A CASHIER IS TOLD, AND WHAT THEY ARE NOT.
+#
+# The operational fact "a laboratory service on this visit is unpaid" is money
+# information and belongs at the window. The clinical fact "these tests were
+# ordered to investigate this diagnosis" is not, and nothing below can reach it:
+# the category comes from hospital.billing.service.service_type, snapshotted on
+# the CHARGE, and this file reads no laboratory request, no radiology request,
+# no prescription, no consultation and no diagnosis.
+#
+# It also names none of them. service_type is the billing catalogue's own
+# vocabulary and covers every source on the same path, so radiology, medication
+# and procedure charges render here the day they exist with no code added.
+# ----------------------------------------------------------------------
+SERVICE_CATEGORY_LABELS = {
+    "consultation": "Consultation",
+    "laboratory": "Laboratory",
+    "radiology": "Radiology",
+    # The operational word a cashier uses. 'pharmacy' is the catalogue's term
+    # for the same thing; relabelled for the window, not remapped.
+    "pharmacy": "Medication",
+    "procedure": "Procedure",
+    "admission": "Admission",
+    "nursing": "Nursing",
+    "registration": "Registration",
+    "other": "Other",
+}
+
+# Said when the engine is blocking but has no refusal to report -- i.e. the
+# ordinary case: money is simply owed and the cashier may take it.
+ACTIVE_SERVICE_DEFAULT_REASON = (
+    "Payment is required for a newly ordered service."
+)
+ACTIVE_SERVICE_DEFAULT_REASON_CODE = "service_payment_required"
+
+
+def _service_categories(charges):
+    """Generic categories, de-duplicated, in the catalogue's own order.
+
+    Sorted by KEY rather than by first appearance so two cashiers looking at the
+    same visit see the same string. Unknown/unset service types are dropped
+    rather than rendered raw: a blank badge says less than no badge.
+    """
+    keys = sorted(
+        {
+            charge.service_id.service_type
+            for charge in charges
+            if charge.service_id and charge.service_id.service_type
+        }
+    )
+    return [
+        {"key": key, "label": SERVICE_CATEGORY_LABELS.get(key, key.replace("_", " ").title())}
+        for key in keys
+    ]
+
+
+def serialize_cashier_active_service_row(appointment, blocking_charges):
+    """One in-consultation payment row. Operational facts only.
+
+    ONE ROW PER VISIT, never one per charge: three unpaid tests are one trip to
+    the window, and three rows would be three patients as far as the queue's
+    counters and the cashier's eye are concerned. The charges are collapsed into
+    a category list and a single figure.
+
+    ``visit_state`` is the appointment's own stored state, reported so the desk
+    can say "In consultation" honestly. It is a workflow state, not a clinical
+    finding, and it is the ONLY clinical-adjacent value in this payload.
+    """
+    encounter = appointment.encounter_id
+    account = encounter.billing_account_id if encounter else None
+    patient = appointment.patient_id
+
+    # The verdict, from the same resolver the detail endpoint uses -- so a lane
+    # badge in the queue and the payment form's own refusal can never disagree.
+    verdict = resolve_collectability(encounter, account)
+
+    # Recency of the obligation, not of the visit. A cashier working this lane
+    # wants to know which order landed most recently, and appointment_date says
+    # nothing about that -- it is hours old by the time care is under way.
+    requested_at = max(
+        (charge.create_date for charge in blocking_charges if charge.create_date),
+        default=None,
+    )
+
+    return {
+        "appointment_id": appointment.id,
+        "appointment_code": appointment.appointment_code,
+        "appointment_date": datetime_value(appointment.appointment_date),
+        "visit_state": appointment.state,
+        "lane": verdict["lane"],
+        "patient": {
+            "id": patient.id,
+            "name": patient.name,
+            "identification_code": patient.identification_code,
+        },
+        "encounter_name": encounter.name if encounter else None,
+        "patient_outstanding": float_value(
+            account.amount_patient_outstanding if account else 0.0
+        ),
+        "patient_paid": float_value(account.amount_received if account else 0.0),
+        "responsibility_state": selection_value(
+            account.responsibility_state if account else False
+        ),
+        "blocking_reason": verdict["reason"] or ACTIVE_SERVICE_DEFAULT_REASON,
+        "blocking_reason_code": (
+            verdict["reason_code"] or ACTIVE_SERVICE_DEFAULT_REASON_CODE
+        ),
+        "service_categories": _service_categories(blocking_charges),
+        "requested_at": datetime_value(requested_at),
+    }
+
+
 def serialize_cashier_visit_detail(env, appointment):
     """THE canonical cashier visit payload.
 

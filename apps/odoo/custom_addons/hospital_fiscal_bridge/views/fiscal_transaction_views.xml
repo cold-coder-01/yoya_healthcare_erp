@@ -1,0 +1,352 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_fiscal_transaction_list" model="ir.ui.view">
+        <field name="name">hospital.fiscal.transaction.list</field>
+        <field name="model">hospital.fiscal.transaction</field>
+        <field name="arch" type="xml">
+            <list string="Fiscal Transactions"
+                  decoration-info="state == 'ready'"
+                  decoration-warning="state == 'locked'"
+                  decoration-success="state == 'paid'"
+                  decoration-danger="state in ('failed', 'exception')"
+                  decoration-muted="state in ('expired', 'cancelled')">
+                <field name="name"/>
+                <field name="bill_id"/>
+                <field name="patient_id"/>
+                <field name="device_id" optional="show"/>
+                <field name="amount_payable"/>
+                <field name="external_receipt_no" optional="show"/>
+                <field name="fiscal_paid_at" optional="show"/>
+                <field name="expires_at" optional="hide"/>
+                <field name="cashier_id" optional="hide"/>
+                <field name="state" widget="badge"
+                       decoration-info="state == 'ready'"
+                       decoration-warning="state == 'locked'"
+                       decoration-success="state == 'paid'"
+                       decoration-danger="state in ('failed', 'exception')"
+                       decoration-muted="state in ('expired', 'cancelled', 'draft')"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_fiscal_transaction_form" model="ir.ui.view">
+        <field name="name">hospital.fiscal.transaction.form</field>
+        <field name="model">hospital.fiscal.transaction</field>
+        <field name="arch" type="xml">
+            <form string="Fiscal Transaction" class="o_hospital_fiscal_transaction_form">
+                <header>
+                    <button name="action_confirm_ready"
+                            string="Confirm Ready"
+                            type="object"
+                            class="btn-primary"
+                            invisible="state != 'draft'"/>
+                    <button name="action_cancel"
+                            string="Cancel Request"
+                            type="object"
+                            invisible="state not in ('draft', 'ready', 'locked', 'exception')"/>
+                    <button name="action_expire"
+                            string="Expire"
+                            type="object"
+                            invisible="state not in ('ready', 'locked')"
+                            groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <button name="action_reset_to_ready"
+                            string="Reset to Ready"
+                            type="object"
+                            class="btn-secondary"
+                            invisible="state not in ('failed', 'expired', 'cancelled')"
+                            groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <field name="state" widget="statusbar"
+                           statusbar_visible="draft,ready,locked,paid"/>
+                </header>
+                <sheet class="o_hospital_fiscal_transaction_form">
+
+                    <!-- ═══ EXCEPTION / MANUAL REVIEW BANNER ═══ -->
+                    <div class="fiscal_exception_banner" invisible="state != 'exception'">
+                        <i class="fa fa-exclamation-triangle"/>
+                        <div>
+                            <strong>Manual review required.</strong>
+                            An unsafe event was detected (amount mismatch or reused fiscal
+                            reference) and no payment was created. Check the Logs tab, then
+                            cancel this request or reset it to Ready.
+                        </div>
+                    </div>
+
+                    <!-- ═══ HERO HEADER ═══ -->
+                    <div class="fiscal_hero">
+                        <div class="fiscal_hero_icon">
+                            <i class="fa fa-file-text-o" title="Fiscal Transaction"/>
+                        </div>
+                        <div class="fiscal_hero_content">
+                            <div class="fiscal_hero_label">Fiscal POS Transaction</div>
+                            <div class="fiscal_hero_ref">
+                                <field name="name" readonly="1"/>
+                            </div>
+                            <!-- State chips (icons, no numbered badges) -->
+                            <div class="fiscal_state_chip fiscal_chip_draft" invisible="state != 'draft'">
+                                <i class="fa fa-pencil"/> Draft
+                            </div>
+                            <div class="fiscal_state_chip fiscal_chip_ready" invisible="state != 'ready'">
+                                <i class="fa fa-check"/> Ready
+                            </div>
+                            <div class="fiscal_state_chip fiscal_chip_locked" invisible="state != 'locked'">
+                                <i class="fa fa-hourglass-half"/> Locked (In Progress)
+                            </div>
+                            <div class="fiscal_state_chip fiscal_chip_paid" invisible="state != 'paid'">
+                                <i class="fa fa-check-circle"/> Paid
+                            </div>
+                            <div class="fiscal_state_chip fiscal_chip_danger" invisible="state != 'failed'">
+                                <i class="fa fa-times-circle"/> Failed
+                            </div>
+                            <div class="fiscal_state_chip fiscal_chip_danger" invisible="state != 'exception'">
+                                <i class="fa fa-exclamation-triangle"/> Exception / Manual Review
+                            </div>
+                            <div class="fiscal_state_chip fiscal_chip_muted" invisible="state != 'expired'">
+                                <i class="fa fa-clock-o"/> Expired
+                            </div>
+                            <div class="fiscal_state_chip fiscal_chip_muted" invisible="state != 'cancelled'">
+                                <i class="fa fa-ban"/> Cancelled
+                            </div>
+                            <div class="fiscal_state_chip fiscal_chip_muted" invisible="state != 'reversed'">
+                                <i class="fa fa-undo"/> Reversed
+                            </div>
+                            <!-- Helper text per state -->
+                            <div class="fiscal_hero_help" invisible="state != 'draft'">
+                                Prepared but not yet visible to fiscal terminals. Confirm Ready to publish.
+                            </div>
+                            <div class="fiscal_hero_help" invisible="state != 'ready'">
+                                Waiting for the terminal to scan or enter this reference.
+                            </div>
+                            <div class="fiscal_hero_help" invisible="state != 'locked'">
+                                Transaction is locked by a terminal. Waiting for payment confirmation.
+                            </div>
+                            <div class="fiscal_hero_help" invisible="state != 'paid'">
+                                Fiscal payment confirmed. Linked bill payment record was created.
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ═══ KPI ROW ═══ -->
+                    <div class="fiscal_kpi_row">
+                        <div class="fiscal_kpi_card">
+                            <div class="fiscal_kpi_icon">
+                                <i class="fa fa-money" title="Amount Payable"/>
+                            </div>
+                            <div>
+                                <span class="fiscal_kpi_label">Amount Payable</span>
+                                <div class="fiscal_kpi_value">
+                                    <field name="amount_payable" readonly="1"/>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="fiscal_kpi_card">
+                            <div class="fiscal_kpi_icon fiscal_kpi_icon_amber">
+                                <i class="fa fa-exclamation-circle" title="Amount Due"/>
+                            </div>
+                            <div>
+                                <span class="fiscal_kpi_label">Amount Due at Lookup</span>
+                                <div class="fiscal_kpi_value">
+                                    <field name="amount_due" readonly="1"/>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="fiscal_kpi_card">
+                            <div class="fiscal_kpi_icon">
+                                <i class="fa fa-clock-o" title="Expires At"/>
+                            </div>
+                            <div>
+                                <span class="fiscal_kpi_label">Expires At</span>
+                                <div class="fiscal_kpi_value">
+                                    <field name="expires_at" readonly="1"/>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="fiscal_kpi_card">
+                            <div class="fiscal_kpi_icon">
+                                <i class="fa fa-shield" title="Fiscal State"/>
+                            </div>
+                            <div>
+                                <span class="fiscal_kpi_label">Fiscal State</span>
+                                <div class="fiscal_kpi_value">
+                                    <field name="state" widget="badge" readonly="1"
+                                           decoration-info="state == 'ready'"
+                                           decoration-warning="state == 'locked'"
+                                           decoration-success="state == 'paid'"
+                                           decoration-danger="state in ('failed', 'exception')"
+                                           decoration-muted="state in ('expired', 'cancelled', 'draft')"/>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ═══ CARD GRID ═══ -->
+                    <div class="fiscal_card_grid">
+
+                        <div class="fiscal_card">
+                            <div class="fiscal_card_title">
+                                <i class="fa fa-barcode"/> Transaction Information
+                            </div>
+                            <group>
+                                <field name="barcode" readonly="1"/>
+                                <field name="qr_payload" readonly="1"/>
+                                <field name="idempotency_key" readonly="1"
+                                       groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                                <field name="create_date" string="Created On" readonly="1"/>
+                                <field name="write_date" string="Last Updated" readonly="1"/>
+                                <field name="active" invisible="1"/>
+                            </group>
+                        </div>
+
+                        <div class="fiscal_card">
+                            <div class="fiscal_card_title">
+                                <i class="fa fa-file-text"/> Linked Billing Information
+                            </div>
+                            <group>
+                                <field name="bill_id" readonly="state != 'draft'"/>
+                                <field name="patient_id" readonly="1"/>
+                                <field name="cashier_id" readonly="1"/>
+                                <field name="currency_id" readonly="1"/>
+                            </group>
+                        </div>
+
+                        <div class="fiscal_card">
+                            <div class="fiscal_card_title">
+                                <i class="fa fa-tablet"/> Device / Terminal Information
+                            </div>
+                            <group>
+                                <field name="device_id" readonly="1"/>
+                                <field name="device_terminal_type" readonly="1"/>
+                                <field name="device_location" readonly="1"/>
+                                <field name="device_last_seen" readonly="1"/>
+                            </group>
+                        </div>
+
+                        <div class="fiscal_card">
+                            <div class="fiscal_card_title">
+                                <i class="fa fa-credit-card"/> Fiscal / Receipt Details
+                            </div>
+                            <group>
+                                <field name="external_reference" readonly="1"/>
+                                <field name="external_receipt_no" readonly="1"/>
+                                <field name="external_transaction_id" readonly="1"/>
+                                <field name="fiscal_paid_at" readonly="1"/>
+                                <field name="payment_id" readonly="1"/>
+                            </group>
+                            <div class="fiscal_info_note" invisible="state == 'paid'">
+                                <i class="fa fa-info-circle"/>
+                                Receipt details will be available after successful payment.
+                            </div>
+                        </div>
+
+                        <div class="fiscal_card">
+                            <div class="fiscal_card_title">
+                                <i class="fa fa-money"/> Amount Summary
+                            </div>
+                            <group>
+                                <field name="amount_untaxed" readonly="1"/>
+                                <field name="amount_discount" readonly="1"/>
+                                <field name="amount_total" readonly="1"/>
+                                <field name="amount_paid_before" string="Paid Before Lookup" readonly="1"/>
+                                <field name="amount_due" string="Amount Due at Lookup" readonly="1" class="fiscal_amount_due_hl"/>
+                                <field name="amount_payable" string="Fiscal Amount Payable" readonly="1" class="fiscal_amount_payable"/>
+                                <field name="bill_current_due" readonly="1"/>
+                            </group>
+                        </div>
+
+                        <div class="fiscal_card">
+                            <div class="fiscal_card_title">
+                                <i class="fa fa-bolt"/> Quick Actions
+                            </div>
+                            <div class="fiscal_quick_actions">
+                                <button name="action_view_bill" type="object" class="btn">
+                                    <i class="fa fa-file-text-o"/> View Linked Bill
+                                </button>
+                                <button name="action_view_logs" type="object" class="btn">
+                                    <i class="fa fa-list"/> View Logs
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ═══ NOTEBOOK ═══ -->
+                    <notebook>
+                        <page string="Snapshot Lines" name="lines">
+                            <field name="line_ids" readonly="1">
+                                <list>
+                                    <field name="service_name"/>
+                                    <field name="service_code" optional="hide"/>
+                                    <field name="description"/>
+                                    <field name="source_type"/>
+                                    <field name="quantity"/>
+                                    <field name="unit_price"/>
+                                    <field name="discount"/>
+                                    <field name="subtotal"/>
+                                    <field name="total" sum="Total"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Logs" name="logs">
+                            <field name="log_ids" readonly="1">
+                                <list>
+                                    <field name="created_at"/>
+                                    <field name="event_type"/>
+                                    <field name="direction"/>
+                                    <field name="terminal_code"/>
+                                    <field name="status_code"/>
+                                    <field name="external_receipt_no" optional="show"/>
+                                    <field name="ip_address" optional="hide"/>
+                                    <field name="error_message"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Notes" name="notes">
+                            <field name="notes" placeholder="Internal notes..."/>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_fiscal_transaction_search" model="ir.ui.view">
+        <field name="name">hospital.fiscal.transaction.search</field>
+        <field name="model">hospital.fiscal.transaction</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="bill_id"/>
+                <field name="patient_id"/>
+                <field name="device_id"/>
+                <field name="external_receipt_no"/>
+                <field name="external_transaction_id"/>
+                <filter string="Ready" name="ready" domain="[('state', '=', 'ready')]"/>
+                <filter string="In Progress" name="locked" domain="[('state', '=', 'locked')]"/>
+                <filter string="Paid" name="paid" domain="[('state', '=', 'paid')]"/>
+                <filter string="Failed" name="failed" domain="[('state', '=', 'failed')]"/>
+                <filter string="Exception" name="exception" domain="[('state', '=', 'exception')]"/>
+                <filter string="Expired" name="expired" domain="[('state', '=', 'expired')]"/>
+                <separator/>
+                <filter string="Active" name="active" domain="[('active', '=', True)]"/>
+                <filter string="Archived" name="archived" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="State" name="group_by_state" context="{'group_by': 'state'}"/>
+                    <filter string="Device" name="group_by_device" context="{'group_by': 'device_id'}"/>
+                    <filter string="Patient" name="group_by_patient" context="{'group_by': 'patient_id'}"/>
+                    <filter string="Bill" name="group_by_bill" context="{'group_by': 'bill_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_fiscal_transaction" model="ir.actions.act_window">
+        <field name="name">Fiscal Transactions</field>
+        <field name="res_model">hospital.fiscal.transaction</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_fiscal_transaction_search"/>
+        <field name="context">{'search_default_active': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">No fiscal transactions yet</p>
+            <p>Prepare a fiscal payment from a confirmed patient bill to make it visible to the POS terminal.</p>
+        </field>
+    </record>
+</odoo>

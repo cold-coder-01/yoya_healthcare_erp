@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="action_report_radiology_request" model="ir.actions.report">
+        <field name="name">Radiology Request</field>
+        <field name="model">hospital.radiology.request</field>
+        <field name="report_type">qweb-pdf</field>
+        <field name="report_name">hospital_radiology.report_radiology_request</field>
+        <field name="report_file">hospital_radiology.report_radiology_request</field>
+        <field name="binding_model_id" ref="model_hospital_radiology_request"/>
+        <field name="binding_type">report</field>
+    </record>
+</odoo>

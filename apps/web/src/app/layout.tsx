@@ -1,16 +1,19 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
+/*
+  NO WEB FONT IS LOADED, AND THAT IS DELIBERATE.
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+  This file used to call next/font/google for Geist and Geist Mono. next/font
+  self-hosts the result, but it still has to FETCH the font from
+  fonts.gstatic.com at build time -- so on a machine that cannot reach it, the
+  Turbopack dev server fails outright rather than degrading. That made
+  `npm run dev` depend on the network to render a hospital desk.
+
+  The typefaces now come from the operating system, declared as the --font-sans
+  and --font-mono theme tokens in globals.css. Nothing is downloaded, nothing is
+  cached, and there is no build step that can fail offline.
+*/
 
 export const metadata: Metadata = {
   title: "Create Next App",
@@ -19,10 +22,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html
-      lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-    >
+    <html lang="en" className="h-full antialiased">
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );

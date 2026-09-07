@@ -4,6 +4,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { messageFromPayload } from "@/lib/api-error";
 import { hospitalToday } from "@/lib/clinical-format";
+import {
+  isConsultationMode,
+  isConsultationVisible,
+} from "@/lib/consultation-format";
+import type { ConsultationSection } from "@/lib/diagnosis-format";
 import { bucketCounts, bucketOf, type DoctorBucket } from "@/lib/doctor-format";
 import type {
   ApiEnvelope,
@@ -12,6 +17,7 @@ import type {
   DoctorVisitResponse,
 } from "@/types/doctor";
 
+import ConsultationWorkspace from "./consultation/consultation-workspace";
 import DoctorBucketBar from "./doctor-bucket-bar";
 import DoctorFilters from "./doctor-filters";
 import DoctorOrderRail from "./doctor-order-rail";
@@ -182,6 +188,60 @@ export default function DoctorWorkstation() {
   const detailForSelection =
     detail && detail.visit.appointment_id === activeId ? detail : null;
 
+  /*
+    THE MODE, DERIVED FROM THE AUTHORITATIVE VISIT STATE.
+
+    `in_consultation` is written by hospital.appointment.action_start_consultation
+    after four independent model-layer gates, and it arrives here on the visit
+    payload. Deriving the mode from it rather than from a local "I clicked
+    Start" flag is what stops the two disagreeing: a visit started in another
+    tab, in Odoo, or by a manager opens the workspace here on the next refresh,
+    and a consultation this browser thinks it started but the model refused
+    never does.
+  */
+  /*
+    TWO QUESTIONS, ANSWERED SEPARATELY.
+
+    `consultationVisible` decides whether the clinical workspace renders at all.
+    It covers a COMPLETED visit too, because the note, diagnoses and orders of a
+    finished consultation must stay readable from the desk -- keying the
+    workspace on in_consultation alone put the doctor back on the
+    Start Consultation panel the instant they signed off.
+
+    `consultationOpen` still means "the doctor may act". It gates the Clinical
+    Actions rail, which offers WRITES; the workspace itself takes editability
+    from the server's own consultation.editable rather than from either flag.
+  */
+  const consultationVisible = isConsultationVisible(
+    detailForSelection?.visit.state,
+  );
+  const consultationOpen = isConsultationMode(detailForSelection?.visit.state);
+
+  /*
+    THE OPEN SECTION, tagged with the visit it belongs to.
+
+    Storing the id alongside the section is what resets it to Note when the
+    doctor selects a different patient, WITHOUT an effect that writes state
+    during render. Same pattern doctor-patient-panel.tsx uses for its start
+    error, and for the same reason: a value that belongs to one visit must
+    never be read while a different one is on screen.
+
+    It lives here rather than inside the workspace so the Clinical Actions rail
+    can focus a section as well as the section bar.
+  */
+  const [sectionState, setSectionState] = useState<{
+    appointmentId: number | null;
+    section: ConsultationSection;
+  }>({ appointmentId: null, section: "note" });
+
+  const section =
+    sectionState.appointmentId === activeId ? sectionState.section : "note";
+  const openSection = useCallback(
+    (next: ConsultationSection) =>
+      setSectionState({ appointmentId: activeId, section: next }),
+    [activeId],
+  );
+
   return (
     /*
       The shell now owns the viewport height (h-screen + overflow-hidden on the
@@ -208,18 +268,59 @@ export default function DoctorWorkstation() {
           truncated={truncated}
           onSelect={setSelectedId}
         />
-        <DoctorPatientPanel
-          detail={detailForSelection}
-          loading={detailLoading}
-          error={activeId ? detailError : null}
-          // One token bump refetches BOTH the queue and the open patient, so
-          // the two can never disagree about the visit's state after a start.
-          onStarted={refresh}
-        />
+        {consultationVisible && detailForSelection ? (
+          /*
+            key={appointment_id} is LOAD-BEARING, not a lint appeasement. It
+            forces a fresh mount per patient, so the previous patient's draft,
+            version token and status can never survive a selection change into
+            the next patient's editor -- the single most dangerous thing this
+            screen could do. It also means a late in-flight save resolves onto
+            an unmounted component and is discarded.
+          */
+          <ConsultationWorkspace
+            key={detailForSelection.visit.appointment_id}
+            detail={detailForSelection}
+            loading={detailLoading}
+            section={section}
+            onSectionChange={openSection}
+            /*
+              One token bump refetches BOTH the queue and the open patient, so
+              the visit's new state, its new bucket and the read-only workspace
+              can never disagree after a completion. The detail the server
+              returned is discarded here deliberately: the refetch is the same
+              path every other state change already uses, and having one
+              recovery path is worth more than saving a round trip.
+            */
+            onCompleted={refresh}
+          />
+        ) : (
+          <DoctorPatientPanel
+            detail={detailForSelection}
+            loading={detailLoading}
+            error={activeId ? detailError : null}
+            // One token bump refetches BOTH the queue and the open patient, so
+            // the two can never disagree about the visit's state after a start.
+            // That refetch is also what swaps this panel for the workspace.
+            onStarted={refresh}
+          />
+        )}
         <div className="hidden min-h-0 min-[1100px]:flex min-[1100px]:flex-col">
           <DoctorOrderRail
             visitState={detailForSelection?.visit.state ?? null}
             encounterName={detailForSelection?.encounter?.name ?? null}
+            /*
+              The rail offers WRITES, so it stays keyed on consultationOpen. A
+              completed visit renders the workspace but must not be invited to
+              record a diagnosis or place an order.
+            */
+            diagnosisActive={consultationOpen && section === "diagnosis"}
+            onOpenDiagnosis={
+              consultationOpen ? () => openSection("diagnosis") : null
+            }
+            laboratoryActive={consultationOpen && section === "orders"}
+            onOpenLaboratory={
+              consultationOpen ? () => openSection("orders") : null
+            }
           />
         </div>
       </div>

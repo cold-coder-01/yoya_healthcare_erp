@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_radiology_result_list" model="ir.ui.view">
+        <field name="name">hospital.radiology.result.list</field>
+        <field name="model">hospital.radiology.result</field>
+        <field name="arch" type="xml">
+            <list string="Radiology Results">
+                <field name="name"/>
+                <field name="result_date"/>
+                <field name="request_id"/>
+                <field name="patient_id"/>
+                <field name="physician_id"/>
+                <field name="radiologist_id"/>
+                <field name="state"/>
+                <field name="active"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_radiology_result_form" model="ir.ui.view">
+        <field name="name">hospital.radiology.result.form</field>
+        <field name="model">hospital.radiology.result</field>
+        <field name="arch" type="xml">
+            <form string="Radiology Result" class="hospital_radiology_result_profile">
+                <header>
+                    <button name="action_mark_entered" string="Mark Entered" type="object" class="btn-primary" invisible="state != 'draft'"/>
+                    <button name="action_validate" string="Validate" type="object" class="btn-primary" invisible="state != 'entered'"/>
+                    <button name="action_release" string="Release" type="object" class="btn-primary" invisible="state != 'validated'"/>
+                    <button name="action_cancel" string="Cancel" type="object" invisible="state not in ('draft', 'entered')"/>
+                    <button name="action_reset_to_draft" string="Reset to Draft" type="object" invisible="state not in ('cancelled', 'released')"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,entered,validated,released,cancelled"/>
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="toggle_active" type="object" class="oe_stat_button" icon="fa-archive">
+                            <field name="active" widget="boolean_button" options='{"terminology": "archive"}'/>
+                        </button>
+                    </div>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1><field name="name" readonly="1"/></h1>
+                    </div>
+                    <group>
+                        <group string="Result Information">
+                            <field name="request_id"/>
+                            <field name="patient_id"/>
+                            <field name="physician_id"/>
+                        </group>
+                        <group string="Reporting">
+                            <field name="radiologist_id"/>
+                            <field name="result_date"/>
+                            <field name="active"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Result Lines">
+                            <field name="line_ids">
+                                <list string="Result Lines" editable="bottom">
+                                    <field name="sequence" widget="handle"/>
+                                    <field name="exam_id"/>
+                                    <field name="modality"/>
+                                    <field name="body_part"/>
+                                    <field name="contrast_used"/>
+                                    <field name="result_summary"/>
+                                    <field name="notes"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Report">
+                            <group>
+                                <field name="findings"/>
+                                <field name="impression"/>
+                                <field name="recommendations"/>
+                            </group>
+                        </page>
+                        <page string="Imaging">
+                            <!--
+                                READ-ONLY FROM VALIDATED ONWARD, so the freeze
+                                is visible as well as enforced. The model is the
+                                authority: hospital.radiology.image guards
+                                create, write, unlink and archive, so RPC,
+                                import and a forged context obey the same rule
+                                this attribute only displays.
+                            -->
+                            <field name="image_ids" nolabel="1"
+                                   readonly="state in ('validated', 'released', 'cancelled')">
+                                <list string="Imaging" editable="bottom">
+                                    <field name="sequence" widget="handle"/>
+                                    <field name="name"/>
+                                    <field name="image_type"/>
+                                    <field name="file" filename="filename" widget="binary"/>
+                                    <field name="filename" column_invisible="1"/>
+                                    <field name="caption"/>
+                                    <field name="mimetype" readonly="1"/>
+                                    <field name="file_size" readonly="1" optional="show"/>
+                                    <field name="uploaded_by_id" readonly="1" optional="show"/>
+                                    <field name="uploaded_at" readonly="1" optional="hide"/>
+                                </list>
+                            </field>
+                            <p class="text-muted mt-2" invisible="state in ('validated', 'released', 'cancelled')">
+                                JPEG, PNG or PDF, up to 25 MB each. The file's
+                                content decides its type, not its name. Imaging
+                                is frozen once the result is validated.
+                            </p>
+                            <p class="text-muted mt-2" invisible="state not in ('validated', 'released', 'cancelled')">
+                                This result is signed off, so its imaging is
+                                frozen. Issue a new radiology result if a
+                                correction is needed.
+                            </p>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_radiology_result_search" model="ir.ui.view">
+        <field name="name">hospital.radiology.result.search</field>
+        <field name="model">hospital.radiology.result</field>
+        <field name="arch" type="xml">
+            <search string="Radiology Results">
+                <field name="name"/>
+                <field name="request_id"/>
+                <field name="patient_id"/>
+                <field name="physician_id"/>
+                <field name="radiologist_id"/>
+                <field name="result_date"/>
+                <filter string="Draft" name="draft" domain="[('state', '=', 'draft')]"/>
+                <filter string="Entered" name="entered" domain="[('state', '=', 'entered')]"/>
+                <filter string="Validated" name="validated" domain="[('state', '=', 'validated')]"/>
+                <filter string="Released" name="released" domain="[('state', '=', 'released')]"/>
+                <filter string="Cancelled" name="cancelled" domain="[('state', '=', 'cancelled')]"/>
+                <filter string="Archived" name="inactive" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Patient" name="group_patient" context="{'group_by': 'patient_id'}"/>
+                    <filter string="Physician" name="group_physician" context="{'group_by': 'physician_id'}"/>
+                    <filter string="Radiologist" name="group_radiologist" context="{'group_by': 'radiologist_id'}"/>
+                    <filter string="State" name="group_state" context="{'group_by': 'state'}"/>
+                    <filter string="Result Date" name="group_result_date" context="{'group_by': 'result_date'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_radiology_result" model="ir.actions.act_window">
+        <field name="name">Radiology Results</field>
+        <field name="res_model">hospital.radiology.result</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_radiology_result_search"/>
+        <field name="context">{'default_state': 'draft'}</field>
+    </record>
+</odoo>

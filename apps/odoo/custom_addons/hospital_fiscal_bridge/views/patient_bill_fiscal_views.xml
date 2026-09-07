@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_patient_bill_form_fiscal" model="ir.ui.view">
+        <field name="name">hospital.patient.bill.form.fiscal</field>
+        <field name="model">hospital.patient.bill</field>
+        <field name="inherit_id" ref="hospital_billing.view_hospital_patient_bill_form"/>
+        <field name="arch" type="xml">
+
+            <!-- Header buttons -->
+            <xpath expr="//header" position="inside">
+                <button
+                    name="action_prepare_fiscal_transaction"
+                    string="Prepare Fiscal Payment"
+                    type="object"
+                    class="btn-secondary"
+                    groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"
+                    invisible="state not in ('confirmed', 'partially_paid') or amount_due &lt;= 0 or fiscal_state in ('ready', 'locked')"
+                />
+                <button
+                    name="action_view_fiscal_transactions"
+                    string="View Fiscal Transactions"
+                    type="object"
+                    class="btn-secondary"
+                    invisible="fiscal_transaction_count == 0"
+                />
+            </xpath>
+
+            <!-- Fiscal POS tab -->
+            <xpath expr="//notebook" position="inside">
+                <page string="Fiscal POS" name="fiscal_pos">
+                    <group>
+                        <group string="Fiscal Status">
+                            <field name="fiscal_state" readonly="1" widget="badge"
+                                   decoration-info="fiscal_state == 'ready'"
+                                   decoration-warning="fiscal_state in ('locked', 'partial')"
+                                   decoration-success="fiscal_state == 'paid'"
+                                   decoration-danger="fiscal_state in ('failed', 'exception')"/>
+                            <field name="fiscal_transaction_count" readonly="1"/>
+                            <field name="latest_fiscal_transaction_id" readonly="1"/>
+                        </group>
+                    </group>
+                    <field name="fiscal_transaction_ids" readonly="1">
+                        <list decoration-info="state == 'ready'"
+                              decoration-warning="state == 'locked'"
+                              decoration-success="state == 'paid'"
+                              decoration-danger="state in ('failed', 'exception')"
+                              decoration-muted="state in ('expired', 'cancelled')">
+                            <field name="name"/>
+                            <field name="device_id"/>
+                            <field name="amount_payable"/>
+                            <field name="external_receipt_no"/>
+                            <field name="fiscal_paid_at"/>
+                            <field name="state" widget="badge"
+                                   decoration-info="state == 'ready'"
+                                   decoration-warning="state == 'locked'"
+                                   decoration-success="state == 'paid'"
+                                   decoration-danger="state in ('failed', 'exception')"/>
+                        </list>
+                    </field>
+                </page>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_hospital_patient_bill_list_fiscal" model="ir.ui.view">
+        <field name="name">hospital.patient.bill.list.fiscal</field>
+        <field name="model">hospital.patient.bill</field>
+        <field name="inherit_id" ref="hospital_billing.view_hospital_patient_bill_list"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='state']" position="before">
+                <field name="fiscal_state" optional="hide" widget="badge"
+                       decoration-info="fiscal_state == 'ready'"
+                       decoration-warning="fiscal_state in ('locked', 'partial')"
+                       decoration-success="fiscal_state == 'paid'"
+                       decoration-danger="fiscal_state in ('failed', 'exception')"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>

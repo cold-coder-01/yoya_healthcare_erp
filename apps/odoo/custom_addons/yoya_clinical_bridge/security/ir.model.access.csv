@@ -1,0 +1,5 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_hospital_consultation_doctor,hospital.consultation doctor,model_hospital_consultation,hospital_management.group_hospital_doctor,1,1,1,0
+access_hospital_consultation_manager,hospital.consultation manager,model_hospital_consultation,hospital_management.group_hospital_manager,1,1,1,0
+access_hospital_consultation_dpo,hospital.consultation dpo,model_hospital_consultation,hospital_management.group_hospital_data_protection_officer,1,0,0,0
+access_hospital_consultation_admin,hospital.consultation admin,model_hospital_consultation,hospital_management.group_hospital_system_administrator,1,1,1,1

@@ -18,7 +18,10 @@ import {
   errorResponse,
   forwardOdooResult,
   handleRouteError,
+  readJsonObject,
   requireOdooSession,
+  streamOdooBinary,
+  withQuery,
 } from "@/app/api/reception/_utils";
 
 export {
@@ -26,7 +29,19 @@ export {
   errorResponse,
   forwardOdooResult,
   handleRouteError,
+  // Used by the consultation save route. It only checks that the body IS a
+  // JSON object; WHICH fields are writable is Odoo's decision and is not
+  // duplicated here.
+  readJsonObject,
   requireOdooSession,
+  // Used by the radiology image route. callOdooApi cannot serve it: that helper
+  // always parses JSON, which would corrupt the bytes and buffer a whole study
+  // in memory. This streams the body through and relays only four headers.
+  streamOdooBinary,
+  // Used by the disease catalogue route to forward q/limit. It drops empty
+  // values rather than sending `q=`, which Odoo would otherwise treat as a
+  // search for the empty string.
+  withQuery,
 };
 
 /** Every Doctor Desk route hangs off this one Odoo prefix. */

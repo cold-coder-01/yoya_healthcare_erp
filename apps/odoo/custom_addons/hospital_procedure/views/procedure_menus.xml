@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- PROCEDURES APP ROOT MENU -->
+    <menuitem
+        id="menu_hospital_procedure_root"
+        name="Procedures"
+        sequence="35"
+        web_icon="hospital_procedure,static/src/img/procedure_icon.png"/>
+
+    <!-- MAIN ITEMS -->
+    <menuitem
+        id="menu_hospital_procedure_requests"
+        parent="menu_hospital_procedure_root"
+        name="Procedure Requests"
+        action="action_hospital_procedure_request"
+        sequence="10"/>
+
+    <menuitem
+        id="menu_hospital_procedure_types"
+        parent="menu_hospital_procedure_root"
+        name="Procedure Types"
+        action="action_hospital_procedure_type"
+        sequence="20"/>
+
+    <!-- CONFIGURATION -->
+    <menuitem
+        id="menu_hospital_procedure_configuration"
+        parent="menu_hospital_procedure_root"
+        name="Configuration"
+        sequence="100"
+        groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+
+    <menuitem
+        id="menu_hospital_procedure_types_config"
+        parent="menu_hospital_procedure_configuration"
+        name="Procedure Types"
+        action="action_hospital_procedure_type"
+        sequence="10"/>
+
+</odoo>

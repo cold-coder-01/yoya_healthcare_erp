@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <report
+        id="report_hospital_stock_request_summary"
+        model="hospital.stock.request"
+        string="Stock Request Summary"
+        report_type="qweb-pdf"
+        name="hospital_inventory.report_stock_request_summary_template"
+        file="hospital_inventory.report_stock_request_summary_template"
+        print_report_name="'Stock Request Summary - ' + object.name"/>
+
+</odoo>

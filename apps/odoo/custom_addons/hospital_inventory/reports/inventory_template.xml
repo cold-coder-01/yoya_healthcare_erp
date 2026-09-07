@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <template id="report_stock_request_summary_template">
+        <t t-call="web.html_container">
+            <t t-foreach="docs" t-as="doc">
+                <t t-call="web.external_layout">
+                    <div class="page">
+                        <style>
+                            .hospital-section-title {
+                                color: #006A4F;
+                                font-size: 14px;
+                                font-weight: 700;
+                                margin: 14px 0 6px;
+                                border-bottom: 1px solid #006A4F;
+                                padding-bottom: 3px;
+                            }
+                            .hospital-report-table {
+                                width: 100%;
+                                border-collapse: collapse;
+                                margin-bottom: 10px;
+                            }
+                            .hospital-report-table th,
+                            .hospital-report-table td {
+                                border: 1px solid #DDDDDD;
+                                padding: 5px 7px;
+                                font-size: 11px;
+                                vertical-align: top;
+                            }
+                            .hospital-info-table td:first-child,
+                            .hospital-info-table td:nth-child(3) {
+                                width: 18%;
+                                color: #555555;
+                                font-weight: 700;
+                                background: #F9FAFB;
+                            }
+                            .hospital-empty-note {
+                                color: #666666;
+                                font-style: italic;
+                                margin: 4px 0 10px;
+                                font-size: 11px;
+                            }
+                            .hospital-footer-note {
+                                color: #555555;
+                                font-size: 11px;
+                                margin-top: 20px;
+                                border-top: 1px solid #DDDDDD;
+                                padding-top: 6px;
+                            }
+                            .badge-state {
+                                display: inline-block;
+                                padding: 2px 7px;
+                                border-radius: 4px;
+                                font-size: 10px;
+                                font-weight: 700;
+                                background: #e8f4f0;
+                                color: #006A4F;
+                            }
+                        </style>
+
+                        <t t-set="report_title" t-value="'Stock Request Summary'"/>
+                        <t t-set="report_ref_label" t-value="'Request Ref'"/>
+                        <t t-set="report_ref" t-value="doc.name"/>
+                        <t t-set="report_date_label" t-value="'Request Date'"/>
+                        <t t-set="report_date" t-value="doc.request_date"/>
+                        <t t-call="hospital_management.hospital_report_header"/>
+
+                        <!-- Request Information -->
+                        <div class="hospital-section-title">Request Information</div>
+                        <table class="hospital-report-table hospital-info-table">
+                            <tbody>
+                                <tr>
+                                    <td>Request Ref</td>
+                                    <td><span t-field="doc.name"/></td>
+                                    <td>Department</td>
+                                    <td><span t-field="doc.department_id"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Request Type</td>
+                                    <td><span t-field="doc.request_type"/></td>
+                                    <td>Priority</td>
+                                    <td><span t-field="doc.priority"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Status</td>
+                                    <td><span class="badge-state" t-field="doc.state"/></td>
+                                    <td>Request Date</td>
+                                    <td><span t-field="doc.request_date"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Source Location</td>
+                                    <td><span t-out="doc.source_location_id.display_name or 'N/A'"/></td>
+                                    <td>Destination Location</td>
+                                    <td><span t-out="doc.destination_location_id.display_name or 'N/A'"/></td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <!-- Approval / Issue -->
+                        <div class="hospital-section-title">Approval &amp; Issue</div>
+                        <table class="hospital-report-table hospital-info-table">
+                            <tbody>
+                                <tr>
+                                    <td>Requested By</td>
+                                    <td><span t-out="doc.requested_by.display_name or 'N/A'"/></td>
+                                    <td>Approved By</td>
+                                    <td><span t-out="doc.approved_by.display_name or 'N/A'"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Issued By</td>
+                                    <td><span t-out="doc.issued_by.display_name or 'N/A'"/></td>
+                                    <td>Issued Date</td>
+                                    <td><span t-out="doc.issued_date or 'N/A'"/></td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <!-- Line Items -->
+                        <div class="hospital-section-title">Request Lines</div>
+                        <table class="hospital-report-table">
+                            <thead>
+                                <tr>
+                                    <th>Item</th>
+                                    <th>Batch / Lot</th>
+                                    <th>Requested</th>
+                                    <th>Approved</th>
+                                    <th>Issued</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <t t-if="doc.line_ids">
+                                    <tr t-foreach="doc.line_ids" t-as="line">
+                                        <td><span t-field="line.item_id"/></td>
+                                        <td><span t-out="line.batch_id.name or 'N/A'"/></td>
+                                        <td><span t-field="line.requested_quantity"/></td>
+                                        <td><span t-field="line.approved_quantity"/></td>
+                                        <td><span t-field="line.issued_quantity"/></td>
+                                    </tr>
+                                </t>
+                            </tbody>
+                        </table>
+                        <t t-if="not doc.line_ids">
+                            <p class="hospital-empty-note">No request lines recorded.</p>
+                        </t>
+
+                        <!-- Notes -->
+                        <div class="hospital-section-title">Notes</div>
+                        <table class="hospital-report-table hospital-info-table">
+                            <tbody>
+                                <tr>
+                                    <td>Notes</td>
+                                    <td colspan="3"><span t-out="doc.notes or 'N/A'"/></td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <div class="hospital-footer-note">
+                            This report is generated from YOYA Hospital — Ethiopian Hospital ERP.
+                            It summarizes an internal stock request and is not a billing document.
+                        </div>
+                    </div>
+                </t>
+            </t>
+        </t>
+    </template>
+</odoo>

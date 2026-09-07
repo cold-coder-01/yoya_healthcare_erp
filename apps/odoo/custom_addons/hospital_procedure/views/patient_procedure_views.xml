@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- PATIENT FORM — Procedures Smart Button + Tab -->
+    <record id="view_hospital_patient_procedure_inherit" model="ir.ui.view">
+        <field name="name">hospital.patient.procedure.inherit</field>
+        <field name="model">hospital.patient</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_patient_form"/>
+        <field name="arch" type="xml">
+
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button
+                    name="action_view_procedure_requests"
+                    type="object"
+                    class="oe_stat_button"
+                    icon="fa-scissors"
+                    invisible="not id">
+                    <field name="procedure_request_count" widget="statinfo" string="Procedures"/>
+                </button>
+            </xpath>
+
+            <xpath expr="//notebook" position="inside">
+                <page string="Procedures" name="procedures">
+                    <field name="procedure_request_ids" nolabel="1" readonly="1">
+                        <list string="Procedures" limit="10">
+                            <field name="name"/>
+                            <field name="procedure_type_id"/>
+                            <field name="admission_id"/>
+                            <field name="scheduled_datetime"/>
+                            <field name="performed_datetime"/>
+                            <field name="performed_by"/>
+                            <field name="state"/>
+                        </list>
+                    </field>
+                </page>
+            </xpath>
+
+        </field>
+    </record>
+
+    <!-- ADMISSION FORM — Procedures Smart Button -->
+    <record id="view_hospital_admission_procedure_inherit" model="ir.ui.view">
+        <field name="name">hospital.admission.procedure.inherit</field>
+        <field name="model">hospital.admission</field>
+        <field name="inherit_id" ref="hospital_admission.view_hospital_admission_form"/>
+        <field name="arch" type="xml">
+
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button
+                    name="action_view_admission_procedures"
+                    type="object"
+                    class="oe_stat_button"
+                    icon="fa-scissors"
+                    invisible="not id">
+                    <field name="procedure_request_count" widget="statinfo" string="Procedures"/>
+                </button>
+            </xpath>
+
+        </field>
+    </record>
+
+</odoo>

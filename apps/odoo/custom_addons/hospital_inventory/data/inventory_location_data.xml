@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo noupdate="1">
+
+    <!--
+        Baseline hospital inventory locations. These describe WHERE stock lives;
+        they do NOT create any stock quantities. Opening stock must be entered by
+        the user. Department links are intentionally left empty so each hospital
+        can map them to its own departments.
+    -->
+
+    <record id="location_central_store" model="hospital.inventory.location">
+        <field name="name">Central Medical Store</field>
+        <field name="code">MAIN-STORE</field>
+        <field name="location_type">central_store</field>
+        <field name="is_default" eval="True"/>
+    </record>
+
+    <record id="location_transit" model="hospital.inventory.location">
+        <field name="name">Internal Transfer Transit</field>
+        <field name="code">TRANSIT</field>
+        <field name="location_type">transit</field>
+        <field name="is_default" eval="True"/>
+    </record>
+
+    <record id="location_pharmacy_store" model="hospital.inventory.location">
+        <field name="name">Pharmacy Store</field>
+        <field name="code">PHARM-STORE</field>
+        <field name="location_type">pharmacy_store</field>
+    </record>
+
+    <record id="location_laboratory_store" model="hospital.inventory.location">
+        <field name="name">Laboratory Store</field>
+        <field name="code">LAB-STORE</field>
+        <field name="location_type">laboratory_store</field>
+    </record>
+
+    <record id="location_radiology_store" model="hospital.inventory.location">
+        <field name="name">Radiology Store</field>
+        <field name="code">RAD-STORE</field>
+        <field name="location_type">radiology_store</field>
+    </record>
+
+    <record id="location_ward_store" model="hospital.inventory.location">
+        <field name="name">Ward / Nursing Store</field>
+        <field name="code">WARD-STORE</field>
+        <field name="location_type">ward_store</field>
+    </record>
+
+    <record id="location_procedure_store" model="hospital.inventory.location">
+        <field name="name">Procedure Room Store</field>
+        <field name="code">PROC-STORE</field>
+        <field name="location_type">procedure_store</field>
+    </record>
+
+    <record id="location_consumed" model="hospital.inventory.location">
+        <field name="name">Patient Consumption / Used Stock</field>
+        <field name="code">CONSUMED</field>
+        <field name="location_type">virtual_consumption</field>
+        <field name="is_consumption_location" eval="True"/>
+        <field name="is_default" eval="True"/>
+    </record>
+
+</odoo>

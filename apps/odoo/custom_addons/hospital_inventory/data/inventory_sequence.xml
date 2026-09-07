@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo noupdate="1">
+
+    <record id="sequence_hospital_inventory_batch" model="ir.sequence">
+        <field name="name">Inventory Batch Sequence</field>
+        <field name="code">hospital.inventory.batch.sequence</field>
+        <field name="prefix">BATCH</field>
+        <field name="padding">5</field>
+        <field name="number_next">1</field>
+        <field name="number_increment">1</field>
+    </record>
+
+    <record id="sequence_hospital_stock_request" model="ir.sequence">
+        <field name="name">Stock Request Sequence</field>
+        <field name="code">hospital.stock.request.sequence</field>
+        <field name="prefix">STREQ</field>
+        <field name="padding">5</field>
+        <field name="number_next">1</field>
+        <field name="number_increment">1</field>
+    </record>
+
+    <record id="sequence_hospital_stock_movement" model="ir.sequence">
+        <field name="name">Stock Movement Sequence</field>
+        <field name="code">hospital.stock.movement.sequence</field>
+        <field name="prefix">STMOV</field>
+        <field name="padding">5</field>
+        <field name="number_next">1</field>
+        <field name="number_increment">1</field>
+    </record>
+
+    <record id="sequence_hospital_stock_consumption" model="ir.sequence">
+        <field name="name">Stock Consumption Sequence</field>
+        <field name="code">hospital.stock.consumption.sequence</field>
+        <field name="prefix">STCON</field>
+        <field name="padding">5</field>
+        <field name="number_next">1</field>
+        <field name="number_increment">1</field>
+    </record>
+
+    <record id="sequence_hospital_opening_stock" model="ir.sequence">
+        <field name="name">Opening Stock Sequence</field>
+        <field name="code">hospital.opening.stock.sequence</field>
+        <field name="prefix">OPSTK</field>
+        <field name="padding">5</field>
+        <field name="number_next">1</field>
+        <field name="number_increment">1</field>
+    </record>
+
+</odoo>

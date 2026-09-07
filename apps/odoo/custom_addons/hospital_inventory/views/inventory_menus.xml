@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- INVENTORY APP ROOT MENU -->
+    <menuitem
+        id="menu_hospital_inventory_root"
+        name="Inventory"
+        sequence="40"
+        web_icon="hospital_inventory,static/src/img/inventory_icon.png"/>
+
+    <!-- MAIN ITEMS -->
+    <menuitem
+        id="menu_hospital_inventory_locations"
+        parent="menu_hospital_inventory_root"
+        name="Locations"
+        action="action_hospital_inventory_location"
+        sequence="5"/>
+
+    <menuitem
+        id="menu_hospital_inventory_opening_stock"
+        parent="menu_hospital_inventory_root"
+        name="Opening Stock"
+        action="action_hospital_opening_stock"
+        sequence="8"/>
+
+    <menuitem
+        id="menu_hospital_inventory_items"
+        parent="menu_hospital_inventory_root"
+        name="Items"
+        action="action_hospital_inventory_item"
+        sequence="10"/>
+
+    <menuitem
+        id="menu_hospital_inventory_batches"
+        parent="menu_hospital_inventory_root"
+        name="Batches / Lots"
+        action="action_hospital_inventory_batch"
+        sequence="20"/>
+
+    <menuitem
+        id="menu_hospital_inventory_department_stock"
+        parent="menu_hospital_inventory_root"
+        name="Department Stock"
+        action="action_hospital_department_stock"
+        sequence="30"/>
+
+    <menuitem
+        id="menu_hospital_inventory_stock_requests"
+        parent="menu_hospital_inventory_root"
+        name="Stock Requests"
+        action="action_hospital_stock_request"
+        sequence="40"/>
+
+    <menuitem
+        id="menu_hospital_inventory_stock_movements"
+        parent="menu_hospital_inventory_root"
+        name="Stock Movements"
+        action="action_hospital_stock_movement"
+        sequence="50"/>
+
+    <menuitem
+        id="menu_hospital_inventory_stock_consumption"
+        parent="menu_hospital_inventory_root"
+        name="Stock Consumption"
+        action="action_hospital_stock_consumption"
+        sequence="60"/>
+
+    <!-- CONFIGURATION -->
+    <menuitem
+        id="menu_hospital_inventory_configuration"
+        parent="menu_hospital_inventory_root"
+        name="Configuration"
+        sequence="100"
+        groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+
+    <menuitem
+        id="menu_hospital_inventory_categories_config"
+        parent="menu_hospital_inventory_configuration"
+        name="Item Categories"
+        action="action_hospital_inventory_category"
+        sequence="3"/>
+
+    <menuitem
+        id="menu_hospital_inventory_locations_config"
+        parent="menu_hospital_inventory_configuration"
+        name="Locations"
+        action="action_hospital_inventory_location"
+        sequence="5"/>
+
+    <menuitem
+        id="menu_hospital_inventory_items_config"
+        parent="menu_hospital_inventory_configuration"
+        name="Items"
+        action="action_hospital_inventory_item"
+        sequence="10"/>
+
+    <menuitem
+        id="menu_hospital_inventory_department_stock_config"
+        parent="menu_hospital_inventory_configuration"
+        name="Department Stock"
+        action="action_hospital_department_stock"
+        sequence="20"/>
+
+</odoo>

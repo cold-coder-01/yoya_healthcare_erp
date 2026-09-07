@@ -14,10 +14,24 @@ import {
   doctorLabel,
   visitReadiness,
 } from "@/lib/doctor-format";
+import { hasActiveCareRelationship } from "@/lib/history-format";
 import type { ApiEnvelope, DoctorVisitDetail } from "@/types/doctor";
 
+import HistoryWorkspace from "./consultation/history-workspace";
 import { PriorityBadge, StageBadge, VisitTypeBadge } from "./doctor-badges";
 import DoctorVitalsGrid from "./doctor-vitals-grid";
+
+/**
+ * The two views this PRE-CONSULTATION panel can show.
+ *
+ * DELIBERATELY TWO, AND DELIBERATELY BOTH READ-ONLY. Note, Diagnosis, Orders
+ * and Results are not offered here and must not be: they are the consultation
+ * workspace, they carry writes, and they stay behind Start Consultation and
+ * the four model-layer gates it runs. Only History is added, because Slice 9A
+ * already authorizes reading it from `confirmed` onward and the desk was the
+ * only thing making that unreachable.
+ */
+type PanelView = "overview" | "history";
 
 const SEVERITY_TONE: Record<string, string> = {
   critical: "border-red-400 bg-red-50 text-red-900",
@@ -47,7 +61,7 @@ function Section({
   return (
     <section className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
-        <h3 className="shrink-0 text-[10px] font-bold uppercase tracking-[0.08em] text-slate-500">
+        <h3 className="shrink-0 cl-meta font-bold uppercase tracking-[0.08em] text-slate-500">
           {title}
         </h3>
         <span aria-hidden className="h-px flex-1 bg-slate-200" />
@@ -61,10 +75,10 @@ function Section({
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
-      <span className="text-[9px] font-semibold uppercase tracking-[0.06em] text-slate-400">
+      <span className="cl-micro font-semibold uppercase tracking-[0.06em] text-slate-400">
         {label}
       </span>
-      <span className="truncate text-[12px] font-semibold text-slate-900">{value}</span>
+      <span className="truncate cl-body font-semibold text-slate-900">{value}</span>
     </div>
   );
 }
@@ -109,14 +123,31 @@ export default function DoctorPatientPanel({
     message: string;
   } | null>(null);
 
+  /*
+    WHICH VIEW IS OPEN, tagged with the visit it belongs to.
+
+    Storing the id alongside the view is what resets it to Overview when the
+    doctor selects a different patient, WITHOUT an effect that writes state
+    during render -- the same pattern doctor-workstation uses for its section
+    and this component already uses for its start error. A History tab left
+    open must never carry one patient's past onto the next patient's panel.
+  */
+  const [viewState, setViewState] = useState<{
+    appointmentId: number | null;
+    view: PanelView;
+  }>({ appointmentId: null, view: "overview" });
+
   const appointmentId = detail?.visit.appointment_id ?? null;
   const visibleStartError =
     startError && startError.appointmentId === appointmentId ? startError.message : null;
 
+  const view: PanelView =
+    viewState.appointmentId === appointmentId ? viewState.view : "overview";
+
   if (!detail) {
     return (
       <section className="flex min-h-[320px] min-w-0 items-center justify-center rounded-lg border border-slate-200 bg-white p-6 text-center shadow-sm min-[1100px]:min-h-0">
-        <p className="max-w-[24rem] text-xs text-slate-500">
+        <p className="max-w-[24rem] cl-body text-slate-500">
           {error ?? (loading ? "Loading patient…" : "Select a patient from the queue.")}
         </p>
       </section>
@@ -124,6 +155,13 @@ export default function DoctorPatientPanel({
   }
 
   const { visit, patient, triage, medical_alerts: alerts, encounter, clearance } = detail;
+
+  /*
+    Whether to OFFER History at all. See hasActiveCareRelationship: it mirrors
+    the server's own active-care states, and it decides what to draw, never
+    what may be read.
+  */
+  const showHistoryTab = hasActiveCareRelationship(visit.state);
 
   // Readiness is the AUTHORITATIVE stage plus the server's own assignment
   // verdict. Nothing here re-derives it from triage state and a billing flag.
@@ -181,15 +219,15 @@ export default function DoctorPatientPanel({
           <div className="flex min-w-0 items-center gap-2.5">
             <span
               aria-hidden
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[13px] font-bold text-slate-600"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-200 cl-strong font-bold text-slate-600"
             >
               {patient.name.trim().charAt(0).toUpperCase() || "?"}
             </span>
             <div className="min-w-0">
-              <h2 className="truncate text-[17px] font-bold leading-tight tracking-tight text-slate-950">
+              <h2 className="truncate cl-head-lg font-bold leading-tight tracking-tight text-slate-950">
                 {patient.name}
               </h2>
-              <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] leading-tight text-slate-500">
+              <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 cl-secondary leading-tight text-slate-500">
                 <span className="font-mono font-bold text-slate-700">
                   {patient.mrn ?? "No chart no."}
                 </span>
@@ -212,7 +250,7 @@ export default function DoctorPatientPanel({
           </div>
 
           {loading ? (
-            <span className="shrink-0 text-[10px] text-slate-500">Updating…</span>
+            <span className="shrink-0 cl-meta text-slate-500">Updating…</span>
           ) : null}
         </div>
 
@@ -230,6 +268,61 @@ export default function DoctorPatientPanel({
         </div>
       </header>
 
+      {/*
+        ---- View strip ----
+
+        SHOWN ONLY WHEN HISTORY IS ACTUALLY REACHABLE. Slice 9A opens
+        longitudinal reading on an ACTIVE care relationship (confirmed or
+        in_consultation), so a draft or cancelled visit gets no strip at all
+        rather than a tab that could only ever answer "not available".
+
+        It is an affordance, not a gate: the server refuses on every request
+        regardless of what this decides to draw.
+
+        The strip sits BELOW the identity header and ABOVE the scrolling body,
+        so the patient's name, chart number and stage stay on screen whichever
+        view is open -- picking the wrong patient is the most expensive mistake
+        this UI can cause, and identity must not scroll away behind a tab.
+      */}
+      {showHistoryTab ? (
+        <div className="flex shrink-0 items-center gap-1 border-b border-slate-200 bg-white px-3">
+          {(
+            [
+              ["overview", "Overview"],
+              ["history", "History"],
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              aria-current={view === key ? "page" : undefined}
+              onClick={() => setViewState({ appointmentId, view: key })}
+              className={`-mb-px border-b-2 px-1.5 py-1.5 cl-meta font-bold uppercase tracking-[0.07em] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-emerald-600 ${
+                view === key
+                  ? "border-emerald-600 text-slate-900"
+                  : "border-transparent text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {view === "history" && showHistoryTab && appointmentId !== null ? (
+        /*
+          THE ONLY CLINICAL SURFACE THIS PANEL ADDS, and it is read-only end to
+          end: HistoryWorkspace has no write path, and every record it shows is
+          served read-only by Slice 9A's record rules.
+
+          Keyed on the visit for the same reason the consultation workspace is:
+          one patient's history must never survive a selection change onto the
+          next patient's screen.
+        */
+        <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50/40 p-3.5">
+          <HistoryWorkspace key={appointmentId} appointmentId={appointmentId} />
+        </div>
+      ) : (
       <div className="min-h-0 flex-1 space-y-3.5 overflow-y-auto p-3.5">
         {/* ---- Visit metadata ----
             One recessed slab rather than eight fields floating on the page:
@@ -271,14 +364,14 @@ export default function DoctorPatientPanel({
               {alerts.map((alert) => (
                 <li
                   key={alert.id}
-                  className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-semibold ${
+                  className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 cl-secondary font-semibold ${
                     SEVERITY_TONE[alert.severity?.toLowerCase() ?? ""] ??
                     "border-slate-300 bg-slate-100 text-slate-800"
                   }`}
                 >
                   {alert.name}
                   {alert.severity ? (
-                    <span className="text-[9px] font-bold uppercase tracking-wide opacity-75">
+                    <span className="cl-micro font-bold uppercase tracking-wide opacity-75">
                       {doctorLabel(alert.severity)}
                     </span>
                   ) : null}
@@ -293,7 +386,7 @@ export default function DoctorPatientPanel({
             type than anything else in the scroll column, because it is the one
             sentence a doctor reads before looking at the patient. */}
         <Section title="Chief complaint">
-          <p className="rounded-md border border-slate-200 border-l-[3px] border-l-emerald-600 bg-white px-3 py-2 text-[13px] font-medium leading-relaxed text-slate-900 shadow-sm">
+          <p className="rounded-md border border-slate-200 border-l-[3px] border-l-emerald-600 bg-white px-3 py-2 cl-strong font-medium leading-relaxed text-slate-900 shadow-sm">
             {triage.chief_complaint ?? visit.reason ?? (
               <span className="font-normal italic text-slate-400">
                 Not recorded at triage.
@@ -301,7 +394,7 @@ export default function DoctorPatientPanel({
             )}
           </p>
           {triage.notes ? (
-            <p className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-[11px] leading-relaxed text-slate-600">
+            <p className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 cl-secondary leading-relaxed text-slate-600">
               <span className="font-bold uppercase tracking-[0.06em] text-slate-400">
                 Triage notes ·{" "}
               </span>
@@ -315,7 +408,7 @@ export default function DoctorPatientPanel({
           title="Triage vitals"
           aside={
             triage.completed_at ? (
-              <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-slate-500">
+              <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 cl-micro font-semibold uppercase tracking-wide text-slate-500">
                 Taken {formatHospitalTime(triage.completed_at)}
               </span>
             ) : null
@@ -329,7 +422,7 @@ export default function DoctorPatientPanel({
           <Section title="History">
             <div className="grid gap-1.5 sm:grid-cols-2">
               {patient.past_medical_history ? (
-                <p className="rounded-md border border-slate-200 bg-white px-3 py-2 text-[11px] leading-relaxed text-slate-700">
+                <p className="rounded-md border border-slate-200 bg-white px-3 py-2 cl-secondary leading-relaxed text-slate-700">
                   <span className="font-bold uppercase tracking-[0.06em] text-slate-400">
                     Past medical:{" "}
                   </span>
@@ -337,7 +430,7 @@ export default function DoctorPatientPanel({
                 </p>
               ) : null}
               {patient.disease_history ? (
-                <p className="rounded-md border border-slate-200 bg-white px-3 py-2 text-[11px] leading-relaxed text-slate-700">
+                <p className="rounded-md border border-slate-200 bg-white px-3 py-2 cl-secondary leading-relaxed text-slate-700">
                   <span className="font-bold uppercase tracking-[0.06em] text-slate-400">
                     Disease history:{" "}
                   </span>
@@ -348,6 +441,7 @@ export default function DoctorPatientPanel({
           </Section>
         ) : null}
       </div>
+      )}
 
       {/* ---- The gate ----
           Tinted by readiness so the whole strip answers "may I proceed" before
@@ -365,7 +459,7 @@ export default function DoctorPatientPanel({
         {visibleStartError ? (
           <p
             role="alert"
-            className="mb-2 rounded-md border border-red-300 bg-red-50 px-2.5 py-1.5 text-[11px] leading-snug text-red-900"
+            className="mb-2 rounded-md border border-red-300 bg-red-50 px-2.5 py-1.5 cl-secondary leading-snug text-red-900"
           >
             {visibleStartError}
           </p>
@@ -383,7 +477,7 @@ export default function DoctorPatientPanel({
                     : "bg-amber-500"
               }`}
             />
-            <p className="min-w-0 text-[11px] leading-snug">
+            <p className="min-w-0 cl-secondary leading-snug">
               {readiness.ready ? (
                 <span className="font-semibold text-emerald-900">
                   Ready for doctor. Triage complete and cleared at the desk.
@@ -414,7 +508,7 @@ export default function DoctorPatientPanel({
             disabled={!readiness.ready || starting}
             // The ring offset picks up the footer tint rather than white, so
             // the focus ring stays clean against whichever state is showing.
-            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md bg-emerald-700 px-4 text-[12px] font-bold uppercase tracking-[0.06em] text-white shadow-sm outline-none transition-colors hover:bg-emerald-800 focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 disabled:shadow-none"
+            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md bg-emerald-700 px-4 cl-body font-bold uppercase tracking-[0.06em] text-white shadow-sm outline-none transition-colors hover:bg-emerald-800 focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 disabled:shadow-none"
           >
             {starting ? (
               <>

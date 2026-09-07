@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <template id="report_procedure_summary_template">
+        <t t-call="web.html_container">
+            <t t-foreach="docs" t-as="doc">
+                <t t-call="web.external_layout">
+                    <div class="page">
+                        <style>
+                            .hospital-section-title {
+                                color: #006A4F;
+                                font-size: 14px;
+                                font-weight: 700;
+                                margin: 14px 0 6px;
+                                border-bottom: 1px solid #006A4F;
+                                padding-bottom: 3px;
+                            }
+                            .hospital-report-table {
+                                width: 100%;
+                                border-collapse: collapse;
+                                margin-bottom: 10px;
+                            }
+                            .hospital-report-table th,
+                            .hospital-report-table td {
+                                border: 1px solid #DDDDDD;
+                                padding: 5px 7px;
+                                font-size: 11px;
+                                vertical-align: top;
+                            }
+                            .hospital-info-table td:first-child,
+                            .hospital-info-table td:nth-child(3) {
+                                width: 18%;
+                                color: #555555;
+                                font-weight: 700;
+                                background: #F9FAFB;
+                            }
+                            .hospital-empty-note {
+                                color: #666666;
+                                font-style: italic;
+                                margin: 4px 0 10px;
+                                font-size: 11px;
+                            }
+                            .hospital-footer-note {
+                                color: #555555;
+                                font-size: 11px;
+                                margin-top: 20px;
+                                border-top: 1px solid #DDDDDD;
+                                padding-top: 6px;
+                            }
+                            .badge-state {
+                                display: inline-block;
+                                padding: 2px 7px;
+                                border-radius: 4px;
+                                font-size: 10px;
+                                font-weight: 700;
+                                background: #e8f4f0;
+                                color: #006A4F;
+                            }
+                        </style>
+
+                        <t t-set="report_title" t-value="'Procedure Summary'"/>
+                        <t t-set="report_ref_label" t-value="'Procedure Ref'"/>
+                        <t t-set="report_ref" t-value="doc.name"/>
+                        <t t-set="report_date_label" t-value="'Performed Date'"/>
+                        <t t-set="report_date" t-value="doc.performed_datetime or doc.request_datetime"/>
+                        <t t-call="hospital_management.hospital_report_header"/>
+
+                        <!-- Patient & Context -->
+                        <div class="hospital-section-title">Patient &amp; Context</div>
+                        <table class="hospital-report-table hospital-info-table">
+                            <tbody>
+                                <tr>
+                                    <td>Patient</td>
+                                    <td><span t-field="doc.patient_id"/></td>
+                                    <td>Procedure Ref</td>
+                                    <td><span t-field="doc.name"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Admission</td>
+                                    <td><span t-out="doc.admission_id.display_name or 'N/A'"/></td>
+                                    <td>Appointment</td>
+                                    <td><span t-out="doc.appointment_id.display_name or 'N/A'"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Physician</td>
+                                    <td><span t-out="doc.physician_id.display_name or 'N/A'"/></td>
+                                    <td>Status</td>
+                                    <td><span class="badge-state" t-out="doc.state or ''"/></td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <!-- Procedure Details -->
+                        <div class="hospital-section-title">Procedure Details</div>
+                        <table class="hospital-report-table hospital-info-table">
+                            <tbody>
+                                <tr>
+                                    <td>Procedure Type</td>
+                                    <td><span t-out="doc.procedure_type_id.display_name or 'N/A'"/></td>
+                                    <td>Category</td>
+                                    <td><span t-out="doc.category or 'N/A'"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Requested By</td>
+                                    <td><span t-out="doc.requested_by.display_name or 'N/A'"/></td>
+                                    <td>Performed By</td>
+                                    <td><span t-out="doc.performed_by.display_name or 'N/A'"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Request Date</td>
+                                    <td><span t-out="doc.request_datetime or 'N/A'"/></td>
+                                    <td>Scheduled Date</td>
+                                    <td><span t-out="doc.scheduled_datetime or 'N/A'"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Start Date</td>
+                                    <td><span t-out="doc.start_datetime or 'N/A'"/></td>
+                                    <td>Performed Date</td>
+                                    <td><span t-out="doc.performed_datetime or 'N/A'"/></td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <!-- Clinical Documentation -->
+                        <div class="hospital-section-title">Clinical Documentation</div>
+                        <table class="hospital-report-table hospital-info-table">
+                            <tbody>
+                                <tr>
+                                    <td>Clinical Indication</td>
+                                    <td colspan="3"><span t-out="doc.clinical_indication or 'N/A'"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Procedure Notes</td>
+                                    <td colspan="3"><span t-out="doc.procedure_notes or 'N/A'"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Outcome</td>
+                                    <td colspan="3"><span t-out="doc.outcome or 'N/A'"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Complications</td>
+                                    <td colspan="3"><span t-out="doc.complications or 'N/A'"/></td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <!-- Price Reference -->
+                        <div class="hospital-section-title">Price Reference</div>
+                        <table class="hospital-report-table hospital-info-table">
+                            <tbody>
+                                <tr>
+                                    <td>Price Reference</td>
+                                    <td><span t-field="doc.default_price"/></td>
+                                    <td>Currency</td>
+                                    <td><span t-out="doc.currency_id.name or ''"/></td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <!-- Billing Summary -->
+                        <div class="hospital-section-title">Billing Summary</div>
+                        <table class="hospital-report-table hospital-info-table">
+                            <tbody>
+                                <tr>
+                                    <td>Billing Status</td>
+                                    <td><span t-field="doc.billing_state"/></td>
+                                    <td>Bill Reference</td>
+                                    <td><span t-out="doc.bill_id.name or 'N/A'"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Procedure Price</td>
+                                    <td><span t-field="doc.default_price"/></td>
+                                    <td>Amount Paid</td>
+                                    <td><span t-field="doc.amount_paid"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Amount Due</td>
+                                    <td><span t-field="doc.amount_due"/></td>
+                                    <td></td>
+                                    <td></td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <div class="hospital-footer-note">
+                            This report is generated from YOYA Hospital — Ethiopian Hospital ERP.
+                            The price shown is a reference only and is not a billing document.
+                            Procedure records are confidential and for authorized clinical use only.
+                        </div>
+                    </div>
+                </t>
+            </t>
+        </t>
+    </template>
+</odoo>

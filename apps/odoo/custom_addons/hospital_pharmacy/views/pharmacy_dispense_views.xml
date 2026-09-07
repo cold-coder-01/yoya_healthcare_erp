@@ -1,0 +1,259 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="action_hospital_pharmacy_dispense" model="ir.actions.act_window">
+        <field name="name">Pharmacy Dispenses</field>
+        <field name="res_model">hospital.pharmacy.dispense</field>
+        <field name="view_mode">list,form</field>
+        <field name="context">{'default_state': 'draft'}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Create the first pharmacy dispense.
+            </p>
+        </field>
+    </record>
+
+    <record id="view_hospital_pharmacy_dispense_list" model="ir.ui.view">
+        <field name="name">hospital.pharmacy.dispense.list</field>
+        <field name="model">hospital.pharmacy.dispense</field>
+        <field name="arch" type="xml">
+            <list string="Pharmacy Dispenses">
+                <field name="name"/>
+                <field name="dispense_date"/>
+                <field name="patient_id"/>
+                <field name="prescription_id"/>
+                <field name="physician_id"/>
+                <field name="pharmacist_id"/>
+                <field name="priority"/>
+                <field name="state"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_pharmacy_dispense_form" model="ir.ui.view">
+        <field name="name">hospital.pharmacy.dispense.form</field>
+        <field name="model">hospital.pharmacy.dispense</field>
+        <field name="arch" type="xml">
+            <form string="Pharmacy Dispense" class="hospital_pharmacy_dispense_profile">
+                <header>
+                    <button
+                        name="action_mark_ready"
+                        string="Mark Ready"
+                        type="object"
+                        class="btn-primary"
+                        invisible="state != 'draft'"
+                    />
+                    <button
+                        name="action_mark_dispensed"
+                        string="Validate Dispense"
+                        type="object"
+                        class="btn-primary"
+                        invisible="state not in ('ready', 'partial')"
+                    />
+                    <button
+                        name="action_cancel"
+                        string="Cancel"
+                        type="object"
+                        invisible="state not in ('draft', 'ready', 'partial')"
+                    />
+                    <button
+                        name="action_reset_to_draft"
+                        string="Reset to Draft"
+                        type="object"
+                        invisible="state != 'cancelled'"
+                    />
+                    <field
+                        name="state"
+                        widget="statusbar"
+                        statusbar_visible="draft,ready,partial,dispensed"
+                    />
+                </header>
+                <sheet class="hospital_pharmacy_dispense_profile">
+
+                    <!-- ── Hero Header ────────────────────────── -->
+                    <div class="pharmacy_dispense_hero">
+                        <div class="pharmacy_dispense_hero_icon">
+                            <i class="fa fa-medkit"/>
+                        </div>
+                        <div>
+                            <div class="pharmacy_dispense_hero_label">DISPENSE</div>
+                            <div class="pharmacy_dispense_hero_ref">
+                                <field name="name" readonly="1"/>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ── KPI Summary Row ────────────────────── -->
+                    <div class="pharmacy_dispense_kpi_row">
+                        <div class="pharmacy_dispense_kpi_card">
+                            <div class="pharmacy_dispense_kpi_icon">
+                                <i class="fa fa-user"/>
+                            </div>
+                            <div class="pharmacy_dispense_kpi_body">
+                                <span class="pharmacy_dispense_kpi_label">Patient</span>
+                                <div class="pharmacy_dispense_kpi_value">
+                                    <field name="patient_id" readonly="1"/>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="pharmacy_dispense_kpi_card">
+                            <div class="pharmacy_dispense_kpi_icon">
+                                <i class="fa fa-file-text-o"/>
+                            </div>
+                            <div class="pharmacy_dispense_kpi_body">
+                                <span class="pharmacy_dispense_kpi_label">Prescription</span>
+                                <div class="pharmacy_dispense_kpi_value">
+                                    <field name="prescription_id" readonly="1"/>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="pharmacy_dispense_kpi_card">
+                            <div class="pharmacy_dispense_kpi_icon">
+                                <i class="fa fa-stethoscope"/>
+                            </div>
+                            <div class="pharmacy_dispense_kpi_body">
+                                <span class="pharmacy_dispense_kpi_label">Physician</span>
+                                <div class="pharmacy_dispense_kpi_value">
+                                    <field name="physician_id" readonly="1"/>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="pharmacy_dispense_kpi_card">
+                            <div class="pharmacy_dispense_kpi_icon">
+                                <i class="fa fa-user-md"/>
+                            </div>
+                            <div class="pharmacy_dispense_kpi_body">
+                                <span class="pharmacy_dispense_kpi_label">Pharmacist</span>
+                                <div class="pharmacy_dispense_kpi_value">
+                                    <field name="pharmacist_id" readonly="1"/>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="pharmacy_dispense_kpi_card pharmacy_dispense_kpi_state_card">
+                            <div class="pharmacy_dispense_kpi_icon">
+                                <i class="fa fa-check-circle"/>
+                            </div>
+                            <div class="pharmacy_dispense_kpi_body">
+                                <span class="pharmacy_dispense_kpi_label">Status</span>
+                                <div class="pharmacy_dispense_kpi_value">
+                                    <field name="state" widget="badge"
+                                        decoration-success="state == 'dispensed'"
+                                        decoration-info="state == 'ready'"
+                                        decoration-warning="state == 'partial'"
+                                        decoration-secondary="state == 'draft'"
+                                        decoration-danger="state == 'cancelled'"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ── Two-Column Info Grid ───────────────── -->
+                    <div class="pharmacy_dispense_info_grid">
+
+                        <!-- Left: Dispense Information -->
+                        <div class="pharmacy_dispense_info_card">
+                            <div class="pharmacy_dispense_card_title">
+                                <i class="fa fa-info-circle"/> DISPENSE INFORMATION
+                            </div>
+                            <group class="pharmacy_compact_group">
+                                <field
+                                    name="appointment_id"
+                                    domain="[('patient_id', '=', patient_id)]"
+                                />
+                                <field
+                                    name="prescription_id"
+                                    domain="[('patient_id', '=', patient_id)]"
+                                />
+                                <field name="dispense_date"/>
+                                <field name="priority"/>
+                                <field name="active"/>
+                            </group>
+                        </div>
+
+                        <!-- Right: Dispense Summary -->
+                        <div class="pharmacy_dispense_info_card">
+                            <div class="pharmacy_dispense_card_title">
+                                <i class="fa fa-clipboard"/> DISPENSE SUMMARY
+                            </div>
+                            <group class="pharmacy_compact_group">
+                                <field name="patient_id"/>
+                                <field name="physician_id"/>
+                                <field name="pharmacist_id"/>
+                                <field name="state" widget="badge"
+                                    decoration-success="state == 'dispensed'"
+                                    decoration-info="state == 'ready'"
+                                    decoration-warning="state == 'partial'"
+                                    decoration-secondary="state == 'draft'"
+                                    decoration-danger="state == 'cancelled'"
+                                />
+                                <field name="create_uid" string="Created By" readonly="1"/>
+                            </group>
+                        </div>
+
+                    </div>
+
+                    <!-- ── Notebook ───────────────────────────── -->
+                    <notebook>
+                        <page string="Medicines" name="medicines">
+                            <field name="line_ids">
+                                <!-- Doctor-prescribed data is locked when the dispense
+                                     comes from a prescription; manual dispenses stay
+                                     fully editable. -->
+                                <list editable="bottom">
+                                    <field name="sequence" widget="handle"/>
+                                    <field name="medicine_id" readonly="parent.prescription_id"/>
+                                    <field name="dosage" readonly="parent.prescription_id"/>
+                                    <field name="frequency" readonly="parent.prescription_id"/>
+                                    <field name="duration" readonly="parent.prescription_id"/>
+                                    <field name="route" readonly="parent.prescription_id"/>
+                                    <field name="prescribed_quantity" string="Prescribed Qty" readonly="parent.prescription_id"/>
+                                    <field name="dispensed_quantity" string="Dispensed Qty"/>
+                                    <field name="instruction" readonly="parent.prescription_id"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Notes" name="notes">
+                            <div class="pharmacy_notes_card">
+                                <div class="pharmacy_notes_title">
+                                    <i class="fa fa-comment-o"/> PHARMACY NOTES
+                                </div>
+                                <field name="notes" nolabel="1" placeholder="Add dispensing notes here..."/>
+                            </div>
+                        </page>
+                    </notebook>
+
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_pharmacy_dispense_search" model="ir.ui.view">
+        <field name="name">hospital.pharmacy.dispense.search</field>
+        <field name="model">hospital.pharmacy.dispense</field>
+        <field name="arch" type="xml">
+            <search string="Search Pharmacy Dispenses">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="prescription_id"/>
+                <field name="physician_id"/>
+                <field name="pharmacist_id"/>
+                <filter name="draft" string="Draft" domain="[('state', '=', 'draft')]"/>
+                <filter name="ready" string="Ready" domain="[('state', '=', 'ready')]"/>
+                <filter name="partial" string="Partially Dispensed" domain="[('state', '=', 'partial')]"/>
+                <filter name="dispensed" string="Dispensed" domain="[('state', '=', 'dispensed')]"/>
+                <filter name="cancelled" string="Cancelled" domain="[('state', '=', 'cancelled')]"/>
+                <filter name="archived" string="Archived" domain="[('active', '=', False)]"/>
+                <separator/>
+                <filter name="urgent" string="Urgent/Emergency" domain="[('priority', 'in', ('urgent', 'emergency'))]"/>
+                <group expand="0" string="Group By">
+                    <filter name="group_by_state" string="State" context="{'group_by': 'state'}"/>
+                    <filter name="group_by_patient" string="Patient" context="{'group_by': 'patient_id'}"/>
+                    <filter name="group_by_physician" string="Physician" context="{'group_by': 'physician_id'}"/>
+                    <filter name="group_by_pharmacist" string="Pharmacist" context="{'group_by': 'pharmacist_id'}"/>
+                    <filter name="group_by_priority" string="Priority" context="{'group_by': 'priority'}"/>
+                    <filter name="group_by_date" string="Dispense Date" context="{'group_by': 'dispense_date'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+</odoo>

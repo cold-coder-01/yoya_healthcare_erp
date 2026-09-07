@@ -64,8 +64,21 @@ STAGE_KEYS = tuple(key for key, _label in FRONT_DESK_STAGES)
 # money at the desk.
 READY_STAGE = "ready_doctor"
 
-# Stages whose visits belong in the Doctor's Finished / history bucket.
-FINISHED_STAGES = ("in_consultation", "completed")
+# THE FOUR BUCKETS, AND WHY 'in_consultation' MOVED OUT OF FINISHED.
+#
+# FINISHED_STAGES used to be ("in_consultation", "completed"), which put a
+# patient the doctor was CURRENTLY EXAMINING into the Finished tab. That was
+# tolerable only because nothing could ever leave in_consultation: the tab meant
+# "seen or being seen", and every row in it was one or the other.
+#
+# Slice 4 ends that. Completing a consultation moves the visit to done, so
+# Finished would hold both "I am with this patient now" and "I signed this
+# patient off" with no way to tell them apart -- in the one tab a doctor uses to
+# confirm they have nothing left to finish.
+#
+# So in_consultation gets its own bucket. FINISHED now means what its name says.
+OPEN_STAGES = ("in_consultation",)
+FINISHED_STAGES = ("completed",)
 
 # Mirrors yoya_emr_api.services.front_desk_serializers.URGENT_PRIORITIES.
 URGENT_PRIORITIES = ("urgent", "emergency")
@@ -410,17 +423,25 @@ def worklist_counts(rows):
     stage:
 
         review    ready_doctor and still confirmed -- the workable set
-        finished  in_consultation / completed
+        open      in_consultation -- the patient the doctor is with right now
+        finished  completed -- signed off
         wait      everything else still in the doctor's day
     """
-    counts = {"all": len(rows), "wait": 0, "review": 0, "finished": 0}
+    counts = {"all": len(rows), "wait": 0, "review": 0, "open": 0, "finished": 0}
     for row in rows:
         counts[bucket_of(row)] += 1
     return counts
 
 
 def bucket_of(row):
-    """THE bucket rule, server side, mirrored by lib/doctor-format.ts."""
+    """THE bucket rule, server side, mirrored by lib/doctor-format.ts.
+
+    ORDER MATTERS: open is tested before finished, so an in-consultation visit
+    can never fall through into the signed-off tab. The two mirrors are asserted
+    equal in the Slice 4 tests rather than trusted to stay in step by hand.
+    """
+    if row["queue_stage"] in OPEN_STAGES:
+        return "open"
     if row["queue_stage"] in FINISHED_STAGES:
         return "finished"
     if row["queue_stage"] == READY_STAGE and row["state"] == "confirmed":

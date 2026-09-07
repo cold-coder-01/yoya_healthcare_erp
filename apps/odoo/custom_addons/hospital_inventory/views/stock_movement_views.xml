@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- STOCK MOVEMENT — LIST VIEW -->
+    <record id="view_hospital_stock_movement_list" model="ir.ui.view">
+        <field name="name">hospital.stock.movement.list</field>
+        <field name="model">hospital.stock.movement</field>
+        <field name="arch" type="xml">
+            <list string="Stock Movements" create="false">
+                <field name="name"/>
+                <field name="movement_date"/>
+                <field name="movement_type"/>
+                <field name="item_id"/>
+                <field name="batch_id"/>
+                <field name="quantity"/>
+                <field name="from_location_id"/>
+                <field name="to_location_id"/>
+                <field name="patient_id"/>
+                <field name="unit_cost"/>
+                <field name="movement_value"/>
+                <field name="currency_id" column_invisible="1"/>
+                <field name="inventory_accounting_state"/>
+                <field name="from_department_id" optional="hide"/>
+                <field name="to_department_id" optional="hide"/>
+                <field name="performed_by" optional="hide"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- STOCK MOVEMENT — FORM VIEW (audit / read-only) -->
+    <record id="view_hospital_stock_movement_form" model="ir.ui.view">
+        <field name="name">hospital.stock.movement.form</field>
+        <field name="model">hospital.stock.movement</field>
+        <field name="arch" type="xml">
+            <form string="Stock Movement" create="false" edit="false">
+                <sheet>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1>
+                            <field name="name" readonly="1"/>
+                        </h1>
+                    </div>
+                    <group>
+                        <group string="Movement">
+                            <field name="movement_type" readonly="1"/>
+                            <field name="movement_date" readonly="1"/>
+                            <field name="item_id" readonly="1"/>
+                            <field name="batch_id" readonly="1"/>
+                            <field name="quantity" readonly="1"/>
+                        </group>
+                        <group string="Locations">
+                            <field name="from_location_id" readonly="1"/>
+                            <field name="to_location_id" readonly="1"/>
+                            <field name="from_department_id" readonly="1"/>
+                            <field name="to_department_id" readonly="1"/>
+                        </group>
+                    </group>
+                    <group>
+                        <group string="Context">
+                            <field name="related_request_id" readonly="1"/>
+                            <field name="consumption_id" readonly="1"/>
+                            <field name="performed_by" readonly="1"/>
+                        </group>
+                        <group string="Costing / Accounting Readiness">
+                            <field name="unit_cost" readonly="1"/>
+                            <field name="movement_value" readonly="1"/>
+                            <field name="currency_id" readonly="1"/>
+                            <field name="inventory_accounting_state" readonly="1"/>
+                            <field name="accounting_note" readonly="1"/>
+                        </group>
+                    </group>
+                    <group string="Clinical Links">
+                        <group>
+                            <field name="patient_id" readonly="1"/>
+                            <field name="admission_id" readonly="1"/>
+                        </group>
+                        <group>
+                            <field name="procedure_id" readonly="1"/>
+                            <field name="nursing_round_id" readonly="1"/>
+                        </group>
+                    </group>
+                    <group string="Notes">
+                        <field name="notes" nolabel="1" readonly="1"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!-- STOCK MOVEMENT — SEARCH VIEW -->
+    <record id="view_hospital_stock_movement_search" model="ir.ui.view">
+        <field name="name">hospital.stock.movement.search</field>
+        <field name="model">hospital.stock.movement</field>
+        <field name="arch" type="xml">
+            <search string="Stock Movements">
+                <field name="name"/>
+                <field name="item_id"/>
+                <field name="batch_id"/>
+                <field name="patient_id"/>
+                <filter string="Today" name="today"
+                    domain="[('movement_date', '>=', datetime.datetime.combine(context_today(), datetime.time(0,0,0))),
+                              ('movement_date', '&lt;=', datetime.datetime.combine(context_today(), datetime.time(23,59,59)))]"/>
+                <separator/>
+                <filter string="Issue" name="issue" domain="[('movement_type', '=', 'issue')]"/>
+                <filter string="Receipt" name="receipt" domain="[('movement_type', '=', 'receipt')]"/>
+                <filter string="Return" name="return" domain="[('movement_type', '=', 'return')]"/>
+                <filter string="Consumption" name="consumption" domain="[('movement_type', '=', 'consumption')]"/>
+                <filter string="Adjustment" name="adjustment" domain="[('movement_type', '=', 'adjustment')]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Item" name="group_item" context="{'group_by': 'item_id'}"/>
+                    <filter string="Movement Type" name="group_type" context="{'group_by': 'movement_type'}"/>
+                    <filter string="From Location" name="group_from_location" context="{'group_by': 'from_location_id'}"/>
+                    <filter string="To Location" name="group_to_location" context="{'group_by': 'to_location_id'}"/>
+                    <filter string="To Department" name="group_to_department" context="{'group_by': 'to_department_id'}"/>
+                    <filter string="Accounting State" name="group_acc_state" context="{'group_by': 'inventory_accounting_state'}"/>
+                    <filter string="Patient" name="group_patient" context="{'group_by': 'patient_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- STOCK MOVEMENT — ACTION -->
+    <record id="action_hospital_stock_movement" model="ir.actions.act_window">
+        <field name="name">Stock Movements</field>
+        <field name="res_model">hospital.stock.movement</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_stock_movement_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">No stock movements yet.</p>
+            <p>Stock movements are generated automatically when stock is issued or returned.</p>
+        </field>
+    </record>
+
+</odoo>

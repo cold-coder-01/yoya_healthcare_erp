@@ -45,6 +45,7 @@ from ..services.api_response import (
     success_response,
 )
 from ..services.cashier_serializers import (
+    serialize_cashier_active_service_row,
     serialize_cashier_payment_result,
     serialize_cashier_visit_detail,
     serialize_cashier_worklist_row,
@@ -70,6 +71,25 @@ PAYMENT_METHOD_KEYS = {key for key, _label in PAYMENT_METHODS}
 # they just settled. It is never the default.
 CASHIER_STAGES = ("awaiting_cashier", "ready_doctor")
 DEFAULT_CASHIER_STAGES = ("awaiting_cashier",)
+
+# THE TWO LANES OF THIS QUEUE, AND WHY THERE ARE TWO.
+#
+# INITIAL CLEARANCE is appointment-driven and reads front_desk_stage. It is the
+# pre-consultation handoff: triage is done, money still stands between the
+# patient and the doctor. Nothing about it changes here.
+#
+# ACTIVE SERVICE CLEARANCE is billing-driven. It exists because
+# _resolve_front_desk_stage returns 'in_consultation' on the appointment state
+# BEFORE it ever consults money -- so every charge raised after
+# action_start_consultation (laboratory today; radiology, medication and
+# procedures on the same path) was invisible to this endpoint. The visit stays
+# state='in_consultation' while it sits in this lane; no stage is widened, no
+# combined state is invented, and nothing is written.
+#
+# The stage filter below governs the INITIAL lane only. The active lane has no
+# stage to filter on -- that is the entire point of it being a second lane.
+LANE_INITIAL = "initial_clearance"
+LANE_ACTIVE_SERVICE = "active_service_clearance"
 
 WORKLIST_LIMIT_DEFAULT = 100
 WORKLIST_LIMIT_MAX = 300
@@ -331,7 +351,18 @@ class YoyaEmrCashierController(http.Controller):
     )
     @cashier_endpoint
     def worklist(self, **params):
-        """The Cashier queue.
+        """The Cashier queue, in TWO explicit lanes.
+
+        `initial_clearance`        pre-consultation handoff, appointment-driven,
+                                   front_desk_stage == awaiting_cashier.
+        `active_service_clearance` consultation already under way and patient
+                                   money is holding the next service.
+
+        They are returned as separate arrays and never merged: a cashier
+        working the entrance queue and a cashier clearing a mid-consultation
+        laboratory order are doing different jobs, and one undifferentiated list
+        would make the second look like a patient who never checked in. `rows`
+        is retained as an alias of `initial_clearance` for existing clients.
 
         THE ACCESS-CONTROL SHAPE OF THIS ENDPOINT IS THE WHOLE DESIGN.
 
@@ -392,6 +423,38 @@ class YoyaEmrCashierController(http.Controller):
             for appointment in selected[:limit]
         ]
 
+        # ------------------------------------------------------------------
+        # LANE 2: ACTIVE SERVICE CLEARANCE.
+        #
+        # Resolved on the SAME candidate set, so both lanes describe one day,
+        # one department filter and one search term -- and a visit cannot be
+        # present in the queue's counters under one lane and absent from the
+        # other's population.
+        #
+        # No sudo() is taken for this lane and none is needed. The predicate
+        # reads appointment.state (a stored column) and encounter-wide
+        # clearance, whose reception_* fields are compute_sudo=True in
+        # yoya_reception_bridge -- they are financial, not clinical, and a
+        # Hospital Cashier already reads them in the visit detail payload. The
+        # elevation above stays bounded to front_desk_stage, which is the one
+        # field that genuinely traverses evaluation_ids.
+        #
+        # A visit is DISJOINT from lane 1 by construction: front_desk_stage
+        # resolves 'in_consultation' for every member of this lane, which is
+        # never in CASHIER_STAGES.
+        active_selected = [
+            appointment
+            for appointment in candidates
+            if appointment._is_active_service_clearance_pending()
+        ]
+        active_truncated = len(active_selected) > limit
+        active_rows = [
+            serialize_cashier_active_service_row(
+                appointment, appointment._active_service_blocking_charges()
+            )
+            for appointment in active_selected[:limit]
+        ]
+
         # Counters describe the SAME day window the rows were drawn from, so the
         # queue and its totals can never describe different populations.
         counts = {"awaiting_cashier": 0, "ready_doctor": 0}
@@ -399,18 +462,30 @@ class YoyaEmrCashierController(http.Controller):
             stage = stage_by_id.get(appointment.id)
             if stage in counts:
                 counts[stage] += 1
+        counts[LANE_ACTIVE_SERVICE] = len(active_selected)
+
         lane_counts = {"collect": 0, "partial": 0, "blocked": 0, "cleared": 0}
         for row in rows:
             lane_counts[row["lane"]] = lane_counts.get(row["lane"], 0) + 1
+        active_lane_counts = {"collect": 0, "partial": 0, "blocked": 0, "cleared": 0}
+        for row in active_rows:
+            active_lane_counts[row["lane"]] = active_lane_counts.get(row["lane"], 0) + 1
 
         return success_response(
             {
                 "date": str(day),
                 "stages": list(stages),
+                # ALIAS, not a third population. `rows` is exactly
+                # `initial_clearance`, kept so existing clients keep working;
+                # the active lane is deliberately NOT folded into it.
                 "rows": rows,
+                LANE_INITIAL: rows,
+                LANE_ACTIVE_SERVICE: active_rows,
                 "counts": counts,
                 "lane_counts": lane_counts,
+                "active_service_lane_counts": active_lane_counts,
                 "truncated": truncated,
+                "active_service_truncated": active_truncated,
                 "capabilities": cashier_capability_flags(env),
             }
         )

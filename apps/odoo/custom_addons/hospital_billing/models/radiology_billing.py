@@ -5,7 +5,9 @@ Radiology follows the same ownership split as laboratory:
 * request confirmation creates one operational charge per examination line;
 * Mark In Progress is the pre-service clearance gate;
 * released reports are the authoritative completion event for request completion
-  and delivered/invoiceable charge quantities.
+  and delivered/invoiceable charge quantities;
+* request cancellation cancels those charges, so imaging that never happened is
+  never left payable.
 """
 
 from odoo import api, fields, models
@@ -16,6 +18,33 @@ RAD_EVENT = "radiology_exam"
 SOURCE_MODEL = "hospital.radiology.request"
 LINE_EDITABLE_STATES = ("draft",)
 LIVE_CHARGE_STATES = ("draft", "active")
+
+# Request states in which no imaging has been performed yet, restated from
+# hospital.radiology.request.action_cancel(). The base model permits
+# cancellation from exactly these three; the charge cleanup below has to cover
+# the SAME set, or a state the model still cancels would slip past it.
+#
+# Wider than laboratory's PRE_COLLECTION_STATES because radiology has a
+# `scheduled` state laboratory does not. That state sits AFTER charge creation
+# and BEFORE the clearance gate, so a request cancelled there is exactly the
+# case that was leaking a live, payable charge.
+PRE_IMAGING_STATES = ("draft", "requested", "scheduled")
+
+# The states in which a radiology obligation EXISTS but the service has not
+# started -- i.e. where `billing_blocked` has to tell the truth.
+#
+# WHY BOTH, AND WHY THIS IS NOT laboratory's SINGLE STATE. Charges are raised at
+# confirmation (draft -> requested) and the clearance gate refuses at Mark In
+# Progress (scheduled -> in_progress). Computing only at `scheduled` -- as this
+# did -- meant a confirmed, prepaid, entirely unpaid request in `requested`
+# reported billing_blocked=False: not blocked, said about a request whose money
+# had already been demanded and not yet collected. Any doctor-facing status
+# derived from that flag would have read as clear while the authoritative gate
+# would still have refused the service.
+#
+# From `in_progress` onward the gate has already been passed and persisted, so
+# the flag correctly falls silent rather than re-litigating a cleared service.
+BILLING_BLOCKED_STATES = ("requested", "scheduled")
 
 
 class HospitalRadiologyExamBilling(models.Model):
@@ -107,7 +136,7 @@ class HospitalRadiologyRequestBilling(models.Model):
     def _compute_billing_blocked(self):
         engine = self.env["hospital.billing.engine"].sudo()
         for request in self:
-            if request.state != "scheduled" or not request.encounter_id:
+            if request.state not in BILLING_BLOCKED_STATES or not request.encounter_id:
                 request.billing_blocked = False
                 request.billing_clearance_message = False
                 continue
@@ -230,6 +259,57 @@ class HospitalRadiologyRequestBilling(models.Model):
             for charge in request.charge_line_ids:
                 engine.mark_charge_in_progress(charge)
         return result
+
+    def action_cancel(self):
+        """Cancel the operational charges. Never deletes.
+
+        THE LEAK THIS CLOSES. Charges are raised at confirmation, one per
+        examination line, and activated immediately -- so from `requested`
+        onward the patient owes for imaging that has not happened. The base
+        model's action_cancel() moved the request to `cancelled` and stopped
+        there, leaving every charge live and payable: the study was never
+        performed, the patient still owed for it, and the visit sat in the
+        cashier's SERVICE PAYMENTS lane indefinitely with nothing left to
+        deliver. Laboratory has had this override since its own slice; radiology
+        simply never received it.
+
+        THE SAME SHAPE AS laboratory_billing.action_cancel(), and deliberately
+        so -- one cancellation semantic across the two ancillary services rather
+        than two that drift. The delivered guard is not decorative even though
+        radiology delivers only at result release: a request whose result was
+        released is `completed` and the base model already refuses to cancel it,
+        but a partially released one could reach here, and cancelling a charge
+        for imaging already reported would erase a real receivable. That needs a
+        credit/reversal workflow, which is outside this phase, so it refuses
+        loudly instead.
+
+        THE CHARGE CLEANUP IS IDEMPOTENT, which is the half that matters here:
+        engine.cancel_charge() returns early on an already-frozen charge, and
+        the state filter skips a request that is already cancelled, so a
+        repeated call can neither double-cancel a charge nor resurrect one. The
+        TRANSITION is not idempotent and is not made so -- the base model owns
+        the transition table and refuses cancelled -> cancelled, exactly as it
+        does for every other caller. A retry therefore surfaces the model's own
+        refusal having changed nothing, rather than silently reporting success
+        for an act that did not happen.
+        """
+        engine = self.env["hospital.billing.engine"].sudo()
+        for request in self.filtered(lambda r: r.state in PRE_IMAGING_STATES):
+            for charge in request.charge_line_ids:
+                if charge.charge_state in ("cancelled", "reversed"):
+                    continue
+                if charge.qty_delivered > 0 or charge.delivery_state in (
+                    "delivered", "partially_delivered"
+                ):
+                    raise UserError(
+                        "Examination '%s' has already been delivered and cannot "
+                        "be cancelled. A credit/reversal workflow is required, "
+                        "which is outside this phase." % charge.description
+                    )
+                engine.cancel_charge(
+                    charge, reason="Radiology request %s cancelled" % request.name
+                )
+        return super().action_cancel()
 
     def _released_request_lines(self):
         self.ensure_one()

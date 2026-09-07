@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- STOCK CONSUMPTION — LIST VIEW -->
+    <record id="view_hospital_stock_consumption_list" model="ir.ui.view">
+        <field name="name">hospital.stock.consumption.list</field>
+        <field name="model">hospital.stock.consumption</field>
+        <field name="arch" type="xml">
+            <list string="Stock Consumption"
+                decoration-muted="state == 'cancelled'"
+                decoration-info="state == 'approved'"
+                decoration-success="state == 'consumed'">
+                <field name="name"/>
+                <field name="consumption_date"/>
+                <field name="consumption_type"/>
+                <field name="patient_id"/>
+                <field name="department_id"/>
+                <field name="requested_by"/>
+                <field name="consumed_by"/>
+                <field name="state"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- STOCK CONSUMPTION — FORM VIEW -->
+    <record id="view_hospital_stock_consumption_form" model="ir.ui.view">
+        <field name="name">hospital.stock.consumption.form</field>
+        <field name="model">hospital.stock.consumption</field>
+        <field name="arch" type="xml">
+            <form string="Stock Consumption">
+                <header>
+                    <button name="action_approve" string="Approve" type="object"
+                        class="btn-primary" invisible="state != 'draft'"/>
+                    <button name="action_consume" string="Consume" type="object"
+                        class="btn-primary" invisible="state != 'approved'"/>
+                    <button name="action_cancel" string="Cancel" type="object"
+                        invisible="state not in ('draft', 'approved')"/>
+                    <button name="action_reset_to_draft" string="Reset to Draft" type="object"
+                        invisible="state != 'cancelled'"
+                        groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <field name="state" widget="statusbar"
+                        statusbar_visible="draft,approved,consumed"/>
+                </header>
+                <sheet>
+                    <field name="active" invisible="1"/>
+                    <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active"/>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_view_movements" type="object"
+                            class="oe_stat_button" icon="fa-exchange" invisible="not id">
+                            <field name="movement_count" widget="statinfo" string="Movements"/>
+                        </button>
+                    </div>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1>
+                            <field name="name" readonly="1"/>
+                        </h1>
+                    </div>
+
+                    <field name="is_source_generated" invisible="1"/>
+                    <group>
+                        <group string="Consumption Info">
+                            <field name="consumption_type"
+                                readonly="state in ('consumed', 'cancelled') or is_source_generated"/>
+                            <field name="consumption_date"
+                                readonly="state in ('consumed', 'cancelled')"/>
+                            <field name="requested_by" readonly="1"/>
+                            <field name="approved_by" readonly="1"/>
+                            <field name="approved_date" readonly="1"/>
+                            <field name="consumed_by" readonly="1"/>
+                            <field name="consumed_date" readonly="1"/>
+                        </group>
+                        <group string="Patient / Location">
+                            <field name="patient_id"
+                                readonly="state in ('consumed', 'cancelled') or is_source_generated"/>
+                            <field name="department_id"
+                                readonly="state in ('consumed', 'cancelled')"/>
+                            <field name="source_location_id" options="{'no_create': True}"
+                                readonly="state in ('consumed', 'cancelled')"/>
+                            <field name="consumption_location_id" options="{'no_create': True}"
+                                readonly="state in ('consumed', 'cancelled')"/>
+                            <field name="currency_id" readonly="1"/>
+                            <field name="amount_total" readonly="1"/>
+                            <field name="total_consumption_value" readonly="1"/>
+                        </group>
+                    </group>
+
+                    <!-- Source Document: only the source(s) appropriate to the
+                         consumption type are shown, each scoped to the patient.
+                         A source that is already set is readonly so a
+                         source-generated consumption cannot be re-pointed. -->
+                    <group string="Source Document" invisible="consumption_type == 'manual'">
+                        <group>
+                            <field name="admission_id"
+                                invisible="consumption_type not in ('admission', 'procedure', 'nursing')"
+                                domain="[('patient_id', '=', patient_id)]"
+                                readonly="state in ('consumed', 'cancelled') or admission_id != False or is_source_generated"/>
+                            <field name="procedure_id"
+                                invisible="consumption_type != 'procedure'"
+                                domain="[('patient_id', '=', patient_id)]"
+                                readonly="state in ('consumed', 'cancelled') or procedure_id != False"/>
+                            <field name="pharmacy_dispense_id"
+                                invisible="consumption_type != 'pharmacy'"
+                                domain="[('patient_id', '=', patient_id)]"
+                                readonly="state in ('consumed', 'cancelled') or pharmacy_dispense_id != False"/>
+                            <field name="medication_administration_id"
+                                invisible="consumption_type != 'nursing'"
+                                domain="[('patient_id', '=', patient_id)]"
+                                readonly="state in ('consumed', 'cancelled') or medication_administration_id != False"/>
+                        </group>
+                        <group>
+                            <field name="nursing_round_id"
+                                invisible="consumption_type != 'nursing'"
+                                domain="[('patient_id', '=', patient_id)]"
+                                readonly="state in ('consumed', 'cancelled') or nursing_round_id != False"/>
+                            <field name="lab_request_id"
+                                invisible="consumption_type != 'laboratory'"
+                                domain="[('patient_id', '=', patient_id)]"
+                                readonly="state in ('consumed', 'cancelled') or lab_request_id != False"/>
+                            <field name="radiology_request_id"
+                                invisible="consumption_type != 'radiology'"
+                                domain="[('patient_id', '=', patient_id)]"
+                                readonly="state in ('consumed', 'cancelled') or radiology_request_id != False"/>
+                        </group>
+                    </group>
+
+                    <notebook>
+                        <page string="Consumption Lines" name="lines">
+                            <field name="line_ids"
+                                readonly="state in ('consumed', 'cancelled')">
+                                <list string="Consumption Lines" editable="bottom">
+                                    <field name="item_id" options="{'no_create': True}"/>
+                                    <!-- Eligibility only — no location leaf. A One2many
+                                         line does not reliably carry its parent while
+                                         the form is being edited, so a parent-dependent
+                                         picker domain is unreliable here and previously
+                                         referenced a non-existent 'parent' field on
+                                         hospital.inventory.batch. Location policy is
+                                         enforced server-side instead, where the parent
+                                         is always available. -->
+                                    <field name="batch_id"
+                                        domain="[('item_id', '=', item_id), ('active', '=', True), ('state', 'not in', ('expired', 'blocked', 'depleted')), ('is_expired', '=', False), ('available_quantity', '>', 0)]"
+                                        options="{'no_create': True}"/>
+                                    <field name="available_quantity" readonly="1"/>
+                                    <field name="quantity"/>
+                                    <field name="unit_cost"/>
+                                    <field name="currency_id" column_invisible="1"/>
+                                    <field name="line_value" readonly="1"/>
+                                    <field name="subtotal" readonly="1" optional="hide"/>
+                                    <field name="notes"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Stock Movements" name="movements">
+                            <field name="movement_ids" nolabel="1" readonly="1">
+                                <list string="Stock Movements">
+                                    <field name="name"/>
+                                    <field name="movement_date"/>
+                                    <field name="item_id"/>
+                                    <field name="batch_id"/>
+                                    <field name="quantity"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Notes" name="notes">
+                            <field name="notes" nolabel="1" placeholder="Notes..."/>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <!-- STOCK CONSUMPTION — SEARCH VIEW -->
+    <record id="view_hospital_stock_consumption_search" model="ir.ui.view">
+        <field name="name">hospital.stock.consumption.search</field>
+        <field name="model">hospital.stock.consumption</field>
+        <field name="arch" type="xml">
+            <search string="Stock Consumption">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="department_id"/>
+                <filter string="Draft" name="draft" domain="[('state', '=', 'draft')]"/>
+                <filter string="Approved" name="approved" domain="[('state', '=', 'approved')]"/>
+                <filter string="Consumed" name="consumed" domain="[('state', '=', 'consumed')]"/>
+                <filter string="Cancelled" name="cancelled" domain="[('state', '=', 'cancelled')]"/>
+                <separator/>
+                <filter string="Pharmacy" name="pharmacy" domain="[('consumption_type', '=', 'pharmacy')]"/>
+                <filter string="Procedure" name="procedure" domain="[('consumption_type', '=', 'procedure')]"/>
+                <filter string="Nursing" name="nursing" domain="[('consumption_type', '=', 'nursing')]"/>
+                <filter string="Laboratory" name="laboratory" domain="[('consumption_type', '=', 'laboratory')]"/>
+                <filter string="Radiology" name="radiology" domain="[('consumption_type', '=', 'radiology')]"/>
+                <separator/>
+                <filter string="Today" name="today"
+                    domain="[('consumption_date', '>=', datetime.datetime.combine(context_today(), datetime.time(0,0,0))),
+                              ('consumption_date', '&lt;=', datetime.datetime.combine(context_today(), datetime.time(23,59,59)))]"/>
+                <separator/>
+                <filter string="Archived" name="archived" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Patient" name="group_patient" context="{'group_by': 'patient_id'}"/>
+                    <filter string="Department" name="group_department" context="{'group_by': 'department_id'}"/>
+                    <filter string="Consumption Type" name="group_type" context="{'group_by': 'consumption_type'}"/>
+                    <filter string="State" name="group_state" context="{'group_by': 'state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- STOCK CONSUMPTION — ACTION -->
+    <record id="action_hospital_stock_consumption" model="ir.actions.act_window">
+        <field name="name">Stock Consumption</field>
+        <field name="res_model">hospital.stock.consumption</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_stock_consumption_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">No stock consumption documents yet.</p>
+            <p>Record inventory consumed by pharmacy, procedures, nursing, lab or radiology.</p>
+        </field>
+    </record>
+
+</odoo>

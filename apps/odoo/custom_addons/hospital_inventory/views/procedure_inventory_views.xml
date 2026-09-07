@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- PROCEDURE TYPE — material template -->
+    <record id="view_hospital_procedure_type_inventory_inherit" model="ir.ui.view">
+        <field name="name">hospital.procedure.type.inventory.inherit</field>
+        <field name="model">hospital.procedure.type</field>
+        <field name="inherit_id" ref="hospital_procedure.view_hospital_procedure_type_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//sheet" position="inside">
+                <group string="Inventory Material Template">
+                    <field name="material_line_ids" nolabel="1">
+                        <list string="Materials" editable="bottom">
+                            <field name="item_id" options="{'no_create': True}"/>
+                            <field name="default_quantity"/>
+                            <field name="notes"/>
+                        </list>
+                    </field>
+                </group>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- PROCEDURE REQUEST — consumption button + smart button -->
+    <record id="view_hospital_procedure_request_inventory_inherit" model="ir.ui.view">
+        <field name="name">hospital.procedure.request.inventory.consumption.inherit</field>
+        <field name="model">hospital.procedure.request</field>
+        <field name="inherit_id" ref="hospital_procedure.view_hospital_procedure_request_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//header" position="inside">
+                <button name="action_prepare_inventory_consumption"
+                    string="Prepare Inventory Consumption" type="object"
+                    invisible="not id"
+                    groups="hospital_management.group_hospital_nurse,hospital_management.group_hospital_pharmacist,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+            </xpath>
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button name="action_view_inventory_consumptions" type="object"
+                    class="oe_stat_button" icon="fa-cubes" invisible="not id">
+                    <field name="inventory_consumption_count" widget="statinfo" string="Consumption"/>
+                </button>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

@@ -1,0 +1,185 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- PROCEDURE REQUEST — LIST VIEW -->
+    <record id="view_hospital_procedure_request_list" model="ir.ui.view">
+        <field name="name">hospital.procedure.request.list</field>
+        <field name="model">hospital.procedure.request</field>
+        <field name="arch" type="xml">
+            <list string="Procedure Requests"
+                decoration-muted="state in ('draft', 'cancelled')"
+                decoration-info="state in ('requested', 'scheduled')"
+                decoration-warning="state == 'in_progress'"
+                decoration-success="state == 'done'">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="procedure_type_id"/>
+                <field name="admission_id"/>
+                <field name="scheduled_datetime"/>
+                <field name="performed_datetime"/>
+                <field name="performed_by"/>
+                <field name="state"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- PROCEDURE REQUEST — FORM VIEW -->
+    <record id="view_hospital_procedure_request_form" model="ir.ui.view">
+        <field name="name">hospital.procedure.request.form</field>
+        <field name="model">hospital.procedure.request</field>
+        <field name="arch" type="xml">
+            <form string="Procedure Request">
+                <header>
+                    <button name="action_submit_request" string="Submit Request" type="object"
+                        class="btn-primary" invisible="state != 'draft'"/>
+                    <button name="action_schedule" string="Schedule" type="object"
+                        class="btn-primary" invisible="state != 'requested'"/>
+                    <button name="action_start_procedure" string="Start Procedure" type="object"
+                        class="btn-primary" invisible="state not in ('requested', 'scheduled')"/>
+                    <button name="action_mark_done" string="Mark Done" type="object"
+                        class="btn-primary" invisible="state not in ('requested', 'scheduled', 'in_progress')"/>
+                    <button name="action_generate_procedure_bill" string="Generate Procedure Bill" type="object"
+                        class="btn-primary" invisible="state != 'done' or bill_id != False"
+                        groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <button name="action_cancel" string="Cancel" type="object"
+                        invisible="state not in ('draft', 'requested', 'scheduled', 'in_progress')"/>
+                    <button name="action_reset_to_draft" string="Reset to Draft" type="object"
+                        invisible="state != 'cancelled'"
+                        groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <field name="state" widget="statusbar"
+                        statusbar_visible="draft,requested,scheduled,in_progress,done"/>
+                </header>
+                <sheet>
+                    <field name="active" invisible="1"/>
+                    <field name="bill_id" invisible="1"/>
+                    <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active"/>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_view_procedure_bill" type="object"
+                            class="oe_stat_button" icon="fa-file-text-o"
+                            invisible="bill_id == False">
+                            <field name="bill_count" widget="statinfo" string="Patient Bill"/>
+                        </button>
+                    </div>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1>
+                            <field name="name" readonly="1"/>
+                        </h1>
+                    </div>
+
+                    <group>
+                        <group string="Patient &amp; Context">
+                            <field name="patient_id" readonly="state in ('done', 'cancelled')" options="{'no_create': True}"/>
+                            <field name="admission_id" domain="[('patient_id', '=', patient_id)]"
+                                readonly="state in ('done', 'cancelled')" options="{'no_create': True}"/>
+                            <field name="appointment_id" readonly="state in ('done', 'cancelled')"/>
+                            <field name="physician_id" readonly="state in ('done', 'cancelled')"/>
+                        </group>
+                        <group string="Procedure Details">
+                            <field name="procedure_type_id" readonly="state in ('done', 'cancelled')" options="{'no_create': True}"/>
+                            <field name="category" readonly="1"/>
+                            <field name="requested_by" readonly="1"/>
+                            <field name="request_datetime" readonly="state in ('done', 'cancelled')"/>
+                            <field name="scheduled_datetime" readonly="state in ('done', 'cancelled')"/>
+                        </group>
+                    </group>
+
+                    <group string="Execution">
+                        <group>
+                            <field name="start_datetime" readonly="state in ('done', 'cancelled')"/>
+                            <field name="performed_datetime" readonly="state in ('done', 'cancelled')"/>
+                            <field name="performed_by" readonly="state in ('done', 'cancelled')"/>
+                        </group>
+                    </group>
+
+                    <notebook>
+                        <page string="Clinical Documentation" name="clinical">
+                            <group>
+                                <field name="clinical_indication" readonly="state in ('done', 'cancelled')"
+                                    placeholder="Clinical reason / indication for this procedure..."/>
+                                <field name="procedure_notes" readonly="state in ('done', 'cancelled')"
+                                    placeholder="Notes recorded during the procedure..."/>
+                                <field name="outcome" readonly="state in ('done', 'cancelled')"
+                                    placeholder="Outcome of the procedure..."/>
+                                <field name="complications" readonly="state in ('done', 'cancelled')"
+                                    placeholder="Any complications observed..."/>
+                            </group>
+                        </page>
+                        <page string="Billing" name="billing">
+                            <div class="alert alert-info" role="alert" invisible="state == 'done'">
+                                Procedure billing is available once the procedure is marked Done.
+                            </div>
+                            <group>
+                                <group string="Billing Status">
+                                    <field name="billing_state" readonly="1"/>
+                                    <field name="bill_id" readonly="1"/>
+                                    <field name="default_price"/>
+                                    <field name="currency_id"/>
+                                </group>
+                                <group string="Amounts">
+                                    <field name="billed_amount" readonly="1"/>
+                                    <field name="amount_paid" readonly="1"/>
+                                    <field name="amount_due" readonly="1"/>
+                                </group>
+                            </group>
+                            <group string="Notes">
+                                <field name="notes" nolabel="1" readonly="state in ('done', 'cancelled')"
+                                    placeholder="General / administrative notes..."/>
+                            </group>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <!-- PROCEDURE REQUEST — SEARCH VIEW -->
+    <record id="view_hospital_procedure_request_search" model="ir.ui.view">
+        <field name="name">hospital.procedure.request.search</field>
+        <field name="model">hospital.procedure.request</field>
+        <field name="arch" type="xml">
+            <search string="Procedure Requests">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="admission_id"/>
+                <field name="procedure_type_id"/>
+                <field name="performed_by"/>
+                <filter string="Today" name="today"
+                    domain="[('request_datetime', '>=', datetime.datetime.combine(context_today(), datetime.time(0,0,0))),
+                              ('request_datetime', '&lt;=', datetime.datetime.combine(context_today(), datetime.time(23,59,59)))]"/>
+                <separator/>
+                <filter string="Requested" name="requested" domain="[('state', '=', 'requested')]"/>
+                <filter string="Scheduled" name="scheduled" domain="[('state', '=', 'scheduled')]"/>
+                <filter string="In Progress" name="in_progress" domain="[('state', '=', 'in_progress')]"/>
+                <filter string="Done" name="done" domain="[('state', '=', 'done')]"/>
+                <filter string="Cancelled" name="cancelled" domain="[('state', '=', 'cancelled')]"/>
+                <separator/>
+                <filter string="Archived" name="archived" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Patient" name="group_patient" context="{'group_by': 'patient_id'}"/>
+                    <filter string="Admission" name="group_admission" context="{'group_by': 'admission_id'}"/>
+                    <filter string="Procedure Type" name="group_procedure_type" context="{'group_by': 'procedure_type_id'}"/>
+                    <filter string="Performer" name="group_performer" context="{'group_by': 'performed_by'}"/>
+                    <filter string="State" name="group_state" context="{'group_by': 'state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- PROCEDURE REQUEST — ACTION -->
+    <record id="action_hospital_procedure_request" model="ir.actions.act_window">
+        <field name="name">Procedure Requests</field>
+        <field name="res_model">hospital.procedure.request</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_procedure_request_search"/>
+        <field name="context">{}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                No procedure requests found.
+            </p>
+            <p>Create a procedure request to record a clinical service or bedside procedure.</p>
+        </field>
+    </record>
+
+</odoo>

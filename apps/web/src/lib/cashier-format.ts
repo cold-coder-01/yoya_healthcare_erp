@@ -1,6 +1,7 @@
 import type {
   CashierCollectability,
   CashierLane,
+  CashierServiceCategory,
   ResponsibilityMode,
 } from "@/types/cashier";
 
@@ -39,6 +40,17 @@ const STATE_LABELS: Record<string, string> = {
   emergency_bypass: "Emergency bypass",
   awaiting_cashier: "Awaiting cashier",
   ready_doctor: "Ready for doctor",
+  // Appointment workflow states, for the active-service lane. A visit sits in
+  // that lane WITHOUT leaving in_consultation -- the label states the clinical
+  // fact plainly so nobody reads the queue as a change of care state.
+  in_consultation: "In consultation",
+  confirmed: "Checked in",
+  // Slice 4. A completed visit stays in the service-payment lane while money
+  // is still owed on it, so the lane has to be able to say so. "Visit
+  // finished" describes the CLINICAL state and nothing else -- the patient is
+  // no longer with the doctor; the money is a separate fact the row's amount
+  // already carries.
+  done: "Visit finished",
 };
 
 export function laneLabel(lane: CashierLane) {
@@ -112,6 +124,28 @@ export function blockedMessage(collectability: CashierCollectability) {
   if (collectability.collectable) return null;
   if (collectability.reason) return collectability.reason;
   return "This visit is not collectable at the cashier.";
+}
+
+/**
+ * The generic service categories holding a visit at the window, as one string.
+ *
+ * The LABELS COME FROM THE SERVER. This joins them and nothing else -- it does
+ * not map a key to a word, because doing so would put a second, silently
+ * drifting copy of hospital.billing.service.service_type in the browser, and a
+ * category this build had never heard of would render blank instead of
+ * rendering itself.
+ *
+ * Returns null when the server sent no category, so a caller renders nothing
+ * rather than an empty badge.
+ */
+export function serviceCategorySummary(
+  categories: CashierServiceCategory[] | null | undefined,
+) {
+  if (!categories?.length) return null;
+  const labels = categories
+    .map((category) => category.label?.trim())
+    .filter((label): label is string => Boolean(label));
+  return labels.length ? labels.join(" · ") : null;
 }
 
 /** A stable idempotency key per payment attempt. */

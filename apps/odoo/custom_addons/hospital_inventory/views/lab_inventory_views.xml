@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- LAB REQUEST — reagent consumption -->
+    <record id="view_hospital_laboratory_request_inventory_inherit" model="ir.ui.view">
+        <field name="name">hospital.laboratory.request.inventory.inherit</field>
+        <field name="model">hospital.laboratory.request</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_laboratory_request_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//header" position="inside">
+                <!-- Reagent is consumed only once a sample exists and the test is being
+                     run. Hidden in Draft / Requested (nothing to consume yet) and in
+                     Cancelled (never will be). The server enforces the same rule; this
+                     attribute is operator convenience, not a control. -->
+                <field name="can_create_reagent_consumption" invisible="1"/>
+                <button name="action_create_lab_reagent_consumption"
+                    string="Create Lab Reagent Consumption" type="object"
+                    invisible="not id or not can_create_reagent_consumption"
+                    groups="hospital_management.group_hospital_lab_technician,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+            </xpath>
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button name="action_view_inventory_consumptions" type="object"
+                    class="oe_stat_button" icon="fa-cubes" invisible="not id">
+                    <field name="inventory_consumption_count" widget="statinfo" string="Consumption"/>
+                </button>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>
