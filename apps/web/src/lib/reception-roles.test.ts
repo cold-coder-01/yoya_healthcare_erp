@@ -5,6 +5,7 @@ import {
   CASHIER_ROUTE,
   DOCTOR_ROUTE,
   INSURANCE_CREDIT_ROUTE,
+  LABORATORY_ROUTE,
   CLINICAL_ROUTE,
   FRONT_DESK_ROUTE,
   RECEPTION_ROUTE,
@@ -41,6 +42,7 @@ function roles(overrides: Partial<ReceptionRoles> = {}): ReceptionRoles {
     front_desk_nurse: false,
     insurance_officer: false,
     doctor: false,
+    lab_technician: false,
     ...overrides,
   };
 }
@@ -256,4 +258,91 @@ test("parseReceptionRoles surfaces the doctor flag strictly", () => {
   // An un-upgraded Odoo that sends no doctor key must not grant the desk.
   assert.equal(parseReceptionRoles({ cashier: true })?.doctor, false);
   assert.equal(parseReceptionRoles({ doctor: "yes" })?.doctor, false);
+});
+
+/* ------------------------------------------------------------------ *
+ * Laboratory Desk routing
+ *
+ * THE REGRESSION THESE EXIST FOR, and it is the same shape as the cashier
+ * one above: a Lab Technician held no reception-side role and not the doctor
+ * group, so they fell through EVERY branch by elimination and landed on
+ * /triage -- the clinical Evaluation Queue, for which they hold no ACL at all.
+ * The Laboratory Desk was reachable only by typing the URL.
+ * ------------------------------------------------------------------ */
+
+test("a pure lab technician lands on the laboratory desk", () => {
+  assert.equal(
+    landingRouteForRoles(roles({ lab_technician: true })),
+    LABORATORY_ROUTE,
+  );
+});
+
+test("a lab technician no longer falls through to the clinical queue", () => {
+  // The exact regression: before the branch existed this returned /triage.
+  assert.notEqual(
+    landingRouteForRoles(roles({ lab_technician: true })),
+    CLINICAL_ROUTE,
+  );
+});
+
+test("a doctor who is also a lab technician keeps the doctor desk", () => {
+  // The lab branch sits BELOW doctor so nobody is silently relocated.
+  assert.equal(
+    landingRouteForRoles(roles({ doctor: true, lab_technician: true })),
+    DOCTOR_ROUTE,
+  );
+});
+
+test("a manager is unaffected by the lab branch", () => {
+  // Odoo cannot even produce this user -- manager does not imply lab
+  // technician -- but if one were granted both, reception still claims them.
+  assert.equal(landingRouteForRoles(managerRoles()), RECEPTION_ROUTE);
+  assert.equal(
+    landingRouteForRoles(managerRoles({ lab_technician: true })),
+    RECEPTION_ROUTE,
+  );
+});
+
+test("an admin is unaffected by the lab branch", () => {
+  assert.equal(
+    landingRouteForRoles(adminRoles({ lab_technician: true })),
+    RECEPTION_ROUTE,
+  );
+});
+
+test("a front desk nurse who is also a lab technician keeps the front desk", () => {
+  assert.equal(
+    landingRouteForRoles(roles({ front_desk_nurse: true, lab_technician: true })),
+    FRONT_DESK_ROUTE,
+  );
+});
+
+test("a plain nurse still lands on the clinical queue", () => {
+  // Absence of the lab flag must never route someone to the bench.
+  assert.equal(landingRouteForRoles(roles()), CLINICAL_ROUTE);
+});
+
+test("parseReceptionRoles surfaces the lab technician flag", () => {
+  const parsed = parseReceptionRoles({ lab_technician: true });
+  assert.equal(parsed?.lab_technician, true);
+  assert.equal(parsed?.doctor, false);
+});
+
+test("a payload from an older Odoo without the lab flag reads false", () => {
+  // Strict === true, so a server that predates the flag never grants the bench.
+  const parsed = parseReceptionRoles({ receptionist: true });
+  assert.equal(parsed?.lab_technician, false);
+  assert.equal(landingRouteForRoles(parsed), RECEPTION_ROUTE);
+});
+
+test("a non-boolean lab flag is not accepted as true", () => {
+  assert.equal(parseReceptionRoles({ lab_technician: "yes" })?.lab_technician, false);
+  assert.equal(parseReceptionRoles({ lab_technician: 1 })?.lab_technician, false);
+});
+
+test("the landing route is a default, never a permission", () => {
+  // /lab/* is gated server-side by may_lab_desk(). Routing decides where a
+  // user STARTS; it cannot grant a desk, which is why a forged flag is
+  // harmless -- the desk still answers 403.
+  assert.equal(LABORATORY_ROUTE, "/laboratory");
 });

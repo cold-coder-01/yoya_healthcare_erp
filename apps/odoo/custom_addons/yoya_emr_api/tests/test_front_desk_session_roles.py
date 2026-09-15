@@ -16,6 +16,7 @@ from odoo.tests import TransactionCase, tagged
 from odoo.addons.yoya_emr_api.services.reception_scope import (
     may_doctor_desk,
     may_front_desk,
+    may_lab_desk,
     role_flags,
 )
 
@@ -24,6 +25,7 @@ G_NURSE = "hospital_management.group_hospital_nurse"
 G_RECEPTIONIST = "hospital_management.group_hospital_receptionist"
 G_CASHIER = "hospital_billing.group_hospital_cashier"
 G_DOCTOR = "hospital_management.group_hospital_doctor"
+G_LAB_TECHNICIAN = "hospital_management.group_hospital_lab_technician"
 G_MANAGER = "hospital_management.group_hospital_manager"
 G_SYSADMIN = "hospital_management.group_hospital_system_administrator"
 
@@ -49,6 +51,12 @@ EXPECTED_ROLE_KEYS = {
     # it, and a manager -- who is routed to /reception well before the doctor
     # branch is reached -- is untouched.
     "doctor",
+    # Added with the Laboratory Desk. NARROW like front_desk_nurse and
+    # insurance_officer -- nothing implies group_hospital_lab_technician -- so
+    # unlike `doctor` a manager and an admin read FALSE. The front end routes a
+    # Lab Technician to /laboratory with it; before it existed they fell through
+    # every branch and landed on /triage, which they hold no ACL for.
+    "lab_technician",
 }
 
 
@@ -174,6 +182,51 @@ class TestFrontDeskSessionRoles(TransactionCase):
         # the front end's precedence relies on.
         self.assertTrue(self._flags(manager)["manager"])
         self.assertTrue(self._flags(admin)["system_administrator"])
+
+    # ------------------------------------------------------------------
+    # lab_technician
+    # ------------------------------------------------------------------
+    def test_lab_technician_reads_true(self):
+        lab = self._make_user("fdsr_lab", [G_LAB_TECHNICIAN])
+        self.assertTrue(self._flags(lab)["lab_technician"])
+
+    def test_lab_technician_flag_is_not_granted_by_elimination(self):
+        """No other role is thereby a lab technician.
+
+        The property that keeps a plain nurse on /triage rather than dropping
+        them on the bench: authoritative group membership only, never an
+        inference from the ABSENCE of another role.
+        """
+        for user in (self.nurse, self.receptionist, self.cashier,
+                     self.front_desk, self.doctor):
+            self.assertFalse(self._flags(user)["lab_technician"])
+
+    def test_manager_and_admin_do_not_read_lab_technician(self):
+        """UNLIKE `doctor`, which they DO read through implication.
+
+        group_hospital_manager implies receptionist + doctor + nurse and NOT
+        lab technician, so the two flags behave differently on purpose. Asserted
+        so a future implied_ids change surfaces here rather than silently
+        relocating a manager's landing page to /laboratory.
+        """
+        manager = self._make_user("fdsr_mgr_lab", [G_MANAGER])
+        admin = self._make_user("fdsr_admin_lab", [G_SYSADMIN])
+        for user in (manager, admin):
+            self.assertTrue(self._flags(user)["doctor"])
+            self.assertFalse(self._flags(user)["lab_technician"])
+
+    def test_the_flag_grants_nothing_on_its_own(self):
+        """Reporting only. may_lab_desk() is the authority, and it is separate.
+
+        A lab technician reads the flag True AND may_lab_desk True; a nurse
+        reads both False. The flag never widens the desk -- every /lab/*
+        endpoint calls may_lab_desk() itself.
+        """
+        lab = self._make_user("fdsr_lab2", [G_LAB_TECHNICIAN])
+        self.assertTrue(may_lab_desk(self.env(user=lab)))
+        for user in (self.nurse, self.receptionist, self.cashier,
+                     self.front_desk, self.doctor):
+            self.assertFalse(may_lab_desk(self.env(user=user)))
 
     def test_may_doctor_desk_admits_doctor_manager_admin_and_nobody_else(self):
         manager = self._make_user("fdsr_mgr2", [G_MANAGER])

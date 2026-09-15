@@ -47,6 +47,15 @@ export type ReceptionRoles = {
    * does; see landingRouteForRoles.
    */
   doctor: boolean;
+  /**
+   * Membership of hospital_management.group_hospital_lab_technician.
+   *
+   * NARROW, like front_desk_nurse and insurance_officer: nothing implies this
+   * group, so it amounts to direct membership. Unlike `doctor`, a manager and
+   * an admin read FALSE -- group_hospital_manager implies receptionist, doctor
+   * and nurse, but NOT lab technician.
+   */
+  lab_technician: boolean;
 };
 
 export const RECEPTION_ROUTE = "/reception";
@@ -55,6 +64,7 @@ export const FRONT_DESK_ROUTE = "/front-desk";
 export const CASHIER_ROUTE = "/cashier";
 export const INSURANCE_CREDIT_ROUTE = "/insurance-credit";
 export const DOCTOR_ROUTE = "/doctor";
+export const LABORATORY_ROUTE = "/laboratory";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -76,6 +86,7 @@ export function parseReceptionRoles(value: unknown): ReceptionRoles | null {
     "front_desk_nurse",
     "insurance_officer",
     "doctor",
+    "lab_technician",
   ];
   if (!known.some((key) => key in value)) {
     return null;
@@ -93,6 +104,7 @@ export function parseReceptionRoles(value: unknown): ReceptionRoles | null {
     front_desk_nurse: flag("front_desk_nurse"),
     insurance_officer: flag("insurance_officer"),
     doctor: flag("doctor"),
+    lab_technician: flag("lab_technician"),
   };
 }
 
@@ -255,6 +267,29 @@ export function landingRouteForRoles(roles: ReceptionRoles | null): string {
   // inference from the ABSENCE of another role.
   if (roles?.doctor === true) {
     return DOCTOR_ROUTE;
+  }
+  // LAST before the clinical fallback, and BELOW doctor deliberately.
+  //
+  // THE BUG THIS FIXES. A Lab Technician holds no reception-side role and not
+  // the doctor group, so before this branch they fell through EVERY test above
+  // and landed on /triage -- the clinical evaluation workspace, for which they
+  // hold no ACL at all (hospital_management grants them nothing on
+  // hospital.patient.evaluation, and yoya_clinical_bridge clamps them to an
+  // empty set). The Laboratory Desk was reachable only by typing the URL, which
+  // is the same shape of bug the Cashier, the Front Desk Nurse and the
+  // Insurance Officer each hit before their branch was added.
+  //
+  // BELOW the doctor branch so a user holding both keeps the landing page they
+  // have today (/doctor); moving it higher would silently relocate them, which
+  // is a regression dressed up as a feature. Manager and admin are claimed by
+  // the reception branch far above and read lab_technician === false anyway,
+  // so they are untouched in either direction.
+  //
+  // A LANDING ROUTE IS NOT A PERMISSION. /lab/* is gated server-side by
+  // may_lab_desk(); a user who reached /laboratory without a bench role sees
+  // the desk's own "not your workstation" banner and 403 on every data call.
+  if (roles?.lab_technician === true) {
+    return LABORATORY_ROUTE;
   }
   return CLINICAL_ROUTE;
 }

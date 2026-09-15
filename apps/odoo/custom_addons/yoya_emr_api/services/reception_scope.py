@@ -19,6 +19,7 @@ _logger = logging.getLogger(__name__)
 GROUP_RECEPTIONIST = "hospital_management.group_hospital_receptionist"
 GROUP_DOCTOR = "hospital_management.group_hospital_doctor"
 GROUP_NURSE = "hospital_management.group_hospital_nurse"
+GROUP_LAB_TECHNICIAN = "hospital_management.group_hospital_lab_technician"
 GROUP_ACCOUNTANT = "hospital_management.group_hospital_accountant"
 GROUP_MANAGER = "hospital_management.group_hospital_manager"
 GROUP_SYSADMIN = "hospital_management.group_hospital_system_administrator"
@@ -143,6 +144,23 @@ def role_flags(env):
         # from the ABSENCE of another role -- that last one is what would drag
         # every plain nurse out of /triage.
         "doctor": user.has_group(GROUP_DOCTOR),
+        # Added with the Laboratory Desk, and NARROW like front_desk_nurse and
+        # insurance_officer: nothing implies group_hospital_lab_technician, so
+        # this is effectively direct membership rather than may_lab_desk()
+        # (which also admits manager and admin).
+        #
+        # REPORTING ONLY. It grants nothing. Every /lab/* endpoint still decides
+        # for itself through may_lab_desk(), and a client that sets this flag by
+        # hand gains exactly nothing -- the desk answers 403 on the server's own
+        # check. What it fixes is that a Lab Technician had no landing route at
+        # all: holding no reception-side role and not the doctor group, they
+        # fell through every branch of landingRouteForRoles and were dropped on
+        # /triage, a clinical workspace they hold no ACL for.
+        #
+        # A manager and an admin read FALSE here, unlike `doctor`: manager
+        # implies receptionist + doctor + nurse and NOT lab technician. They are
+        # claimed by the reception branch long before it matters either way.
+        "lab_technician": user.has_group(GROUP_LAB_TECHNICIAN),
     }
 
 
@@ -286,6 +304,55 @@ DOCTOR_DESK_GROUPS = (GROUP_DOCTOR, GROUP_MANAGER, GROUP_SYSADMIN)
 def may_doctor_desk(env):
     """May this user open the Doctor Desk and read its worklist?"""
     return _in_any(env, DOCTOR_DESK_GROUPS)
+
+
+# Who may OPEN the Laboratory Desk (a read gate).
+#
+# THE BENCH ROLES, AND ONLY THE BENCH ROLES. group_hospital_lab_technician is
+# the role hospital_management already ships for laboratory work, and it is the
+# one yoya_clinical_bridge's rule_laboratory_request_operations /
+# rule_laboratory_result_operations grant the cross-patient worklist to. Manager
+# and System Administrator are named for the reason every other desk names
+# them: Manager IMPLIES Doctor, and an oversight role that could not open the
+# workstation it supervises is a support call, not a security control.
+#
+# THIS GATE IS DELIBERATELY NARROWER THAN THE ORM. Nurse, Receptionist and the
+# DPO all hold a read ACL on hospital.laboratory.request and
+# hospital.laboratory.result in hospital_management, with NO record rule
+# narrowing it -- so the ORM alone would let all three read the whole bench
+# queue. That exposure predates this module and is not ours to widen or to
+# inherit: an operational workstation is not the same thing as a read ACL, and
+# a desk that opened for every role that can technically SELECT the rows would
+# turn a known data-visibility gap into a shipped feature. The gap itself is
+# left exactly as it is (B9); this endpoint simply does not participate in it.
+#
+# The DOCTOR is excluded for the same reason in reverse. A doctor holds
+# read/write/create on hospital.laboratory.request -- they order the tests --
+# but the laboratory is not a second Doctor Desk, and their laboratory surface
+# is /doctor's Orders and Results tabs, which are scoped to their own patients.
+#
+# Cashier, Pharmacist and Accountant hold no laboratory ACL at all and are
+# absent here too, so the gate and the ORM agree about them.
+LAB_DESK_GROUPS = (GROUP_LAB_TECHNICIAN, GROUP_MANAGER, GROUP_SYSADMIN)
+
+
+def may_lab_desk(env):
+    """May this user open the Laboratory Desk and read its worklist?"""
+    return _in_any(env, LAB_DESK_GROUPS)
+
+
+def lab_desk_capability_flags(env):
+    """What the Laboratory Desk may do. Every flag mirrors a server-side guard.
+
+    SLICE 1 IS READ-ONLY, and this reports exactly that. `collect_sample`,
+    `enter_result`, `validate_result` and `release_result` are deliberately
+    ABSENT rather than present-and-False: no endpoint implements them yet, so a
+    flag for them would invite a control that has nothing to call. They arrive
+    with the slices that implement the transitions.
+    """
+    return {
+        "lab_desk": may_lab_desk(env),
+    }
 
 
 def doctor_capability_flags(env):
