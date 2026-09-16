@@ -4,6 +4,7 @@ import { formatHospitalDate, formatHospitalDateTime } from "@/lib/clinical-forma
 import {
   ageSexLabel,
   canCollect,
+  canStartProcessing,
   clearanceNotice,
   orDash,
   testCountLabel,
@@ -15,11 +16,12 @@ import { LabPriorityPill, LabStatusPill } from "./lab-status-pill";
 /**
  * The request detail panel.
  *
- * ONE ACTION, AND ONLY ONE: Collect sample, offered for exactly one status.
- * Start Processing, result entry, validation and release are later slices and
- * have no control here -- not even a disabled one. A greyed-out button is a
- * promise about workflow that has not shipped, and the first thing a
- * technician does with one is click it.
+ * TWO ACTIONS, EACH OFFERED FOR EXACTLY ONE STATUS: Collect sample for
+ * `ready_for_collection`, Start processing for `sample_collected`. Never both
+ * at once, because no status satisfies both. Result entry, validation and
+ * release are later slices and have no control here -- not even a disabled
+ * one. A greyed-out button is a promise about workflow that has not shipped,
+ * and the first thing a technician does with one is click it.
  *
  * THE BUTTON IS AN AFFORDANCE, NOT A PERMISSION. It renders from the SERVER'S
  * derived status (`ready_for_collection`), never from a financial value, and
@@ -88,8 +90,9 @@ export default function LabRequestPanel({
   error,
   empty,
   onCollect,
-  collecting,
-  collectError,
+  onStartProcessing,
+  pending,
+  actionError,
 }: {
   detail: LabRequestDetail | null;
   loading: boolean;
@@ -98,10 +101,12 @@ export default function LabRequestPanel({
   empty: boolean;
   /** Runs the collection through the BFF. The panel performs no fetch itself. */
   onCollect: () => void;
-  /** A collection is in flight for THIS request. */
-  collecting: boolean;
+  /** Runs the start-processing transition through the BFF. */
+  onStartProcessing: () => void;
+  /** A transition is in flight for THIS request. */
+  pending: boolean;
   /** The server's own refusal sentence, already sanitised by the Lab API. */
-  collectError: string | null;
+  actionError: string | null;
 }) {
   if (error) {
     return (
@@ -194,16 +199,52 @@ export default function LabRequestPanel({
                 firing a second call that can only come back as an error they
                 then have to interpret.
               */
-              disabled={collecting}
-              aria-busy={collecting}
+              disabled={pending}
+              aria-busy={pending}
               className="inline-flex h-9 items-center gap-2 rounded-md bg-indigo-700 px-3.5 cl-body font-semibold text-white shadow-sm transition hover:bg-indigo-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-400"
             >
-              {collecting ? "Collecting…" : "Collect sample"}
+              {pending ? "Collecting…" : "Collect sample"}
             </button>
             <span className="cl-meta text-slate-500">
-              {collecting
+              {pending
                 ? "Marking the sample collected…"
                 : "Marks the sample collected for every ordered test on this request."}
+            </span>
+          </div>
+        ) : null}
+
+        {/*
+          THE START-PROCESSING ACTION. Rendered for exactly one status --
+          `sample_collected` -- which is the only source state
+          action_mark_in_progress() accepts. Never shown alongside Collect,
+          because no status satisfies both.
+
+          NO MONEY IS INVOLVED IN THIS TRANSITION. Laboratory has no billing
+          override for it: no clearance is re-checked and no charge moves, so
+          there is nothing financial to say and nothing to sanitise.
+        */}
+        {canStartProcessing(detail.status) ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={onStartProcessing}
+              /*
+                DISABLED THE MOMENT IT IS PRESSED, for the reason the Collect
+                button gives: the state machine is the real protection -- a
+                replayed POST is refused because the request is no longer
+                `sample_collected` -- but disabling saves the technician an
+                error they would otherwise have to interpret.
+              */
+              disabled={pending}
+              aria-busy={pending}
+              className="inline-flex h-9 items-center gap-2 rounded-md bg-indigo-700 px-3.5 cl-body font-semibold text-white shadow-sm transition hover:bg-indigo-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-400"
+            >
+              {pending ? "Starting…" : "Start processing"}
+            </button>
+            <span className="cl-meta text-slate-500">
+              {pending
+                ? "Moving the request onto the bench…"
+                : "Marks the request as being run. Result entry is not available yet."}
             </span>
           </div>
         ) : null}
@@ -214,7 +255,7 @@ export default function LabRequestPanel({
           one refusal whose wording could carry an amount with a fixed,
           role-independent message.
         */}
-        {collectError ? (
+        {actionError ? (
           <div
             role="alert"
             className="flex items-start gap-2 rounded border border-red-200 bg-red-50 px-3 py-2 cl-secondary text-red-800"
@@ -222,7 +263,7 @@ export default function LabRequestPanel({
             <span aria-hidden className="mt-px font-bold">
               !
             </span>
-            <p className="whitespace-pre-wrap font-semibold">{collectError}</p>
+            <p className="whitespace-pre-wrap font-semibold">{actionError}</p>
           </div>
         ) : null}
 
@@ -344,8 +385,8 @@ export default function LabRequestPanel({
         buttons for workflow that has not shipped.
       */}
       <footer className="flex h-7 shrink-0 items-center gap-2 border-t border-slate-200 bg-slate-50 px-3 cl-meta text-slate-500">
-        Sample collection only. Result entry, validation and release are not
-        available yet.
+        Sample collection and processing only. Result entry, validation and
+        release are not available yet.
       </footer>
     </section>
   );

@@ -1,10 +1,23 @@
-"""Laboratory Desk API: the bench's work queue and one request, READ ONLY.
+"""Laboratory Desk API: the bench's work queue, one request, and two transitions.
 
-SLICE 1 IMPLEMENTS NO TRANSITION. There is no POST route in this module, and
-that is the whole design. Sample collection, result entry, validation and
-release are authoritative model methods on hospital.laboratory.request and
-hospital.laboratory.result; they arrive in later slices, each calling exactly
-one of those methods. Nothing here writes, and nothing here calls sudo().
+EVERY MUTATION IS ONE AUTHORITATIVE MODEL METHOD, AND THE CONTROLLER DECIDES
+NOTHING. Two exist so far, each a single POST calling a single method:
+
+    .../requests/<id>/collect           action_mark_sample_collected()
+    .../requests/<id>/start-processing  action_mark_in_progress()
+
+No state is ever written here, no state machine is restated, and nothing calls
+sudo(). Result entry, validation, release and cancellation are further methods
+on hospital.laboratory.request / hospital.laboratory.result and arrive in later
+slices on exactly the same shape -- see _run_transition, which both mutations
+share so their atomicity cannot drift apart.
+
+THE TWO ARE NOT SYMMETRICAL, and the difference is money. Collection runs
+hospital_billing's clearance gate and can be refused with a sentence that names
+an amount for some roles, so its refusal is classified and sanitised
+(_collection_refusal). Starting processing touches no charge at all -- laboratory
+has no billing override for action_mark_in_progress -- so Odoo's own sentence is
+forwarded unchanged.
 
 THREE INDEPENDENT CONTROLS, IN THIS ORDER
 -----------------------------------------
@@ -91,18 +104,25 @@ WORKLIST_LIMIT_MAX = 300
 SUMMARY_CLEARANCE_SCAN_MAX = 1000
 
 
-class CollectResponseError(Exception):
-    """The sample was marked collected, but its confirmation could not be built.
+class TransitionResponseError(Exception):
+    """A transition succeeded, but its confirmation could not be built.
 
     A separate type on purpose, and the reason is the same one cashier.py's
     PaymentResponseError documents: without it, an AccessError raised while
     SERIALIZING the result is indistinguishable from one raised by the desk
-    gate, and the bench would be told it was not authorized to collect a sample
-    it had in fact just collected.
+    gate, and the bench would be told it was not authorized to do a thing it
+    had in fact just done.
 
     By the time this reaches the handler the savepoint has already rolled the
-    collection back, so the message may honestly say nothing was changed.
+    transition back, so the message may honestly say nothing was changed. Each
+    caller supplies its own code and sentence, so "the collection failed" and
+    "starting processing failed" stay distinguishable to the client.
     """
+
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+        self.message = message
 
 
 def lab_endpoint(func):
@@ -113,9 +133,9 @@ def lab_endpoint(func):
     UserError, so the broad handler has to come last or it swallows the two
     specific ones and reports an authorization failure as a workflow refusal.
 
-    CollectResponseError sits ABOVE AccessError for exactly that reason -- it is
-    a plain Exception, but placing it first keeps the "response failed" case
-    from ever being reported as a denial.
+    TransitionResponseError sits ABOVE AccessError for exactly that reason --
+    it is a plain Exception, but placing it first keeps the "response failed"
+    case from ever being reported as a denial.
     """
 
     @functools.wraps(func)
@@ -128,15 +148,10 @@ def lab_endpoint(func):
             return func(*args, **kwargs)
         except ApiError as error:
             return api_error_response(error)
-        except CollectResponseError:
+        except TransitionResponseError as error:
             # Already logged with its cause at the raise site, and the savepoint
-            # has already rolled the collection back.
-            return error_response(
-                "lab_collect_response_failed",
-                "The sample was not marked collected because the confirmation "
-                "could not be produced. Nothing was changed. Please retry.",
-                500,
-            )
+            # has already rolled the transition back.
+            return error_response(error.code, error.message, 500)
         except AccessError as error:
             # Reaching here means the ORM refused a row the role gate had
             # already admitted -- a record rule, not the desk gate. Odoo's own
@@ -230,6 +245,49 @@ CLEARANCE_REFUSED_MESSAGE = (
     "to Ready for collection by itself once that is done. Nothing has been "
     "changed."
 )
+
+
+def _run_transition(env, record, request_id, action, failure_code, failure_message):
+    """Run ONE authoritative model transition and serialize the result. ATOMIC.
+
+    Shared by every Laboratory Desk mutation so they cannot drift apart in the
+    two places that matter: what is inside the savepoint, and what happens when
+    the response cannot be built.
+
+    THE SAVEPOINT COVERS THE TRANSITION AND ITS RESPONSE, and both halves are
+    load-bearing:
+
+      * a model method may write before it refuses -- collection's clearance
+        gate persists financial_clearance_state before raising -- so catching
+        its UserError without a savepoint would commit that write while telling
+        the bench nothing happened;
+      * a failure while SERIALIZING must not leave a committed transition
+        behind a message saying it failed, or the technician repeats an action
+        that already succeeded.
+
+    THE CONTROLLER STILL DECIDES NOTHING. `action` is a bound method on the
+    record -- action_mark_sample_collected, action_mark_in_progress -- and this
+    helper neither inspects state nor writes it. A refusal propagates as the
+    model raised it; the caller decides how to phrase it.
+
+    Returns the serialized request as it stands AFTER the transition, so the
+    status the bench renders is the derived one rather than a value the client
+    guessed from its own click.
+    """
+    with env.cr.savepoint():
+        action()
+        try:
+            record.invalidate_recordset()
+            return serialize_request_detail(record)
+        except Exception as error:
+            _logger.exception(
+                "Laboratory %s response failed for request=%s uid=%s; "
+                "rolling the transition back",
+                failure_code,
+                request_id,
+                env.uid,
+            )
+            raise TransitionResponseError(failure_code, failure_message) from error
 
 
 def _collection_refusal(record, error):
@@ -628,7 +686,7 @@ class YoyaEmrLaboratoryController(http.Controller):
         )
 
     # ------------------------------------------------------------------
-    # 4. Sample collection -- THE ONLY MUTATION IN THE LABORATORY DESK
+    # 4. Sample collection
     # ------------------------------------------------------------------
     @http.route(
         "%s/requests/<int:request_id>/collect" % LAB_API,
@@ -682,29 +740,94 @@ class YoyaEmrLaboratoryController(http.Controller):
         record = _load_request(env, request_id)
 
         try:
-            # ONE atomic unit: the transition AND its serialized response.
-            with env.cr.savepoint():
-                record.action_mark_sample_collected()
-
-                try:
-                    # Re-serialized AFTER the transition, from the record as it
-                    # now stands. The status the bench renders is the DERIVED
-                    # one, never a value the client guessed from its own click.
-                    record.invalidate_recordset()
-                    payload = serialize_request_detail(record)
-                except Exception as error:
-                    _logger.exception(
-                        "Laboratory collect response failed for request=%s "
-                        "uid=%s; rolling the collection back",
-                        request_id,
-                        env.uid,
-                    )
-                    raise CollectResponseError(str(error)) from error
+            payload = _run_transition(
+                env,
+                record,
+                request_id,
+                record.action_mark_sample_collected,
+                "lab_collect_response_failed",
+                "The sample was not marked collected because the confirmation "
+                "could not be produced. Nothing was changed. Please retry.",
+            )
         except (UserError, ValidationError) as error:
             # The savepoint has already rolled everything back, so the record
             # below is the state the caller still has, and the message may
             # honestly say nothing changed.
             raise _collection_refusal(record, error) from error
+
+        return success_response(
+            {
+                "request": payload,
+                "capabilities": lab_desk_capability_flags(env),
+            }
+        )
+
+    # ------------------------------------------------------------------
+    # 5. Start processing
+    # ------------------------------------------------------------------
+    @http.route(
+        "%s/requests/<int:request_id>/start-processing" % LAB_API,
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @lab_endpoint
+    def start_processing(self, request_id, **params):
+        """Move a collected sample onto the bench. THE CONTROLLER DECIDES NOTHING.
+
+        It resolves the request through the caller's own record rules and calls
+        ONE authoritative model method:
+
+            hospital.laboratory.request.action_mark_in_progress()
+
+        WHAT THAT METHOD IS, VERIFIED FROM SOURCE RATHER THAN ASSUMED. Unlike
+        collection, laboratory has exactly ONE implementation of it and no
+        override anywhere: hospital_billing overrides action_mark_in_progress
+        only for hospital.radiology.request, not for this model. So:
+
+          allowed source   sample_collected, and nothing else
+          target           in_progress
+          money            NONE. No clearance is re-checked, no charge moves,
+                           no delivery is recorded. Collection already
+                           commenced the work; this is a purely clinical step.
+          audit            _log_state_change -> hospital.audit.log, with actor
+          guards           the base write() runs _check_state_transition too,
+                           and sample_collected -> in_progress is the only move
+                           that state permits
+
+        NO RESULT RECORDS ARE REQUIRED, and none is created. Result entry is a
+        later slice.
+
+        NOTHING IS SANITISED HERE, and that is deliberate rather than an
+        omission. The one refusal this endpoint can produce names states only
+        ("Only lab requests with samples collected can be marked as in
+        progress."), so Odoo's own sentence is forwarded as everywhere else in
+        this module. Collection needs its extra classifier because its refusal
+        can carry an amount for a manager; this one cannot, and adding the same
+        machinery would imply a risk that does not exist.
+
+        IDEMPOTENCY IS THE STATE MACHINE'S, and no token is added. A replayed
+        POST finds the request already in_progress and is refused with a clean
+        422 rather than transitioning twice. The browser disables the button on
+        submit as well, so the second call is not normally made at all.
+        """
+        env = request.env
+        _require_lab_desk(env)
+
+        record = _load_request(env, request_id)
+
+        try:
+            payload = _run_transition(
+                env,
+                record,
+                request_id,
+                record.action_mark_in_progress,
+                "lab_start_processing_response_failed",
+                "Processing was not started because the confirmation could not "
+                "be produced. Nothing was changed. Please retry.",
+            )
+        except (UserError, ValidationError) as error:
+            # The savepoint has already rolled the attempt back. The model's
+            # sentence names the state it refused and carries no money.
+            raise ApiError("invalid_workflow_state", str(error), 422) from error
 
         return success_response(
             {

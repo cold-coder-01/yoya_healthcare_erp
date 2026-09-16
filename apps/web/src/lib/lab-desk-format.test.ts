@@ -43,6 +43,7 @@ import {
   LAB_DESK_STATUS_ORDER,
   ageSexLabel,
   canCollect,
+  canStartProcessing,
   clearanceNotice,
   collectErrorMessage,
   collectPath,
@@ -62,6 +63,8 @@ import {
   requestPath,
   resolveSelection,
   shouldReconcileAfter,
+  startProcessingErrorMessage,
+  startProcessingPath,
   testCountLabel,
   testLabel,
   visibleDetail,
@@ -739,4 +742,166 @@ test("a secondary refresh failure cannot erase the collected result", () => {
   assert.equal(visibleDetail(collected, null, 215), collected);
   assert.equal(detailIsLoading(null, true, collected), false);
   assert.equal(laneCountLabel(null, "ready_for_collection"), "—");
+});
+
+
+/* ------------------------------------------------------------------ *
+ * 10. Start processing (Slice 2b)
+ *
+ * THE SAME PROPERTIES AS COLLECTION, held independently: the browser offers
+ * the action from the SERVER'S derived status and nothing else, posts only to
+ * the BFF, and invents no vocabulary. The one difference is that this
+ * transition touches no money at all -- laboratory has no billing override for
+ * action_mark_in_progress -- so there is no clearance wording here to get
+ * wrong.
+ * ------------------------------------------------------------------ */
+
+test("start processing is offered for sample_collected and no other status", () => {
+  assert.ok(canStartProcessing("sample_collected"));
+  for (const status of LAB_DESK_STATUS_ORDER) {
+    if (status === "sample_collected") continue;
+    assert.ok(
+      !canStartProcessing(status),
+      `${status} must not offer Start processing`,
+    );
+  }
+});
+
+test("start processing is never offered before a sample exists", () => {
+  // The states where there is nothing on the bench to run.
+  for (const status of ["draft", "awaiting_clearance", "ready_for_collection"]) {
+    assert.ok(!canStartProcessing(status));
+  }
+});
+
+test("start processing is never offered once work has moved on", () => {
+  for (const status of ["in_progress", "completed", "cancelled"]) {
+    assert.ok(!canStartProcessing(status));
+  }
+});
+
+test("start processing is not offered for an unknown or missing status", () => {
+  assert.ok(!canStartProcessing(null));
+  assert.ok(!canStartProcessing(undefined));
+  assert.ok(!canStartProcessing(""));
+  assert.ok(!canStartProcessing("processing_complete"));
+});
+
+test("the two actions are mutually exclusive across every status", () => {
+  // No status may offer both buttons at once, and the panel therefore never
+  // has to decide which one wins.
+  for (const status of LAB_DESK_STATUS_ORDER) {
+    assert.ok(
+      !(canCollect(status) && canStartProcessing(status)),
+      `${status} must not offer both actions`,
+    );
+  }
+});
+
+test("canStartProcessing takes a status key only", () => {
+  // Structural: no row, no raw state and no financial value is in scope, so it
+  // cannot accidentally decide from one.
+  assert.equal(canStartProcessing(row({ status: "sample_collected" }).status), true);
+  assert.equal(canStartProcessing(row({ state: "sample_collected" }).status), false);
+});
+
+test("the start-processing route points at the BFF, never at Odoo", () => {
+  assert.equal(
+    startProcessingPath(215),
+    "/api/laboratory/requests/215/start-processing",
+  );
+  assert.ok(startProcessingPath(215).startsWith("/api/laboratory/"));
+  assert.ok(!startProcessingPath(215).includes("yoya-emr"));
+  assert.ok(!startProcessingPath(215).includes("http"));
+  assert.ok(!startProcessingPath(215).includes("8171"));
+});
+
+test("the start-processing route carries no financial parameter", () => {
+  for (const banned of ["amount", "balance", "payer", "invoice", "charge", "receipt"]) {
+    assert.ok(!startProcessingPath(215).includes(banned));
+  }
+});
+
+test("the two action routes are distinct", () => {
+  assert.notEqual(collectPath(215), startProcessingPath(215));
+});
+
+test("a start-processing refusal shows the server's own sentence", () => {
+  // It names the state it refused, and is the only thing that says WHY.
+  assert.equal(
+    startProcessingErrorMessage(
+      "Only lab requests with samples collected can be marked as in progress.",
+    ),
+    "Only lab requests with samples collected can be marked as in progress.",
+  );
+});
+
+test("a start-processing failure with no server sentence falls back safely", () => {
+  const fallback = startProcessingErrorMessage(null);
+  assert.ok(fallback.length > 0);
+  assert.equal(startProcessingErrorMessage(""), fallback);
+  assert.equal(startProcessingErrorMessage("   "), fallback);
+});
+
+test("no start-processing message invents financial vocabulary", () => {
+  for (const message of [
+    startProcessingErrorMessage(null),
+    startProcessingErrorMessage(null, "Processing could not be started."),
+  ]) {
+    for (const banned of [
+      "ETB", "amount", "balance", "outstanding", "due", "payer",
+      "invoice", "receipt", "birr", "charge", "cleared",
+    ]) {
+      assert.ok(
+        !message.toLowerCase().includes(banned.toLowerCase()),
+        `"${banned}" must not appear in a start-processing message`,
+      );
+    }
+  }
+});
+
+test("a started request stays on screen after it leaves the lane", () => {
+  // The Slice 2 reconciliation, exercised for this transition: starting
+  // processing moves the request out of the Sample collected lane.
+  const started = detail({ id: 215, status: "in_progress" });
+  assert.equal(visibleDetail(started, null, 215), started);
+  assert.equal(detailIsLoading(null, true, started), false);
+});
+
+test("the start processing button disappears once the status has moved", () => {
+  const started = detail({ id: 215, status: "in_progress" });
+  const shown = visibleDetail(started, null, 215);
+  assert.ok(shown);
+  assert.ok(!canStartProcessing(shown.status), "Start must not be offered again");
+  assert.ok(!canCollect(shown.status), "nor Collect");
+});
+
+test("a stale start-processing screen reconciles", () => {
+  // The request moved on elsewhere: the desk must re-read rather than keep a
+  // button the server has just refused.
+  assert.ok(shouldReconcileAfter("invalid_workflow_state"));
+  assert.ok(shouldReconcileAfter("lab_request_not_found"));
+});
+
+test("a start-processing transport failure does not reconcile", () => {
+  // Nothing changed server-side, so refetching would only hide the error.
+  assert.ok(!shouldReconcileAfter("lab_start_processing_failed"));
+  assert.ok(!shouldReconcileAfter("lab_start_processing_response_failed"));
+});
+
+test("collection behaviour is unchanged by the new action", () => {
+  assert.ok(canCollect("ready_for_collection"));
+  assert.ok(!canCollect("sample_collected"));
+  assert.equal(collectPath(215), "/api/laboratory/requests/215/collect");
+  assert.equal(
+    collectErrorMessage("This request is not financially cleared."),
+    "This request is not financially cleared.",
+  );
+});
+
+test("the bench vocabulary is unchanged by the new action", () => {
+  assert.equal(labStatusLabel("in_progress"), "In progress");
+  assert.equal(labStatusCode("in_progress"), "PROC");
+  assert.equal(LAB_DESK_STATUS_ORDER.length, 7);
+  assert.equal(clearanceNotice("in_progress"), null);
 });

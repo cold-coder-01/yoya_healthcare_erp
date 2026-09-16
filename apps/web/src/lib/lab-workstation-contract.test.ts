@@ -1,5 +1,5 @@
 /**
- * THE LABORATORY DESK'S POST-COLLECTION RECONCILIATION, HELD AT THE SOURCE.
+ * THE LABORATORY DESK'S POST-TRANSITION RECONCILIATION, HELD AT THE SOURCE.
  *
  * WHY THIS IS A SOURCE ASSERTION. lab-desk-format.test.ts proves the pure
  * helpers behave -- what the panel may render, and when it is loading. It
@@ -22,14 +22,16 @@
  * The desk sat on "Loading request…" indefinitely while the backend had in
  * fact succeeded.
  *
- * FOUR PROPERTIES ARE HELD HERE:
+ * FIVE PROPERTIES ARE HELD HERE:
  *
  *   1. THE PANEL NEVER RECEIVES THE RAW LOADING FLAG. It receives the derived
  *      value, which cannot hang.
- *   2. THE PANEL'S REQUEST COMES FROM visibleDetail, so a just-collected
- *      request stays on screen after it leaves the lane.
- *   3. A COLLECTION PINS ITS REQUEST, and a fresh selection clears the pin.
- *   4. COLLECTION CANNOT BE SUBMITTED TWICE from the browser.
+ *   2. THE PANEL'S REQUEST COMES FROM visibleDetail, so a request just acted on
+ *      stays on screen after it leaves the lane.
+ *   3. A TRANSITION PINS ITS REQUEST, and a fresh selection clears the pin.
+ *   4. NO TRANSITION CAN BE SUBMITTED TWICE from the browser.
+ *   5. BOTH TRANSITIONS SHARE ONE HANDLER, so collection and start-processing
+ *      cannot grow divergent pending/error/reconciliation behaviour.
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -99,10 +101,10 @@ test("the panel's request comes from visibleDetail", () => {
   );
 });
 
-test("a successful collection pins its request", () => {
+test("a successful transition pins its request", () => {
   assert.ok(
     WORKSTATION.includes("setJustActedId(requestId)"),
-    "the collected request must stay on screen as its own confirmation",
+    "the request acted on must stay on screen as its own confirmation",
   );
 });
 
@@ -113,7 +115,7 @@ test("a fresh selection clears the pin", () => {
   );
 });
 
-test("the collected detail is taken from the authoritative response", () => {
+test("the transitioned detail is taken from the authoritative response", () => {
   // Not patched locally: the server re-serializes after the transition, so the
   // status shown is the derived one rather than a value guessed from the click.
   assert.ok(WORKSTATION.includes("setDetail(payload.data.request)"));
@@ -123,27 +125,45 @@ test("the collected detail is taken from the authoritative response", () => {
  * 4. Double submission
  * ------------------------------------------------------------------ */
 
-test("a second collect cannot be launched while one is in flight", () => {
+test("a second transition cannot be launched while one is in flight", () => {
   assert.ok(
-    WORKSTATION.includes("if (collectingId !== null) return;"),
+    WORKSTATION.includes("if (pendingId !== null) return;"),
     "the handler must refuse a concurrent submit",
   );
-  assert.ok(
-    PANEL.includes("disabled={collecting}"),
-    "the button must disable itself on submit",
+  const disabled = PANEL.match(/disabled=\{pending\}/g) ?? [];
+  assert.equal(
+    disabled.length, 2,
+    "both action buttons must disable themselves on submit",
   );
 });
 
-test("the collect state is keyed on the request, not a bare boolean", () => {
-  // So a collection in flight cannot grey out a different request's button.
-  assert.ok(WORKSTATION.includes("collectingId !== null && collectingId === activeId"));
+test("the pending state is keyed on the request, not a bare boolean", () => {
+  // So an action in flight cannot grey out a different request's button.
+  assert.ok(WORKSTATION.includes("pendingId !== null && pendingId === activeId"));
+});
+
+test("both transitions run through the one shared handler", () => {
+  // Collection and start-processing must not grow separate pending, error or
+  // reconciliation behaviour -- that is how the two drift apart.
+  assert.ok(WORKSTATION.includes("const runTransition = useCallback("));
+  assert.ok(WORKSTATION.includes("collectPath(requestId)"));
+  assert.ok(WORKSTATION.includes("startProcessingPath(requestId)"));
+});
+
+test("start processing is offered for exactly one status in the panel", () => {
+  assert.ok(PANEL.includes("canStartProcessing(detail.status)"));
+  assert.ok(PANEL.includes("canCollect(detail.status)"));
+  // Neither is ever rendered as a disabled control for a status it does not
+  // belong to: both are inside a conditional, not passed a `disabled` status.
+  assert.ok(!PANEL.includes("disabled={!canCollect"));
+  assert.ok(!PANEL.includes("disabled={!canStartProcessing"));
 });
 
 /* ------------------------------------------------------------------ *
  * Slice scope, still held
  * ------------------------------------------------------------------ */
 
-test("collect remains the only mutation in the laboratory tree", () => {
+test("only the two known transitions mutate in the laboratory tree", () => {
   for (const [name, source] of [
     ["workstation", WORKSTATION],
     ["panel", PANEL],
@@ -153,8 +173,10 @@ test("collect remains the only mutation in the laboratory tree", () => {
       assert.ok(!source.includes(verb), `${name} must not ${verb}`);
     }
   }
+  // ONE fetch site for both transitions, by construction: they share
+  // runTransition, so there is a single POST in the file.
   const posts = WORKSTATION.match(/method: "POST"/g) ?? [];
-  assert.equal(posts.length, 1, "exactly one POST: the collection");
+  assert.equal(posts.length, 1, "one shared POST site for both transitions");
 });
 
 test("the browser still never addresses Odoo directly", () => {

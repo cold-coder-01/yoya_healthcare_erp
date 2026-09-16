@@ -304,6 +304,11 @@ export function collectPath(requestId: number) {
   return `/api/laboratory/requests/${requestId}/collect`;
 }
 
+/** The BFF start-processing route. */
+export function startProcessingPath(requestId: number) {
+  return `/api/laboratory/requests/${requestId}/start-processing`;
+}
+
 /**
  * May the bench be offered a Collect control for this row?
  *
@@ -325,6 +330,22 @@ export function canCollect(status: string | null | undefined): boolean {
 }
 
 /**
+ * May the bench be offered a Start processing control for this row?
+ *
+ * THE SAME SHAPE AS canCollect, AND FOR THE SAME REASONS. One status and one
+ * only: `sample_collected`, which is exactly the source state
+ * hospital.laboratory.request.action_mark_in_progress() accepts. It takes a
+ * STATUS KEY, so it cannot consult a financial value or a raw state even by
+ * accident.
+ *
+ * AN AFFORDANCE, NEVER A PERMISSION. The server re-runs the state machine on
+ * every call; a button drawn from stale data still gets a clean refusal.
+ */
+export function canStartProcessing(status: string | null | undefined): boolean {
+  return status === "sample_collected";
+}
+
+/**
  * The message shown when a collection is refused.
  *
  * The server's own sentence is preferred -- it is the only thing that says
@@ -338,6 +359,20 @@ export function collectErrorMessage(
 ) {
   const trimmed = typeof serverMessage === "string" ? serverMessage.trim() : "";
   return trimmed ? trimmed : fallback;
+}
+
+/**
+ * The same rule for starting processing.
+ *
+ * Shares collectErrorMessage's body deliberately -- one definition of "prefer
+ * the server's sentence, fall back to safe wording" -- with its own default so
+ * a transport failure names the action that did not happen.
+ */
+export function startProcessingErrorMessage(
+  serverMessage: string | null | undefined,
+  fallback = "Processing could not be started.",
+) {
+  return collectErrorMessage(serverMessage, fallback);
 }
 
 /**

@@ -1,5 +1,5 @@
-"""Laboratory Desk: the bench queue, request detail (Slice 1) and sample
-collection (Slice 2).
+"""Laboratory Desk: the bench queue and request detail (Slice 1), sample
+collection (Slice 2) and start processing (Slice 2b).
 
 WHAT THESE TESTS ARE FOR
 ------------------------
@@ -65,6 +65,7 @@ SESSION = "/yoya-emr/api/v1/lab/session"
 WORKLIST = "/yoya-emr/api/v1/lab/worklist"
 DETAIL = "/yoya-emr/api/v1/lab/requests/%s"
 COLLECT = "/yoya-emr/api/v1/lab/requests/%s/collect"
+START_PROCESSING = "/yoya-emr/api/v1/lab/requests/%s/start-processing"
 
 G_LAB_TECH = "hospital_management.group_hospital_lab_technician"
 G_RECEPTIONIST = "hospital_management.group_hospital_receptionist"
@@ -1603,3 +1604,388 @@ class TestLabDeskSummary(LabDeskCase):
 
         after, _p = self._summary()
         self.assertEqual(after, before)
+
+
+@tagged("post_install", "-at_install", "lab_desk")
+class TestLabDeskStartProcessing(LabDeskCase):
+    """SLICE 2B. sample_collected -> in_progress, and nothing else.
+
+    THE CONTROLLER DECIDES NOTHING, and these tests are about the ENDPOINT
+    rather than the model:
+
+      * it calls action_mark_in_progress() and writes no state itself
+      * it refuses every role outside LAB_DESK_GROUPS before touching a record
+      * a refusal leaves the request exactly as it was
+      * no money appears in any payload -- and here there is none to appear,
+        because laboratory has NO billing override for this transition
+
+    THE ASYMMETRY WITH COLLECTION IS DELIBERATE AND PINNED. Collection runs a
+    clearance gate whose refusal can name an amount for a manager, so it is
+    sanitised. This transition touches no charge, so Odoo's own sentence is
+    forwarded -- and test_341 asserts that sentence is genuinely money-free
+    rather than merely assumed to be.
+    """
+
+    def _start(self, record, user=None, password=None):
+        return self._lab_post(
+            START_PROCESSING % record.id, user=user, password=password
+        )
+
+    # ------------------------------------------------------------------
+    # Authorization
+    # ------------------------------------------------------------------
+    def test_300_lab_technician_can_start_processing(self):
+        record = self._collected()
+        self.assertEqual(record.state, "sample_collected")
+
+        response, payload = self._start(record)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["data"]["request"]["status"], "in_progress")
+
+        record.invalidate_recordset()
+        self.assertEqual(record.state, "in_progress")
+
+    def test_301_manager_can_start_processing(self):
+        record = self._collected()
+        response, _payload = self._start(
+            record, user=self.manager, password=self.manager_password
+        )
+        self.assertEqual(response.status_code, 200)
+        record.invalidate_recordset()
+        self.assertEqual(record.state, "in_progress")
+
+    def test_302_system_administrator_can_start_processing(self):
+        password = "lab-admin-start-pw"
+        administrator = self._make_user(
+            "lab_admin_start", password,
+            ["hospital_management.group_hospital_system_administrator"],
+        )
+        record = self._collected()
+        response, _payload = self._start(
+            record, user=administrator, password=password
+        )
+        self.assertEqual(response.status_code, 200)
+        record.invalidate_recordset()
+        self.assertEqual(record.state, "in_progress")
+
+    def _assert_start_denied(self, user, password):
+        """Refused AND nothing moved.
+
+        The state assertion is the half that matters: a gate that returned 403
+        after the transition would pass a status-only test.
+        """
+        record = self._collected()
+        response, payload = self._start(record, user=user, password=password)
+        self.assertEqual(
+            response.status_code, 403,
+            "%s must not be able to start processing." % user.login,
+        )
+        self.assertEqual(payload["error"]["code"], "lab_desk_not_authorized")
+        record.invalidate_recordset()
+        self.assertEqual(
+            record.state, "sample_collected",
+            "A refused caller must not move the request.",
+        )
+
+    def test_303_doctor_cannot_start_processing(self):
+        """THE CASE THIS GATE EXISTS FOR.
+
+        A Doctor holds read/write/create on hospital.laboratory.request in
+        hospital_management -- they order the tests -- so the ORM alone would
+        let them call action_mark_in_progress() quite happily. The Lab API role
+        gate is the independent operational boundary that refuses them.
+        """
+        self._assert_start_denied(self.doctor_user, self.doctor_password)
+
+    def test_304_nurse_cannot_start_processing(self):
+        self._assert_start_denied(self.nurse, self.nurse_password)
+
+    def test_305_receptionist_cannot_start_processing(self):
+        self._assert_start_denied(self.receptionist, self.receptionist_password)
+
+    def test_306_cashier_cannot_start_processing(self):
+        self._assert_start_denied(self.cashier, self.cashier_password)
+
+    def test_307_pharmacist_cannot_start_processing(self):
+        self._assert_start_denied(self.pharmacist, self.pharmacist_password)
+
+    def test_308_accountant_cannot_start_processing(self):
+        self._assert_start_denied(self.accountant, self.accountant_password)
+
+    def test_309_front_desk_nurse_cannot_start_processing(self):
+        self._assert_start_denied(self.front_desk, self.fd_password)
+
+    def test_310_unauthenticated_never_reaches_the_endpoint(self):
+        """auth=user REDIRECTS a public caller; it does not return 401."""
+        record = self._collected()
+        self.authenticate(None, None)
+        response = self.url_open(
+            START_PROCESSING % record.id, data="{}",
+            headers={"Content-Type": "application/json"},
+            allow_redirects=False,
+        )
+        self.assertIn(response.status_code, (301, 302, 303, 401, 403))
+        record.invalidate_recordset()
+        self.assertEqual(record.state, "sample_collected")
+
+    def test_311_the_gate_precedes_existence(self):
+        record = self._collected()
+        real, _p = self._start(
+            record, user=self.nurse, password=self.nurse_password
+        )
+        fake, _p = self._lab_post(
+            START_PROCESSING % 99999999,
+            user=self.nurse, password=self.nurse_password,
+        )
+        self.assertEqual(real.status_code, 403)
+        self.assertEqual(fake.status_code, 403)
+
+    # ------------------------------------------------------------------
+    # Workflow
+    # ------------------------------------------------------------------
+    def test_320_collected_becomes_in_progress(self):
+        record = self._collected()
+        _response, payload = self._start(record)
+        detail = payload["data"]["request"]
+
+        self.assertEqual(detail["state"], "in_progress")
+        self.assertEqual(detail["status"], "in_progress")
+        self.assertEqual(detail["status_label"], "In progress")
+        self.assertEqual(detail["id"], record.id)
+
+    def test_321_the_response_is_serialized_after_the_transition(self):
+        record = self._collected()
+        _response, payload = self._start(record)
+        record.invalidate_recordset()
+        self.assertEqual(payload["data"]["request"]["state"], record.state)
+
+    def test_322_a_second_start_is_refused(self):
+        """IDEMPOTENCY IS THE STATE MACHINE'S. No token, no second transition."""
+        record = self._collected()
+        first, _payload = self._start(record)
+        self.assertEqual(first.status_code, 200)
+
+        second, payload = self._start(record)
+        self.assertEqual(second.status_code, 422)
+        self.assertEqual(payload["error"]["code"], "invalid_workflow_state")
+
+        record.invalidate_recordset()
+        self.assertEqual(record.state, "in_progress")
+
+    def _assert_start_refused(self, record, expected_state):
+        response, payload = self._start(record)
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(payload["error"]["code"], "invalid_workflow_state")
+        record.invalidate_recordset()
+        self.assertEqual(
+            record.state, expected_state,
+            "A refused transition must leave the state untouched.",
+        )
+
+    def test_323_requested_cannot_start_processing(self):
+        # No sample has been drawn yet.
+        self._assert_start_refused(self._lab_request(), "requested")
+
+    def test_324_blocked_requested_cannot_start_processing(self):
+        self._assert_start_refused(
+            self._lab_request(tests=[self.prepaid_test]), "requested"
+        )
+
+    def test_325_draft_cannot_start_processing(self):
+        self._assert_start_refused(
+            self._lab_request(confirm=False), "draft"
+        )
+
+    def test_326_in_progress_cannot_start_processing(self):
+        self._assert_start_refused(self._in_progress(), "in_progress")
+
+    def test_327_completed_cannot_start_processing(self):
+        self._assert_start_refused(self._completed(), "completed")
+
+    def test_328_cancelled_cannot_start_processing(self):
+        self._assert_start_refused(self._cancelled(), "cancelled")
+
+    def test_329_an_unknown_request_is_a_flat_404(self):
+        response, payload = self._lab_post(START_PROCESSING % 99999999)
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(payload["error"]["code"], "lab_request_not_found")
+        self.assertEqual(
+            payload["error"]["message"], "Laboratory request not found."
+        )
+
+    def test_330_a_zero_id_is_rejected_before_any_lookup(self):
+        response, payload = self._lab_post(START_PROCESSING % 0)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(payload["error"]["code"], "invalid_request_id")
+
+    # ------------------------------------------------------------------
+    # Atomicity and side effects
+    # ------------------------------------------------------------------
+    def test_331_the_transition_moves_no_charge(self):
+        """NO MONEY IS INVOLVED, and this asserts it rather than assuming it.
+
+        Laboratory has no billing override for action_mark_in_progress --
+        hospital_billing overrides it only for hospital.radiology.request -- so
+        starting processing must leave every charge exactly as collection left
+        it: commenced, not delivered.
+        """
+        record = self._collected()
+        before = {
+            c.id: (c.charge_state, c.delivery_state, c.qty_delivered)
+            for c in record.sudo().charge_line_ids
+        }
+        self.assertTrue(before, "the fixture must have raised charges")
+
+        response, _payload = self._start(record)
+        self.assertEqual(response.status_code, 200)
+
+        self.env.invalidate_all()
+        record.invalidate_recordset()
+        after = {
+            c.id: (c.charge_state, c.delivery_state, c.qty_delivered)
+            for c in record.sudo().charge_line_ids
+        }
+        self.assertEqual(
+            before, after,
+            "Starting processing must not touch a charge.",
+        )
+
+    def test_332_a_refused_transition_moves_no_charge(self):
+        record = self._lab_request()
+        before = {
+            c.id: (c.charge_state, c.delivery_state)
+            for c in record.sudo().charge_line_ids
+        }
+        response, _payload = self._start(record)
+        self.assertEqual(response.status_code, 422)
+
+        self.env.invalidate_all()
+        record.invalidate_recordset()
+        after = {
+            c.id: (c.charge_state, c.delivery_state)
+            for c in record.sudo().charge_line_ids
+        }
+        self.assertEqual(before, after)
+        self.assertEqual(record.state, "requested")
+
+    def test_333_the_transition_is_audited(self):
+        """Actor and timestamp live in hospital.audit.log, not on the record."""
+        record = self._collected()
+        Audit = self.env["hospital.audit.log"].sudo()
+        before = Audit.search_count([
+            ("model_name", "=", "hospital.laboratory.request"),
+            ("record_id", "=", record.id),
+        ])
+
+        self._start(record)
+
+        entries = Audit.search([
+            ("model_name", "=", "hospital.laboratory.request"),
+            ("record_id", "=", record.id),
+        ], order="id desc")
+        self.assertGreater(len(entries), before)
+        latest = entries[0]
+        self.assertEqual(latest.action_type, "state_change")
+        self.assertIn("in_progress", latest.new_value)
+
+    def test_334_no_result_record_is_created(self):
+        """Result entry is a later slice; this transition creates nothing."""
+        record = self._collected()
+        self.assertFalse(record.result_ids)
+        self._start(record)
+        record.invalidate_recordset()
+        self.assertFalse(
+            record.result_ids,
+            "Starting processing must not conjure a result record.",
+        )
+
+    # ------------------------------------------------------------------
+    # Confidentiality
+    # ------------------------------------------------------------------
+    def test_340_the_success_payload_is_the_slice_1_shape(self):
+        record = self._collected()
+        _response, payload = self._start(record)
+        detail = payload["data"]["request"]
+        self.assertEqual(
+            set(detail), EXPECTED_ROW_KEYS | EXPECTED_DETAIL_EXTRA_KEYS
+        )
+        billing_keys = [key for key in detail if "billing" in key]
+        self.assertEqual(billing_keys, ["billing_blocked"])
+        blob = json.dumps(payload).lower()
+        for banned in FORBIDDEN_KEYS:
+            self.assertNotIn(banned, blob)
+
+    def test_341_the_refusal_sentence_is_genuinely_money_free(self):
+        """WHY THIS ONE IS FORWARDED RATHER THAN SANITISED.
+
+        Collection's refusal is replaced wholesale because
+        hospital_billing._clearance_error can name an amount for a manager.
+        This transition has no such gate, so Odoo's own sentence is forwarded --
+        and that decision is only safe if the sentence really is money-free.
+        Asserted here for the role that WOULD see cash elsewhere, so the
+        asymmetry is checked rather than assumed.
+        """
+        record = self._lab_request(tests=[self.prepaid_test])
+        response, payload = self._start(
+            record, user=self.manager, password=self.manager_password
+        )
+        self.assertEqual(response.status_code, 422)
+        message = payload["error"]["message"]
+        self.assertIn("samples collected", message.lower())
+        for banned in FORBIDDEN_KEYS:
+            self.assertNotIn(banned, message.lower())
+        for rendering in ("640", "640.0", "640.00"):
+            self.assertNotIn(rendering, json.dumps(payload))
+
+    # ------------------------------------------------------------------
+    # Regression: the rest of the desk is unchanged
+    # ------------------------------------------------------------------
+    def test_350_collect_still_works_end_to_end(self):
+        """The two transitions compose: collect, then start."""
+        record = self._lab_request()
+        collected, payload = self._collect(record)
+        self.assertEqual(collected.status_code, 200)
+        self.assertEqual(payload["data"]["request"]["status"], "sample_collected")
+
+        started, payload = self._start(record)
+        self.assertEqual(started.status_code, 200)
+        self.assertEqual(payload["data"]["request"]["status"], "in_progress")
+
+        record.invalidate_recordset()
+        self.assertEqual(record.state, "in_progress")
+
+    def test_351_the_read_routes_are_unchanged(self):
+        record = self._collected()
+        for url in (SESSION, WORKLIST, DETAIL % record.id):
+            response, payload = self._lab_get(url)
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(payload["success"])
+
+    def test_352_the_read_routes_still_refuse_a_post(self):
+        record = self._collected()
+        for url in (SESSION, WORKLIST, DETAIL % record.id):
+            self._auth(self.lab_tech, self.lab_password)
+            response = self.url_open(
+                url, data="{}", headers={"Content-Type": "application/json"}
+            )
+            self.assertIn(response.status_code, (404, 405))
+
+    def test_353_starting_moves_one_lane_count_across(self):
+        """sample_collected -1, in_progress +1, active bench unchanged."""
+        record = self._collected()
+        _response, payload = self._lab_get(WORKLIST)
+        before = payload["data"]["summary"]
+
+        self._start(record)
+
+        _response, payload = self._lab_get(WORKLIST)
+        after = payload["data"]["summary"]
+        self.assertEqual(
+            after["sample_collected"], before["sample_collected"] - 1
+        )
+        self.assertEqual(after["in_progress"], before["in_progress"] + 1)
+        self.assertEqual(
+            after["active_bench"], before["active_bench"],
+            "Starting processing moves work within the bench, not off it.",
+        )

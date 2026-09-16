@@ -8,28 +8,54 @@
  * The generic helpers are imported from the reception BFF rather than copied,
  * which is the pattern doctor/_utils.ts and front-desk/_utils.ts both follow.
  *
- * SLICE 1 EXPORTS NO WRITE HELPER. `readJsonObject` and `streamOdooBinary` are
- * deliberately absent: there is no POST route and no binary in the Laboratory
- * Desk yet, and re-exporting a helper nothing calls invites a route that
- * should not exist. They arrive with the slices that need them.
+ * NO BODY OR BINARY HELPER IS EXPORTED. `readJsonObject` and `streamOdooBinary`
+ * are deliberately absent: the write routes that exist (collect,
+ * start-processing) send an empty body and read no field from it, and there is
+ * no binary on this desk. Re-exporting a helper nothing calls invites a route
+ * that should not exist. They arrive with the slices that need them.
  */
 import "server-only";
 
 import {
-  callOdooApi,
+  callOdooApi as callOdooApiWithLabel,
   errorResponse,
   forwardOdooResult,
   handleRouteError,
   requireOdooSession,
 } from "@/app/api/reception/_utils";
 
-export {
-  callOdooApi,
-  errorResponse,
-  forwardOdooResult,
-  handleRouteError,
-  requireOdooSession,
-};
+export { errorResponse, forwardOdooResult, handleRouteError, requireOdooSession };
+
+/**
+ * How this desk names the upstream service in fallback wording.
+ *
+ * THE DEFECT THIS FIXES, OBSERVED IN UAT. The shared helpers hardcoded
+ * "reception service" in the one message they fall back to when Odoo returns a
+ * body that is NOT the JSON envelope -- an HTML 404 from the router, or an
+ * error page. When a laboratory route was missing from a stale server, the Lab
+ * Desk told the technician "The reception service returned an error", which
+ * names the wrong workstation and sends them looking in the wrong place.
+ *
+ * The label is now a parameter with a reception-flavoured default, so no other
+ * desk's wording changed; this module binds its own once, here, and every
+ * laboratory route inherits it without knowing about it.
+ */
+const LAB_SERVICE_LABEL = "laboratory service";
+
+/**
+ * callOdooApi, bound to this desk's service label.
+ *
+ * Every /api/laboratory/* route imports THIS rather than the shared helper, so
+ * a route added later cannot forget the label and reintroduce the defect.
+ */
+export function callOdooApi<T>(
+  sessionId: string,
+  path: string,
+  method: "GET" | "POST",
+  body?: unknown,
+) {
+  return callOdooApiWithLabel<T>(sessionId, path, method, body, LAB_SERVICE_LABEL);
+}
 
 /** Every Laboratory Desk route hangs off this one Odoo prefix. */
 export const LAB_API = "/yoya-emr/api/v1/lab";

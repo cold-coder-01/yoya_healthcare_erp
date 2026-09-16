@@ -7,6 +7,8 @@ import {
   collectErrorMessage,
   collectPath,
   detailIsLoading,
+  startProcessingErrorMessage,
+  startProcessingPath,
   matchesSearch,
   requestPath,
   resolveSelection,
@@ -40,8 +42,10 @@ import LabRequestPanel from "./lab-request-panel";
  * services/reception_scope.may_lab_desk before it touches a record and scoped
  * by Odoo record rules after it does.
  *
- * ONE MUTATION IN THIS TREE: sample collection, which calls one authoritative
- * model method and decides nothing locally.
+ * TWO MUTATIONS IN THIS TREE -- collect a sample, start processing it. Each
+ * calls one authoritative model method and decides nothing locally; both run
+ * through the same `runTransition` so their pending, error and reconciliation
+ * behaviour cannot drift apart.
  *
  * THE LANE COUNTS COME FROM THE SERVER, and are never recounted here. They
  * describe the whole date+search scope rather than the rows on screen, so a
@@ -253,39 +257,54 @@ export default function LabWorkstation() {
 
   const refresh = useCallback(() => setRefreshToken((token) => token + 1), []);
 
-  /* ---------------- sample collection ---------------- */
+  /* ---------------- bench transitions ---------------- */
   /*
-    THE ONLY MUTATION ON THIS SCREEN.
+    THE ONLY MUTATIONS ON THIS SCREEN, and neither decides anything.
 
-    It posts to the BFF and does not decide anything: whether the request may
-    be collected is settled by hospital.laboratory.request
-    .action_mark_sample_collected(), which re-runs the financial-clearance gate
-    and the state machine server-side on every call. The button is an
-    affordance drawn from the server's own derived status.
+    Each posts to the BFF and reports what the model said. Whether a request
+    may be collected is settled by action_mark_sample_collected() (which
+    re-runs the financial-clearance gate); whether it may start processing is
+    settled by action_mark_in_progress(). Both re-run their state machine
+    server-side on every call, so the buttons are affordances drawn from the
+    server's own derived status and nothing more.
 
-    `collectingId` is the REQUEST ID rather than a boolean, so a collection in
-    flight can never grey out the button of a request the technician has since
+    `pendingId` is the REQUEST ID rather than a boolean, so an action in flight
+    can never grey out the button of a request the technician has since
     selected instead.
   */
-  const [collectingId, setCollectingId] = useState<number | null>(null);
+  const [pendingId, setPendingId] = useState<number | null>(null);
   /*
-    The request the technician just collected, kept on screen after it leaves
+    The request the technician just acted on, kept on screen after it leaves
     the lane. See detailForSelection. Cleared by any fresh selection.
   */
   const [justActedId, setJustActedId] = useState<number | null>(null);
-  const [collectErrorFor, setCollectErrorFor] = useState<{
+  const [actionErrorFor, setActionErrorFor] = useState<{
     requestId: number;
     message: string;
   } | null>(null);
 
-  const collect = useCallback(
-    async (requestId: number) => {
+  /**
+   * Run one bench transition through the BFF.
+   *
+   * SHARED BY BOTH ACTIONS ON PURPOSE. Collection and start-processing differ
+   * only in which route they post to and how a failure is worded; everything
+   * that proved delicate in UAT -- the pending guard, pinning the request so
+   * it stays visible after it leaves the lane, reconciling a stale screen, and
+   * never leaving a spinner behind -- is written once here.
+   */
+  const runTransition = useCallback(
+    async (
+      requestId: number,
+      path: string,
+      message: (server: string) => string,
+      transportMessage: string,
+    ) => {
       // Guard against a second submit slipping past a disabled button.
-      if (collectingId !== null) return;
-      setCollectingId(requestId);
-      setCollectErrorFor(null);
+      if (pendingId !== null) return;
+      setPendingId(requestId);
+      setActionErrorFor(null);
       try {
-        const response = await fetch(collectPath(requestId), {
+        const response = await fetch(path, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: "{}",
@@ -294,18 +313,15 @@ export default function LabWorkstation() {
         const payload = (await response.json()) as ApiEnvelope<LabRequestResponse>;
 
         if (!response.ok || !payload.success) {
-          setCollectErrorFor({
+          setActionErrorFor({
             requestId,
-            message: collectErrorMessage(
-              messageFromPayload(payload, ""),
-              "The sample could not be marked collected.",
-            ),
+            message: message(messageFromPayload(payload, "")),
           });
           /*
             RECONCILE AFTER A REFUSAL THE SCREEN CAUSED. A workflow conflict, a
             clearance block or a vanished request all mean the row on screen no
             longer matches the database -- so re-read rather than leave a
-            Collect button the server has just refused.
+            button the server has just refused.
           */
           if (shouldReconcileAfter(codeFromPayload(payload))) {
             refresh();
@@ -322,20 +338,40 @@ export default function LabWorkstation() {
         */
         setDetail(payload.data.request);
         // Pin it so the transition stays visible even though the request has
-        // just left the Ready lane the technician is looking at.
+        // just left the lane the technician is looking at.
         setJustActedId(requestId);
         refresh();
       } catch {
-        setCollectErrorFor({
-          requestId,
-          message:
-            "Unable to reach the laboratory service. The sample was not marked collected.",
-        });
+        setActionErrorFor({ requestId, message: transportMessage });
       } finally {
-        setCollectingId(null);
+        setPendingId(null);
       }
     },
-    [collectingId, refresh],
+    [pendingId, refresh],
+  );
+
+  const collect = useCallback(
+    (requestId: number) =>
+      runTransition(
+        requestId,
+        collectPath(requestId),
+        (server) =>
+          collectErrorMessage(server, "The sample could not be marked collected."),
+        "Unable to reach the laboratory service. The sample was not marked collected.",
+      ),
+    [runTransition],
+  );
+
+  const startProcessing = useCallback(
+    (requestId: number) =>
+      runTransition(
+        requestId,
+        startProcessingPath(requestId),
+        (server) =>
+          startProcessingErrorMessage(server, "Processing could not be started."),
+        "Unable to reach the laboratory service. Processing was not started.",
+      ),
+    [runTransition],
   );
 
   /*
@@ -422,15 +458,18 @@ export default function LabWorkstation() {
           onCollect={() => {
             if (activeId !== null) void collect(activeId);
           }}
+          onStartProcessing={() => {
+            if (activeId !== null) void startProcessing(activeId);
+          }}
           /*
             Both keyed on the ACTIVE request, so a pending collection or a
             refusal belonging to one request can never be shown against
             another after the selection moves.
           */
-          collecting={collectingId !== null && collectingId === activeId}
-          collectError={
-            collectErrorFor && collectErrorFor.requestId === activeId
-              ? collectErrorFor.message
+          pending={pendingId !== null && pendingId === activeId}
+          actionError={
+            actionErrorFor && actionErrorFor.requestId === activeId
+              ? actionErrorFor.message
               : null
           }
         />
