@@ -135,6 +135,8 @@ function detail(overrides: Partial<LabRequestDetail> = {}): LabRequestDetail {
     tests: [],
     clinical_notes: null,
     instructions: null,
+    result: null,
+    result_conflict: false,
     ...overrides,
   };
 }

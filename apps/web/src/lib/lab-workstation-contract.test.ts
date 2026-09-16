@@ -132,8 +132,8 @@ test("a second transition cannot be launched while one is in flight", () => {
   );
   const disabled = PANEL.match(/disabled=\{pending\}/g) ?? [];
   assert.equal(
-    disabled.length, 2,
-    "both action buttons must disable themselves on submit",
+    disabled.length, 3,
+    "Collect, Start processing and Enter results must each disable themselves on submit",
   );
 });
 
@@ -163,7 +163,7 @@ test("start processing is offered for exactly one status in the panel", () => {
  * Slice scope, still held
  * ------------------------------------------------------------------ */
 
-test("only the two known transitions mutate in the laboratory tree", () => {
+test("every laboratory mutation goes through one POST site", () => {
   for (const [name, source] of [
     ["workstation", WORKSTATION],
     ["panel", PANEL],
@@ -173,10 +173,11 @@ test("only the two known transitions mutate in the laboratory tree", () => {
       assert.ok(!source.includes(verb), `${name} must not ${verb}`);
     }
   }
-  // ONE fetch site for both transitions, by construction: they share
-  // runTransition, so there is a single POST in the file.
+  // ONE POST site, by construction: the two transitions and the three result
+  // writes all go through postLab, so there is a single POST in the file.
   const posts = WORKSTATION.match(/method: "POST"/g) ?? [];
-  assert.equal(posts.length, 1, "one shared POST site for both transitions");
+  assert.equal(posts.length, 1, "one shared POST site for every mutation");
+  assert.ok(WORKSTATION.includes("async function postLab<T>("));
 });
 
 test("the browser still never addresses Odoo directly", () => {

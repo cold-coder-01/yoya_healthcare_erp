@@ -1,16 +1,29 @@
-"""Laboratory Desk API: the bench's work queue, one request, and two transitions.
+"""Laboratory Desk API: the bench's work queue, one request, its transitions,
+and result entry.
 
-EVERY MUTATION IS ONE AUTHORITATIVE MODEL METHOD, AND THE CONTROLLER DECIDES
-NOTHING. Two exist so far, each a single POST calling a single method:
+EVERY STATE CHANGE IS ONE AUTHORITATIVE MODEL METHOD, AND THE CONTROLLER DECIDES
+NOTHING ABOUT WORKFLOW. The mutations:
 
     .../requests/<id>/collect           action_mark_sample_collected()
     .../requests/<id>/start-processing  action_mark_in_progress()
+    .../requests/<id>/result            find-or-create the ONE operational
+                                        result (plain ORM create)
+    .../results/<id>/save               allow-listed entry fields, draft only
+    .../results/<id>/enter              the same fields, then
+                                        action_mark_entered(), atomically
 
 No state is ever written here, no state machine is restated, and nothing calls
-sudo(). Result entry, validation, release and cancellation are further methods
-on hospital.laboratory.request / hospital.laboratory.result and arrive in later
-slices on exactly the same shape -- see _run_transition, which both mutations
-share so their atomicity cannot drift apart.
+sudo(). Validation, release, cancellation and reset-to-draft are further model
+methods that this API deliberately does NOT expose.
+
+RESULT ENTRY ADDS DESK POLICY, NOT BUSINESS RULES. The model accepts a result
+against a request that is sample_collected OR in_progress, and allows several
+results per request. The Laboratory Desk is narrower on purpose -- entry only
+while the request is in_progress, and exactly one operational result -- and
+those two restrictions live here, in the desk's own API, exactly as
+LAB_DESK_GROUPS is narrower than the ORM's ACLs. What counts as a COMPLETE
+result stays the model's: action_mark_entered() decides it and this module
+forwards its refusal.
 
 THE TWO ARE NOT SYMMETRICAL, and the difference is money. Collection runs
 hospital_billing's clearance gate and can be refused with a sentence that names
@@ -61,6 +74,7 @@ from odoo import http
 from odoo.exceptions import AccessError, UserError, ValidationError
 from odoo.http import request
 from odoo.osv import expression
+from odoo.service.model import PG_CONCURRENCY_EXCEPTIONS_TO_RETRY
 
 from ..services.api_response import (
     ApiError,
@@ -68,13 +82,16 @@ from ..services.api_response import (
     error_response,
     parse_date,
     parse_int_param,
+    read_json_body,
     success_response,
 )
 from ..services.lab_desk_serializers import (
     LAB_DESK_ACTIVE_STATUSES,
     LAB_DESK_STATUS_STATE,
     LAB_DESK_STATUSES,
+    lab_desk_results,
     lab_desk_status,
+    serialize_operational_result,
     serialize_request_detail,
     serialize_session,
     serialize_worklist,
@@ -136,6 +153,13 @@ def lab_endpoint(func):
     TransitionResponseError sits ABOVE AccessError for exactly that reason --
     it is a plain Exception, but placing it first keeps the "response failed"
     case from ever being reported as a denial.
+
+    CONCURRENCY FAILURES ARE RE-RAISED, NEVER ENVELOPED. A PostgreSQL
+    serialization failure, lock timeout or deadlock is not an error the bench
+    should see: Odoo's HTTP layer (odoo.service.model.retrying) rolls the whole
+    request back and replays it in a fresh transaction. Result find-or-create
+    depends on that replay -- see _open_operational_result -- so the broad
+    handler below must never swallow one into a 500.
     """
 
     @functools.wraps(func)
@@ -146,6 +170,8 @@ def lab_endpoint(func):
                     "authentication_required", "Authentication is required.", 401
                 )
             return func(*args, **kwargs)
+        except PG_CONCURRENCY_EXCEPTIONS_TO_RETRY:
+            raise
         except ApiError as error:
             return api_error_response(error)
         except TransitionResponseError as error:
@@ -326,6 +352,359 @@ def _collection_refusal(record, error):
             "lab_not_financially_cleared", CLEARANCE_REFUSED_MESSAGE, 422
         )
     return ApiError("invalid_workflow_state", str(error), 422)
+
+
+# ----------------------------------------------------------------------
+# Result entry (Slice 3)
+# ----------------------------------------------------------------------
+
+# LABORATORY DESK POLICY, narrower than the model. hospital.laboratory.result
+# accepts a request in sample_collected OR in_progress
+# (RESULT_ELIGIBLE_REQUEST_STATES); the bench enters results only once
+# processing has started, so a result is never typed against a sample nobody
+# has put on the bench. Not a business rule, and deliberately not restated as
+# one: the model's own constraint still runs on create.
+RESULT_ENTRY_REQUEST_STATE = "in_progress"
+
+# THE WRITE ALLOW-LIST. Everything else on the result -- request, patient,
+# physician, technician, date, state, the line structure, the test, the
+# specimen, the sequence -- is either derived by the model or is workflow, and
+# is refused as input rather than silently dropped, so a client that sends it
+# learns immediately that it is not being honoured.
+EDITABLE_RESULT_HEADER_FIELDS = ("interpretation", "remarks")
+EDITABLE_RESULT_LINE_FIELDS = (
+    "result_value",
+    "unit",
+    "reference_range",
+    "abnormal_flag",
+    "notes",
+)
+
+RESULT_ENTRY_CLOSED_MESSAGE = (
+    "Results are entered on the Laboratory Desk only while the request is In "
+    "progress. Request %s is %s. Nothing has been changed."
+)
+RESULT_AMBIGUOUS_MESSAGE = (
+    "Request %s has %s result records, so the Laboratory Desk cannot tell which "
+    "one to use. Nothing has been changed. Ask a laboratory manager to review "
+    "this request."
+)
+RESULT_FINAL_MESSAGE = (
+    "Request %s already has a %s result (%s). A new result cannot be started "
+    "from the Laboratory Desk."
+)
+RESULT_CANCELLED_MESSAGE = (
+    "Request %s has a cancelled result (%s). The Laboratory Desk does not start "
+    "a replacement result. Nothing has been changed. Ask a laboratory manager "
+    "to review this request."
+)
+RESULT_NOT_EDITABLE_MESSAGE = (
+    "Result %s is %s and can no longer be edited from the Laboratory Desk. "
+    "Nothing has been changed."
+)
+
+
+def _lock_row(env, table, record_id):
+    """Take the row lock for one record, AFTER flushing pending ORM writes.
+
+    The flush is not optional: the ORM defers writes, and a raw SELECT ... FOR
+    UPDATE issued before it would lock a row that does not yet reflect what this
+    same transaction has done -- the ordering consultation._assert_version
+    documents for the same reason. `table` is always a literal from this
+    module, never input.
+    """
+    env.flush_all()
+    env.cr.execute(
+        "SELECT id FROM %s WHERE id = %%s FOR UPDATE" % table, (record_id,)
+    )
+
+
+def _load_result(env, result_id):
+    """Resolve one result through the CALLER'S OWN record rules.
+
+    search(), not browse().exists(), for the reason _load_request gives: a
+    result the caller may not read is simply absent and answers 404, like any
+    id that is not theirs to see. Archived results are unreachable too.
+    """
+    if result_id <= 0:
+        raise ApiError("invalid_result_id", "Laboratory result ID is invalid.", 400)
+    result = env["hospital.laboratory.result"].search(
+        [("id", "=", result_id)], limit=1
+    )
+    if not result:
+        raise ApiError("lab_result_not_found", "Laboratory result not found.", 404)
+    return result
+
+
+def _state_label(record):
+    labels = dict(record._fields["state"]._description_selection(record.env))
+    return labels.get(record.state, record.state)
+
+
+def _assert_entry_open(record):
+    """Desk policy: the request must be in_progress. See RESULT_ENTRY_REQUEST_STATE."""
+    if record.state != RESULT_ENTRY_REQUEST_STATE:
+        raise ApiError(
+            "lab_result_entry_not_available",
+            RESULT_ENTRY_CLOSED_MESSAGE % (record.name, _state_label(record)),
+            422,
+        )
+
+
+def _assert_single_result(record, results):
+    """Refuse to guess when a request carries more than one result."""
+    if len(results) > 1:
+        raise ApiError(
+            "lab_result_ambiguous",
+            RESULT_AMBIGUOUS_MESSAGE % (record.name, len(results)),
+            409,
+        )
+
+
+def _open_operational_result(env, record):
+    """Find or create THE one operational result of an in_progress request.
+
+    WHY THIS NEEDS MORE THAN A ROW LOCK. The model deliberately allows several
+    results per request, so no constraint stops a double-click creating two --
+    and two active results covering the same ordered line block the request's
+    completion permanently (the known B3 gap). The guard therefore has to live
+    here, and it has to survive two requests racing.
+
+    Odoo runs every transaction at REPEATABLE READ, and the snapshot is taken at
+    the transaction's FIRST query -- long before this function, while the
+    session and the request were being loaded. So a plain SELECT ... FOR UPDATE
+    is not enough on its own:
+
+        A locks the request, finds no result, creates one, commits.
+        B was waiting on the lock; it now acquires it -- but B's snapshot still
+        predates A's commit, so B's search sees NO result and creates a second.
+
+    THE FIX IS TO MAKE THE WINNER MODIFY THE ROW IT LOCKED. Immediately before
+    creating, the winner issues a no-op UPDATE on the request row
+    (write_date = write_date: no value changes, no ORM write, no audit entry).
+    PostgreSQL then refuses B's lock with a serialization failure, because the
+    row it wants was modified by a transaction that committed after B's
+    snapshot. lab_endpoint re-raises that failure, Odoo's HTTP layer
+    (odoo.service.model.retrying) replays B in a fresh transaction, and the
+    replay finds A's result and returns it. Two clicks, one result.
+
+    Only the CREATE path touches the row (see _create_operational_result).
+    Resuming an existing result never needs to: a result that already exists is
+    visible to every snapshot taken after its creator committed, and the creator
+    touched the row when it made it.
+
+    Returns the existing operational result, or an empty recordset when one may
+    be created. Every refusal is raised before anything is written.
+    """
+    _lock_row(env, "hospital_laboratory_request", record.id)
+    record.invalidate_recordset()
+    _assert_entry_open(record)
+
+    results = lab_desk_results(record)
+    _assert_single_result(record, results)
+
+    if results:
+        result = results
+        if result.state == "cancelled":
+            raise ApiError(
+                "lab_result_cancelled",
+                RESULT_CANCELLED_MESSAGE % (record.name, result.name),
+                409,
+            )
+        if result.state not in ("draft", "entered"):
+            raise ApiError(
+                "lab_result_already_final",
+                RESULT_FINAL_MESSAGE
+                % (record.name, _state_label(result).lower(), result.name),
+                409,
+            )
+    return results
+
+
+def _create_operational_result(env, record):
+    """Create the result, after marking the locked request row as modified.
+
+    Only ever called by the lock holder, after _open_operational_result has
+    found no result. The no-op UPDATE is what turns a concurrent creator's
+    stale snapshot into a serialization failure Odoo replays; see that
+    function's docstring.
+    """
+    env.cr.execute(
+        "UPDATE hospital_laboratory_request SET write_date = write_date "
+        "WHERE id = %s",
+        (record.id,),
+    )
+    # Plain ORM create, exactly as the model expects: it assigns the LABRES
+    # sequence, copies patient and physician from the request, defaults the
+    # technician to the caller, and builds one line per ordered request line.
+    return env["hospital.laboratory.result"].create({"request_id": record.id})
+
+
+def _text_value(field_name, value):
+    """A string, or null to clear. An empty string is stored as empty."""
+    if value is None or value == "":
+        return False
+    if not isinstance(value, str):
+        raise ApiError("invalid_field", "'%s' must be a string or null." % field_name, 400)
+    # Stored as typed. Deliberately NOT stripped: whether whitespace counts as a
+    # result is action_mark_entered's decision, and trimming here would make a
+    # blank-looking draft silently different from what the technician sees.
+    return value
+
+
+def _check_result_payload_shape(body):
+    """Refuse any key outside the allow-list before a record is touched."""
+    allowed = set(EDITABLE_RESULT_HEADER_FIELDS) | {"lines"}
+    unknown = sorted(key for key in body if key not in allowed)
+    if unknown:
+        raise ApiError(
+            "lab_result_field_not_allowed",
+            "These result fields cannot be written from the Laboratory Desk: %s."
+            % ", ".join(unknown),
+            400,
+        )
+    lines = body.get("lines", [])
+    if lines is None:
+        lines = []
+    if not isinstance(lines, list):
+        raise ApiError("invalid_field", "'lines' must be a list.", 400)
+    line_allowed = set(EDITABLE_RESULT_LINE_FIELDS) | {"id"}
+    for entry in lines:
+        if not isinstance(entry, dict):
+            raise ApiError("invalid_field", "Each entry in 'lines' must be an object.", 400)
+        unknown = sorted(key for key in entry if key not in line_allowed)
+        if unknown:
+            raise ApiError(
+                "lab_result_field_not_allowed",
+                "These result line fields cannot be written from the Laboratory "
+                "Desk: %s." % ", ".join(unknown),
+                400,
+            )
+        line_id = entry.get("id")
+        if isinstance(line_id, bool) or not isinstance(line_id, int):
+            raise ApiError(
+                "invalid_field", "Each result line needs its integer 'id'.", 400
+            )
+    return lines
+
+
+def _result_write_values(env, result, body):
+    """Translate an allow-listed body into ONE parent write.
+
+    LINES ARE WRITTEN THROUGH THE PARENT, as (1, id, vals) commands on
+    `line_ids`, rather than line by line. hospital.laboratory.result.write() is
+    where the audit entry "Laboratory result updated." is created; a direct
+    line.write() records nothing at all.
+
+    Every line id must belong to THIS result. A foreign id is refused, never
+    ignored: a (1, id, vals) command naming another result's line would
+    otherwise write through into a record the request never asked about.
+    """
+    lines = _check_result_payload_shape(body)
+    values = {}
+    for field_name in EDITABLE_RESULT_HEADER_FIELDS:
+        if field_name in body:
+            values[field_name] = _text_value(field_name, body[field_name])
+
+    own_line_ids = set(result.line_ids.ids)
+    flag_values = {
+        value
+        for value, _label in env["hospital.laboratory.result.line"]
+        ._fields["abnormal_flag"]
+        ._description_selection(env)
+    }
+    seen = set()
+    commands = []
+    for entry in lines:
+        line_id = entry["id"]
+        if line_id not in own_line_ids:
+            raise ApiError(
+                "lab_result_line_not_found",
+                "Result line %s does not belong to result %s." % (line_id, result.name),
+                400,
+            )
+        if line_id in seen:
+            raise ApiError(
+                "invalid_field",
+                "Result line %s appears more than once." % line_id,
+                400,
+            )
+        seen.add(line_id)
+        line_values = {}
+        for field_name in EDITABLE_RESULT_LINE_FIELDS:
+            if field_name not in entry:
+                continue
+            if field_name == "abnormal_flag":
+                flag = entry[field_name]
+                # The model's own selection, and never null: the field defaults
+                # to "normal" and the desk offers no invented "unassessed" value.
+                if flag not in flag_values:
+                    raise ApiError(
+                        "invalid_field",
+                        "'abnormal_flag' must be one of: %s."
+                        % ", ".join(sorted(flag_values)),
+                        400,
+                    )
+                line_values[field_name] = flag
+            else:
+                line_values[field_name] = _text_value(field_name, entry[field_name])
+        if line_values:
+            commands.append((1, line_id, line_values))
+    if commands:
+        values["line_ids"] = commands
+    return values
+
+
+def _editable_result(env, result):
+    """Lock the result and apply the desk's entry policy to it.
+
+    THE LOCK SERIALIZES SAVE AGAINST ENTER. Without it a save racing a Mark
+    entered could write a blank value into a result the moment after it became
+    entered -- result lines are not frozen until validation. With it, the
+    later request waits, finds the row modified by the committed state change,
+    and is replayed by Odoo against the entered result, which this function
+    then refuses.
+    """
+    _lock_row(env, "hospital_laboratory_result", result.id)
+    result.invalidate_recordset()
+    request_record = result.request_id
+    _assert_entry_open(request_record)
+    _assert_single_result(request_record, lab_desk_results(request_record))
+    if result.state != "draft":
+        raise ApiError(
+            "lab_result_not_editable",
+            RESULT_NOT_EDITABLE_MESSAGE % (result.name, _state_label(result)),
+            409,
+        )
+
+
+def _run_result_action(env, result, action, failure_code, failure_message):
+    """Run a result mutation and build its response inside ONE savepoint.
+
+    The same contract as _run_transition, for the same two reasons: a model
+    refusal must leave nothing half-written behind it, and a failure while
+    serializing must not leave a committed change behind a message saying it
+    failed. For Mark entered that is the difference between "values saved but
+    not entered" and a clean "nothing changed" -- the only outcome the bench
+    can act on.
+    """
+    with env.cr.savepoint():
+        action()
+        try:
+            env.invalidate_all()
+            return {
+                "result": serialize_operational_result(result),
+                "request": serialize_request_detail(result.request_id),
+            }
+        except Exception as error:
+            _logger.exception(
+                "Laboratory %s response failed for result=%s uid=%s; "
+                "rolling the change back",
+                failure_code,
+                result.id,
+                env.uid,
+            )
+            raise TransitionResponseError(failure_code, failure_message) from error
 
 
 def _limit_param(raw):
@@ -835,3 +1214,196 @@ class YoyaEmrLaboratoryController(http.Controller):
                 "capabilities": lab_desk_capability_flags(env),
             }
         )
+
+    # ------------------------------------------------------------------
+    # 6. Result entry: find or create the operational result
+    # ------------------------------------------------------------------
+    @http.route(
+        "%s/requests/<int:request_id>/result" % LAB_API,
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @lab_endpoint
+    def open_result(self, request_id, **params):
+        """Return the request's ONE operational result, creating it if absent.
+
+        What "Enter results" calls. Idempotent by design: the first call creates
+        a draft, every later call returns that same record -- draft to resume,
+        entered to view. See _open_operational_result for the concurrency
+        argument, which is the reason this is not a plain search-then-create.
+
+        REFUSALS, each raised before anything is written:
+
+          lab_result_entry_not_available  422  request is not in_progress
+          lab_result_ambiguous            409  more than one result exists
+          lab_result_already_final        409  the result is validated/released
+          lab_result_cancelled            409  the result is cancelled
+
+        The body is ignored: nothing about a result is chosen by the client at
+        creation. The model derives patient, physician, technician and lines.
+        """
+        env = request.env
+        _require_lab_desk(env)
+
+        record = _load_request(env, request_id)
+        existing = _open_operational_result(env, record)
+        capabilities = lab_desk_capability_flags(env)
+
+        if existing:
+            return success_response(
+                {
+                    "result": serialize_operational_result(existing),
+                    "request": serialize_request_detail(record),
+                    "created": False,
+                    "capabilities": capabilities,
+                }
+            )
+
+        try:
+            with env.cr.savepoint():
+                created = _create_operational_result(env, record)
+                try:
+                    env.invalidate_all()
+                    payload = {
+                        "result": serialize_operational_result(created),
+                        "request": serialize_request_detail(record),
+                    }
+                except Exception as error:
+                    _logger.exception(
+                        "Laboratory result create response failed for "
+                        "request=%s uid=%s; rolling the creation back",
+                        request_id,
+                        env.uid,
+                    )
+                    raise TransitionResponseError(
+                        "lab_result_open_response_failed",
+                        "The result could not be opened because the "
+                        "confirmation could not be produced. Nothing was "
+                        "changed. Please retry.",
+                    ) from error
+        except AccessError:
+            raise
+        except (UserError, ValidationError) as error:
+            # The model's own creation guards (request state, patient match).
+            # Rolled back by the savepoint; the sentence carries no money.
+            raise ApiError("invalid_workflow_state", str(error), 422) from error
+
+        payload["created"] = True
+        payload["capabilities"] = capabilities
+        return success_response(payload)
+
+    # ------------------------------------------------------------------
+    # 7. Result entry: save a draft
+    # ------------------------------------------------------------------
+    @http.route(
+        "%s/results/<int:result_id>/save" % LAB_API,
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @lab_endpoint
+    def save_result(self, result_id, **params):
+        """Persist allow-listed entry fields on a DRAFT result. No state moves.
+
+        Body (every key optional):
+
+            {"interpretation": str|null, "remarks": str|null,
+             "lines": [{"id": int, "result_value": str|null, "unit": str|null,
+                        "reference_range": str|null, "abnormal_flag": str,
+                        "notes": str|null}]}
+
+        Any other key -- request_id, patient_id, state, test_id,
+        request_line_id, sample_type, sequence, anything -- is a 400, not a
+        silent drop. The write goes through the PARENT result so the model's
+        audit entry is created.
+
+        INCOMPLETE DRAFTS ARE ALLOWED. A blank or whitespace-only value saves,
+        because a draft is by definition unfinished and the model permits it;
+        completeness is action_mark_entered's gate, not this route's.
+        """
+        env = request.env
+        _require_lab_desk(env)
+        body = read_json_body()
+        _check_result_payload_shape(body)
+
+        result = _load_result(env, result_id)
+        _editable_result(env, result)
+        values = _result_write_values(env, result, body)
+
+        def save():
+            if values:
+                result.write(values)
+
+        try:
+            payload = _run_result_action(
+                env,
+                result,
+                save,
+                "lab_result_save_response_failed",
+                "The draft was not saved because the confirmation could not be "
+                "produced. Nothing was changed. Please retry.",
+            )
+        except AccessError:
+            raise
+        except (UserError, ValidationError) as error:
+            raise ApiError("invalid_workflow_state", str(error), 422) from error
+
+        payload["capabilities"] = lab_desk_capability_flags(env)
+        return success_response(payload)
+
+    # ------------------------------------------------------------------
+    # 8. Result entry: save and mark entered, atomically
+    # ------------------------------------------------------------------
+    @http.route(
+        "%s/results/<int:result_id>/enter" % LAB_API,
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @lab_endpoint
+    def enter_result(self, result_id, **params):
+        """Write the latest values, then action_mark_entered(). ONE savepoint.
+
+        WHY ONE ROUTE WITH A BODY, RATHER THAN THE BROWSER CALLING /save AND
+        THEN /enter. "Mark entered" is one act to the technician. As two
+        requests it has a failure in the middle -- values saved, transition
+        refused or lost in transit -- that leaves the record different from
+        both what they asked for and what they were told. Here the write, the
+        model's completeness gate and the response are one savepoint: either
+        the result is entered with exactly the values on screen, or nothing at
+        all has changed and the draft is as it was before the click.
+
+        The body is the same allow-listed shape /save accepts, and may be
+        empty. The completeness rule is not restated: action_mark_entered()
+        decides it (every ordered line reported once, every result_value
+        non-blank after trimming, "0" valid) and its refusal is forwarded as
+        `lab_result_incomplete`. No money is involved: hospital_billing
+        overrides action_validate, not this method.
+        """
+        env = request.env
+        _require_lab_desk(env)
+        body = read_json_body()
+        _check_result_payload_shape(body)
+
+        result = _load_result(env, result_id)
+        _editable_result(env, result)
+        values = _result_write_values(env, result, body)
+
+        def save_and_enter():
+            if values:
+                result.write(values)
+            result.action_mark_entered()
+
+        try:
+            payload = _run_result_action(
+                env,
+                result,
+                save_and_enter,
+                "lab_result_enter_response_failed",
+                "The result was not marked entered because the confirmation "
+                "could not be produced. Nothing was changed. Please retry.",
+            )
+        except AccessError:
+            raise
+        except ValidationError as error:
+            raise ApiError("lab_result_incomplete", str(error), 422) from error
+        except UserError as error:
+            raise ApiError("invalid_workflow_state", str(error), 422) from error
+
+        payload["capabilities"] = lab_desk_capability_flags(env)
+        return success_response(payload)

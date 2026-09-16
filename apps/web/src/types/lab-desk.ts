@@ -127,11 +127,95 @@ export type LabQueueRow = {
   released_count: number;
 };
 
+/**
+ * hospital.laboratory.result.state. All five, restated so the desk can reason
+ * about a result without inferring it. Slice 3 moves only draft -> entered;
+ * the other transitions exist in Odoo and are deliberately not offered here.
+ */
+export const LAB_RESULT_STATES = [
+  "draft",
+  "entered",
+  "validated",
+  "released",
+  "cancelled",
+] as const;
+export type LabResultState = (typeof LAB_RESULT_STATES)[number];
+
+/** One value of the model's own abnormal_flag selection. */
+export type LabAbnormalFlagOption = { value: string; label: string };
+
+/**
+ * One result line. Structure (`request_line_id`, `test`, `sample_type`,
+ * `sequence`) is derived by the model and READ-ONLY: the save endpoint refuses
+ * every one of those keys as input.
+ */
+export type LabResultLine = {
+  id: number;
+  request_line_id: number | null;
+  test: { id: number; name: string; code: string | null };
+  sample_type: string | null;
+  result_value: string | null;
+  unit: string | null;
+  reference_range: string | null;
+  abnormal_flag: string | null;
+  notes: string | null;
+  sequence: number;
+};
+
+/**
+ * THE operational result of one request, as the bench enters it.
+ *
+ * No technician, physician, validation or release metadata: none is editable
+ * here, and the model records no validated_by / released_at at all.
+ * `abnormal_flag_options` is the model's own selection, so the browser never
+ * offers a value Odoo cannot store.
+ */
+export type LabResult = {
+  id: number;
+  name: string;
+  state: string;
+  state_label: string | null;
+  result_date: string | null;
+  interpretation: string | null;
+  remarks: string | null;
+  lines: LabResultLine[];
+  abnormal_flag_options: LabAbnormalFlagOption[];
+};
+
 /** The detail panel's shape: the queue row plus what the bench acts on. */
 export type LabRequestDetail = LabQueueRow & {
   tests: LabOrderedTest[];
   clinical_notes: string | null;
   instructions: string | null;
+  /**
+   * The ONE operational result, or null when there is none -- and also null
+   * when there is more than one, in which case `result_conflict` is true and
+   * the desk offers no entry rather than guessing which record to use.
+   */
+  result: LabResult | null;
+  result_conflict: boolean;
+};
+
+/** What the three result routes return. `created` only from the open route. */
+export type LabResultResponse = {
+  result: LabResult;
+  request: LabRequestDetail;
+  created?: boolean;
+  capabilities: LabDeskCapabilities;
+};
+
+/** The allow-listed body for /save and /enter. Nothing else is accepted. */
+export type LabResultWritePayload = {
+  interpretation: string | null;
+  remarks: string | null;
+  lines: {
+    id: number;
+    result_value: string | null;
+    unit: string | null;
+    reference_range: string | null;
+    abnormal_flag: string;
+    notes: string | null;
+  }[];
 };
 
 export type LabDeskCapabilities = {

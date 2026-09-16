@@ -9,6 +9,7 @@ import {
   orDash,
   testCountLabel,
 } from "@/lib/lab-desk-format";
+import { canEnterResults, canViewResult } from "@/lib/lab-result-format";
 import type { LabRequestDetail } from "@/types/lab-desk";
 
 import { LabPriorityPill, LabStatusPill } from "./lab-status-pill";
@@ -16,12 +17,15 @@ import { LabPriorityPill, LabStatusPill } from "./lab-status-pill";
 /**
  * The request detail panel.
  *
- * TWO ACTIONS, EACH OFFERED FOR EXACTLY ONE STATUS: Collect sample for
- * `ready_for_collection`, Start processing for `sample_collected`. Never both
- * at once, because no status satisfies both. Result entry, validation and
- * release are later slices and have no control here -- not even a disabled
- * one. A greyed-out button is a promise about workflow that has not shipped,
- * and the first thing a technician does with one is click it.
+ * THREE ACTIONS, EACH OFFERED FOR EXACTLY ONE STATUS: Collect sample for
+ * `ready_for_collection`, Start processing for `sample_collected`, Enter
+ * results for `in_progress` (with no result yet, or a draft to resume). No
+ * status offers two. Validation and release have no control here -- not even
+ * a disabled one. A greyed-out button is a promise about workflow that has not
+ * shipped, and the first thing a technician does with one is click it.
+ *
+ * An entered result is SHOWN, never edited: its state is stated and "View
+ * result" opens the same sheet read-only.
  *
  * THE BUTTON IS AN AFFORDANCE, NOT A PERMISSION. It renders from the SERVER'S
  * derived status (`ready_for_collection`), never from a financial value, and
@@ -84,6 +88,72 @@ function ClearanceBanner({ status }: { status: string }) {
   );
 }
 
+/**
+ * Where the request's result stands, in words.
+ *
+ * Text carries the state; the tone only reinforces it. A result conflict is
+ * stated rather than resolved: the desk will not guess which of several results
+ * to work on.
+ */
+function ResultStatus({
+  detail,
+  onViewResult,
+}: {
+  detail: LabRequestDetail;
+  onViewResult: (trigger: HTMLElement) => void;
+}) {
+  if (detail.result_conflict) {
+    return (
+      <div className="flex items-start gap-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 cl-secondary text-amber-900">
+        <span aria-hidden className="mt-px font-bold">
+          !
+        </span>
+        <p className="font-semibold">
+          This request has more than one result record, so result entry is not
+          offered here. Ask a laboratory manager to review it.
+        </p>
+      </div>
+    );
+  }
+
+  const result = detail.result;
+  if (!result) return null;
+
+  const label = (result.state_label ?? result.state).toUpperCase();
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded border border-slate-200 bg-slate-50 px-3 py-2">
+      <span className="cl-secondary text-slate-600">
+        Result <span className="font-mono font-semibold text-slate-800">{result.name}</span>
+      </span>
+      <span
+        className={`inline-flex items-center rounded border px-1.5 py-px cl-micro font-bold tracking-wide ${
+          result.state === "draft"
+            ? "border-amber-300 bg-white text-amber-800"
+            : result.state === "cancelled"
+              ? "border-slate-400 bg-white text-slate-700"
+              : "border-indigo-300 bg-white text-indigo-800"
+        }`}
+      >
+        {label}
+      </span>
+      {result.state === "cancelled" ? (
+        <span className="cl-meta text-slate-600">
+          A replacement result is not started from the Laboratory Desk.
+        </span>
+      ) : null}
+      {canViewResult(detail) ? (
+        <button
+          type="button"
+          onClick={(event) => onViewResult(event.currentTarget)}
+          className="ml-auto inline-flex h-8 items-center rounded-md border border-slate-300 bg-white px-3 cl-secondary font-semibold text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-700"
+        >
+          View result
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export default function LabRequestPanel({
   detail,
   loading,
@@ -91,6 +161,8 @@ export default function LabRequestPanel({
   empty,
   onCollect,
   onStartProcessing,
+  onEnterResults,
+  onViewResult,
   pending,
   actionError,
 }: {
@@ -103,6 +175,10 @@ export default function LabRequestPanel({
   onCollect: () => void;
   /** Runs the start-processing transition through the BFF. */
   onStartProcessing: () => void;
+  /** Opens (finds or creates) the operational result. Focus returns to trigger. */
+  onEnterResults: (trigger: HTMLElement) => void;
+  /** Opens the existing result read-only. */
+  onViewResult: (trigger: HTMLElement) => void;
   /** A transition is in flight for THIS request. */
   pending: boolean;
   /** The server's own refusal sentence, already sanitised by the Lab API. */
@@ -244,10 +320,44 @@ export default function LabRequestPanel({
             <span className="cl-meta text-slate-500">
               {pending
                 ? "Moving the request onto the bench…"
-                : "Marks the request as being run. Result entry is not available yet."}
+                : "Marks the request as being run. Results are entered once processing has started."}
             </span>
           </div>
         ) : null}
+
+        {/*
+          THE ENTER-RESULTS ACTION. Rendered only for `in_progress` with no
+          result yet or a draft to resume -- the Laboratory Desk's entry policy,
+          which the Lab API re-applies under a row lock on every click. An
+          entered result shows its state and View result instead, below.
+        */}
+        {canEnterResults(detail) ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={(event) => onEnterResults(event.currentTarget)}
+              /*
+                DISABLED THE MOMENT IT IS PRESSED. The server's find-or-create is
+                the real protection against a second result; disabling means the
+                second click is never sent.
+              */
+              disabled={pending}
+              aria-busy={pending}
+              className="inline-flex h-9 items-center gap-2 rounded-md bg-indigo-700 px-3.5 cl-body font-semibold text-white shadow-sm transition hover:bg-indigo-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-400"
+            >
+              {pending ? "Opening…" : "Enter results"}
+            </button>
+            <span className="cl-meta text-slate-500">
+              {pending
+                ? "Opening the result sheet…"
+                : detail.result
+                  ? "Resumes the saved draft."
+                  : "Opens the result sheet for every ordered test."}
+            </span>
+          </div>
+        ) : null}
+
+        <ResultStatus detail={detail} onViewResult={onViewResult} />
 
         {/*
           The refusal. The server's own sentence is shown because it is the only
@@ -385,8 +495,8 @@ export default function LabRequestPanel({
         buttons for workflow that has not shipped.
       */}
       <footer className="flex h-7 shrink-0 items-center gap-2 border-t border-slate-200 bg-slate-50 px-3 cl-meta text-slate-500">
-        Sample collection and processing only. Result entry, validation and
-        release are not available yet.
+        Sample collection, processing and result entry. Validation and release
+        are not available yet.
       </footer>
     </section>
   );

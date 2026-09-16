@@ -59,7 +59,16 @@ const LAB_ROUTES = [
   "requests/[requestId]/route.ts",
   "requests/[requestId]/collect/route.ts",
   "requests/[requestId]/start-processing/route.ts",
+  "requests/[requestId]/result/route.ts",
+  "results/[resultId]/save/route.ts",
+  "results/[resultId]/enter/route.ts",
 ].map((name) => [name, read(`app/api/laboratory/${name}`)] as const);
+
+function route(suffix: string): string {
+  const found = LAB_ROUTES.find(([name]) => name === suffix);
+  assert.ok(found, `missing route ${suffix}`);
+  return found[1];
+}
 
 /* ------------------------------------------------------------------ *
  * 1. The Laboratory Desk never names another workstation
@@ -201,17 +210,87 @@ test("no laboratory route reaches Odoo directly or names a port", () => {
   }
 });
 
-test("only the two known write routes exist in the laboratory BFF", () => {
+test("only the known write routes exist in the laboratory BFF", () => {
   const writers = LAB_ROUTES.filter(([, source]) =>
     source.includes("export async function POST"),
   ).map(([name]) => name);
   assert.deepEqual(writers.sort(), [
     "requests/[requestId]/collect/route.ts",
+    "requests/[requestId]/result/route.ts",
     "requests/[requestId]/start-processing/route.ts",
+    "results/[resultId]/enter/route.ts",
+    "results/[resultId]/save/route.ts",
   ]);
   for (const [name, source] of LAB_ROUTES) {
     for (const verb of ["export async function PATCH", "export async function DELETE", "export async function PUT"]) {
       assert.ok(!source.includes(verb), `${name} must not export ${verb}`);
     }
   }
+});
+
+/* ------------------------------------------------------------------ *
+ * 4. Result entry routes (Slice 3)
+ * ------------------------------------------------------------------ */
+
+test("each result route targets its own upstream path", () => {
+  assert.ok(
+    route("requests/[requestId]/result/route.ts").includes(
+      "${LAB_API}/requests/${parsed.value}/result",
+    ),
+  );
+  assert.ok(
+    route("results/[resultId]/save/route.ts").includes(
+      "${LAB_API}/results/${parsed.value}/save",
+    ),
+  );
+  assert.ok(
+    route("results/[resultId]/enter/route.ts").includes(
+      "${LAB_API}/results/${parsed.value}/enter",
+    ),
+  );
+  assert.ok(
+    !code(route("results/[resultId]/enter/route.ts")).includes("/save"),
+    "Mark entered is one upstream call, not save followed by enter",
+  );
+});
+
+test("the open route sends an empty body; save and enter forward the JSON object", () => {
+  const open = route("requests/[requestId]/result/route.ts");
+  assert.ok(open.includes("parseRequestId"));
+  assert.ok(open.includes('"POST",'));
+  assert.ok(open.includes("{},"));
+  assert.ok(!open.includes("readJsonObject"));
+
+  for (const name of ["results/[resultId]/save/route.ts", "results/[resultId]/enter/route.ts"]) {
+    const source = route(name);
+    assert.ok(source.includes("parseResultId(resultId)"), `${name} validates the id`);
+    assert.ok(source.includes("await readJsonObject(request)"), `${name} reads the body`);
+    assert.ok(source.includes("body.body"), `${name} forwards the body unchanged`);
+    for (const shape of ["context: { params: Promise<{ resultId: string }> }", "await context.params"]) {
+      assert.ok(source.includes(shape), `${name} must use ${shape}`);
+    }
+  }
+});
+
+test("the BFF does not restate the result allow-list or completeness rule", () => {
+  for (const name of ["results/[resultId]/save/route.ts", "results/[resultId]/enter/route.ts"]) {
+    const emitted = code(route(name));
+    for (const field of ["result_value", "reference_range", "abnormal_flag", "interpretation", ".trim("]) {
+      assert.ok(!emitted.includes(field), `${name} must not filter ${field}; Odoo decides`);
+    }
+  }
+});
+
+test("each result route has its own transport fallback code", () => {
+  assert.ok(route("requests/[requestId]/result/route.ts").includes("lab_result_open_failed"));
+  assert.ok(route("results/[resultId]/save/route.ts").includes("lab_result_save_failed"));
+  assert.ok(route("results/[resultId]/enter/route.ts").includes("lab_result_enter_failed"));
+});
+
+test("the laboratory utils add the body reader and the result-id parser, and still no binary helper", () => {
+  const emitted = code(LAB_UTILS);
+  assert.ok(emitted.includes("readJsonObject,"));
+  assert.ok(emitted.includes("export function parseResultId(raw: string)"));
+  assert.ok(emitted.includes('"invalid_result_id"'));
+  assert.ok(!emitted.includes("streamOdooBinary"));
 });

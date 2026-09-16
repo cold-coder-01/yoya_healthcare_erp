@@ -16,11 +16,22 @@ import {
   visibleDetail,
   worklistPath,
 } from "@/lib/lab-desk-format";
+import {
+  enterResultPath,
+  openResultPath,
+  resultErrorMessage,
+  saveResultPath,
+  shouldReconcileAfterResult,
+} from "@/lib/lab-result-format";
+import type { LabResultOutcome } from "@/lib/lab-result-format";
 import type {
   ApiEnvelope,
   LabQueueRow,
   LabRequestDetail,
   LabRequestResponse,
+  LabResult,
+  LabResultResponse,
+  LabResultWritePayload,
   LabSessionResponse,
   LabWorklistResponse,
   LabWorklistSummary,
@@ -29,6 +40,36 @@ import type {
 import LabFilters, { laneStatuses } from "./lab-filters";
 import LabQueue from "./lab-queue";
 import LabRequestPanel from "./lab-request-panel";
+import LabResultModal from "./lab-result-modal";
+
+/**
+ * THE ONE POST SITE ON THIS DESK. Every mutation -- collect, start
+ * processing, open a result, save a draft, mark entered -- goes through here to
+ * the BFF, so there is exactly one place a request body and its headers are
+ * built, and none of them can ever address Odoo.
+ */
+async function postLab<T>(path: string, body: unknown) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const payload = (await response.json()) as ApiEnvelope<T>;
+  return { response, payload };
+}
+
+/**
+ * The result sheet that is open, bound to the request and result it was opened
+ * with. A snapshot on purpose: the queue and the detail panel keep refreshing
+ * behind the modal, and none of that may replace what it is editing.
+ */
+type ResultEditor = {
+  request: LabRequestDetail;
+  result: LabResult;
+  readOnly: boolean;
+  returnFocus: HTMLElement | null;
+};
 
 /**
  * The Laboratory Desk.
@@ -42,10 +83,17 @@ import LabRequestPanel from "./lab-request-panel";
  * services/reception_scope.may_lab_desk before it touches a record and scoped
  * by Odoo record rules after it does.
  *
- * TWO MUTATIONS IN THIS TREE -- collect a sample, start processing it. Each
- * calls one authoritative model method and decides nothing locally; both run
- * through the same `runTransition` so their pending, error and reconciliation
+ * TWO BENCH TRANSITIONS -- collect a sample, start processing it. Each calls
+ * one authoritative model method and decides nothing locally; both run through
+ * the same `runTransition` so their pending, error and reconciliation
  * behaviour cannot drift apart.
+ *
+ * RESULT ENTRY (Slice 3) -- open the request's one operational result, save a
+ * draft, mark it entered. The result sheet is a modal that owns its own typed
+ * draft; this component only carries its requests to the BFF. Validation and
+ * release are not offered anywhere on this desk.
+ *
+ * Every POST in this file goes through `postLab`.
  *
  * THE LANE COUNTS COME FROM THE SERVER, and are never recounted here. They
  * describe the whole date+search scope rather than the rows on screen, so a
@@ -304,13 +352,7 @@ export default function LabWorkstation() {
       setPendingId(requestId);
       setActionErrorFor(null);
       try {
-        const response = await fetch(path, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: "{}",
-          cache: "no-store",
-        });
-        const payload = (await response.json()) as ApiEnvelope<LabRequestResponse>;
+        const { response, payload } = await postLab<LabRequestResponse>(path, {});
 
         if (!response.ok || !payload.success) {
           setActionErrorFor({
@@ -372,6 +414,136 @@ export default function LabWorkstation() {
         "Unable to reach the laboratory service. Processing was not started.",
       ),
     [runTransition],
+  );
+
+  /* ---------------- result entry (Slice 3) ---------------- */
+  const [resultEditor, setResultEditor] = useState<ResultEditor | null>(null);
+
+  /**
+   * "Enter results": find or create THE operational result, then open it.
+   *
+   * The server decides everything -- whether entry is open for this request,
+   * whether a draft already exists to resume, whether an existing result
+   * forbids a new one -- under a row lock, so a double click returns the same
+   * result rather than creating two. `pendingId` stops the second click being
+   * sent at all.
+   */
+  const openResultEntry = useCallback(
+    async (requestId: number, returnFocus: HTMLElement | null) => {
+      if (pendingId !== null || resultEditor !== null) return;
+      setPendingId(requestId);
+      setActionErrorFor(null);
+      try {
+        const { response, payload } = await postLab<LabResultResponse>(
+          openResultPath(requestId),
+          {},
+        );
+        if (!response.ok || !payload.success) {
+          setActionErrorFor({
+            requestId,
+            message: resultErrorMessage(
+              messageFromPayload(payload, ""),
+              "Result entry could not be opened.",
+            ),
+          });
+          if (shouldReconcileAfterResult(codeFromPayload(payload))) refresh();
+          return;
+        }
+        setDetail(payload.data.request);
+        setResultEditor({
+          request: payload.data.request,
+          result: payload.data.result,
+          // The server may hand back an entered result if the screen was stale;
+          // it is then shown, never edited.
+          readOnly: payload.data.result.state !== "draft",
+          returnFocus,
+        });
+        if (payload.data.created) refresh();
+      } catch {
+        setActionErrorFor({
+          requestId,
+          message:
+            "Unable to reach the laboratory service. Result entry was not opened.",
+        });
+      } finally {
+        setPendingId(null);
+      }
+    },
+    [pendingId, refresh, resultEditor],
+  );
+
+  /** "View result": the result already on screen, read-only. No request made. */
+  const viewResult = useCallback(
+    (returnFocus: HTMLElement | null) => {
+      const current = visibleDetail(detail, activeId, justActedId);
+      if (!current?.result || resultEditor !== null) return;
+      setResultEditor({
+        request: current,
+        result: current.result,
+        readOnly: true,
+        returnFocus,
+      });
+    },
+    [activeId, detail, justActedId, resultEditor],
+  );
+
+  /**
+   * One result write through the BFF, reported back to the modal.
+   *
+   * The DETAIL is refreshed from the server's own re-serialization on success,
+   * so the panel behind the modal is current. The MODAL is not touched from
+   * here: it owns its typed draft and decides for itself what to do with the
+   * outcome.
+   */
+  const writeResult = useCallback(
+    async (
+      path: string,
+      body: LabResultWritePayload,
+      fallback: string,
+      transportMessage: string,
+    ): Promise<LabResultOutcome> => {
+      try {
+        const { response, payload } = await postLab<LabResultResponse>(path, body);
+        if (!response.ok || !payload.success) {
+          if (shouldReconcileAfterResult(codeFromPayload(payload))) refresh();
+          return {
+            ok: false,
+            message: resultErrorMessage(messageFromPayload(payload, ""), fallback),
+          };
+        }
+        setDetail(payload.data.request);
+        return { ok: true, result: payload.data.result };
+      } catch {
+        return { ok: false, message: transportMessage };
+      }
+    },
+    [refresh],
+  );
+
+  const saveResultDraft = useCallback(
+    (resultId: number, body: LabResultWritePayload) =>
+      writeResult(
+        saveResultPath(resultId),
+        body,
+        "The draft could not be saved.",
+        "Unable to reach the laboratory service. The draft was not saved.",
+      ),
+    [writeResult],
+  );
+
+  const markResultEntered = useCallback(
+    async (resultId: number, body: LabResultWritePayload) => {
+      const outcome = await writeResult(
+        enterResultPath(resultId),
+        body,
+        "The result could not be marked entered.",
+        "Unable to reach the laboratory service. The result was not marked entered.",
+      );
+      // The queue's result counts moved; the request's lane did not.
+      if (outcome.ok) refresh();
+      return outcome;
+    },
+    [refresh, writeResult],
   );
 
   /*
@@ -461,6 +633,10 @@ export default function LabWorkstation() {
           onStartProcessing={() => {
             if (activeId !== null) void startProcessing(activeId);
           }}
+          onEnterResults={(trigger) => {
+            if (activeId !== null) void openResultEntry(activeId, trigger);
+          }}
+          onViewResult={(trigger) => viewResult(trigger)}
           /*
             Both keyed on the ACTIVE request, so a pending collection or a
             refusal belonging to one request can never be shown against
@@ -474,6 +650,26 @@ export default function LabWorkstation() {
           }
         />
       </div>
+
+      {/*
+        THE RESULT SHEET, bound to the request and result it opened with --
+        never to the live selection -- and keyed on the result, so a different
+        result is a different modal rather than a silent swap underneath the
+        technician's typing. The modal is aria-modal over a backdrop, so the
+        queue cannot be clicked while it is open.
+      */}
+      {resultEditor ? (
+        <LabResultModal
+          key={resultEditor.result.id}
+          request={resultEditor.request}
+          result={resultEditor.result}
+          readOnly={resultEditor.readOnly}
+          returnFocus={resultEditor.returnFocus}
+          onSaveDraft={(body) => saveResultDraft(resultEditor.result.id, body)}
+          onMarkEntered={(body) => markResultEntered(resultEditor.result.id, body)}
+          onClose={() => setResultEditor(null)}
+        />
+      ) : null}
     </div>
   );
 }

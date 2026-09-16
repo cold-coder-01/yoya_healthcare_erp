@@ -215,8 +215,8 @@ def _result_summary(request):
     single read, which is what keeps a hundred-row queue at a fixed query cost.
 
     STATE COUNTS ONLY, no values and no interpretation. A queue needs to know
-    that reporting has started; the values belong to the result screen, which
-    is a later slice.
+    that reporting has started; the values belong to the detail payload's
+    `result`, which only the selected request carries.
     """
     results = request.result_ids
     return {
@@ -258,15 +258,110 @@ def serialize_queue_row(request):
     return payload
 
 
+def lab_desk_results(request):
+    """Every result of one request the CALLER may read, oldest first.
+
+    A search rather than `request.result_ids`, so the caller's own record rules
+    are applied in the query and the ORM's active_test drops archived results --
+    the same resolution _load_request uses for the request itself. Cancelled
+    results are deliberately INCLUDED: a cancelled result is still an active
+    record that covers the ordered lines, and hiding it would let the desk start
+    a second one beside it.
+    """
+    return request.env["hospital.laboratory.result"].search(
+        [("request_id", "=", request.id)], order="id asc"
+    )
+
+
+def _selection_label(record, field_name):
+    """The model's own wording for a selection value, or None."""
+    value = record[field_name]
+    if not value:
+        return None
+    labels = dict(record._fields[field_name]._description_selection(record.env))
+    return labels.get(value, value)
+
+
+def serialize_result_line(line):
+    """One result line: the ordered test it reports on, and the values typed.
+
+    STRUCTURE IS READ-ONLY ON THE WIRE. `request_line_id`, the test and the
+    specimen are what the model derived from the request; they are here so the
+    bench can see WHAT it is reporting on, and the save endpoint refuses every
+    one of them as input.
+    """
+    test = line.test_id
+    return {
+        "id": line.id,
+        "request_line_id": line.request_line_id.id or None,
+        "test": {
+            "id": test.id,
+            "name": test.name,
+            "code": test.code or None,
+        },
+        # Derived by the model from the ordered line, falling back to the
+        # catalogue for a legacy line that never had it copied forward.
+        "sample_type": selection_value(line.sample_type or test.sample_type),
+        "result_value": line.result_value or None,
+        "unit": line.unit or None,
+        "reference_range": line.reference_range or None,
+        "abnormal_flag": selection_value(line.abnormal_flag),
+        "notes": line.notes or None,
+        "sequence": line.sequence,
+    }
+
+
+def serialize_operational_result(result):
+    """THE Laboratory Desk result payload. Entry fields only.
+
+    WHAT IS ABSENT, AND WHY. No validation or release metadata, because the
+    model records none (there is no validated_by, released_at or entered_at).
+    No technician or physician, because neither is editable here and neither is
+    needed to type a value. No charge, delivery or billing field of any kind:
+    result entry touches no money -- hospital_billing overrides action_validate,
+    not action_mark_entered.
+
+    `abnormal_flag_options` comes from the MODEL'S OWN selection, so the browser
+    offers exactly the values Odoo can store and never a second list that could
+    drift from it -- in particular never an invented "not assessed" value.
+    """
+    Line = result.env["hospital.laboratory.result.line"]
+    return {
+        "id": result.id,
+        "name": result.name,
+        "state": result.state,
+        "state_label": _selection_label(result, "state"),
+        "result_date": date_value(result.result_date),
+        "interpretation": result.interpretation or None,
+        "remarks": result.remarks or None,
+        "lines": [serialize_result_line(line) for line in result.line_ids],
+        "abnormal_flag_options": [
+            {"value": value, "label": label}
+            for value, label in Line._fields["abnormal_flag"]._description_selection(
+                result.env
+            )
+        ],
+    }
+
+
 def serialize_request_detail(request):
-    """One request, in full, for the read-only detail panel.
+    """One request, in full, for the detail panel.
 
     The queue row plus the ordered tests and the ordering clinician's own
     words. Deliberately a SUPERSET of the row, so the panel never has to merge
     two shapes and a selected row can render immediately from what the queue
     already returned.
+
+    THE OPERATIONAL RESULT (Slice 3). The desk works ONE result per request.
+    Exactly one existing result is that result, whatever its state; none is
+    `null`. MORE THAN ONE is reported as `result_conflict` with `result: null`
+    rather than by picking one: the model allows several results per request,
+    and choosing "the newest" would let the bench type into a record that may
+    not be the one the request's completion rule will count. Historical and
+    repeat results are never exposed here.
     """
     payload = serialize_queue_row(request)
+    results = lab_desk_results(request)
     payload.update(
         {
             "tests": [serialize_ordered_test(line) for line in request.line_ids],
@@ -276,6 +371,10 @@ def serialize_request_detail(request):
             # about THIS order, and the bench acts on them.
             "clinical_notes": request.clinical_notes or None,
             "instructions": request.instructions or None,
+            "result": (
+                serialize_operational_result(results) if len(results) == 1 else None
+            ),
+            "result_conflict": len(results) > 1,
         }
     )
     return payload

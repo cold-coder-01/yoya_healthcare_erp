@@ -1,6 +1,6 @@
 {
     "name": "YOYA EMR API",
-    "version": "18.0.1.8.0",
+    "version": "18.0.1.9.0",
     "license": "LGPL-3",
     "depends": [
         "base",

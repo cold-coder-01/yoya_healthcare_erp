@@ -1,5 +1,5 @@
 """Laboratory Desk: the bench queue and request detail (Slice 1), sample
-collection (Slice 2) and start processing (Slice 2b).
+collection (Slice 2), start processing (Slice 2b) and result entry (Slice 3).
 
 WHAT THESE TESTS ARE FOR
 ------------------------
@@ -49,15 +49,21 @@ that forged a state would prove nothing about the mapping under test.
 """
 import json
 import uuid
+from unittest.mock import MagicMock, patch
 
+from psycopg2 import errors as pg_errors
+
+from odoo.exceptions import AccessError
 from odoo.tests import tagged
 
+from odoo.addons.yoya_emr_api.controllers import laboratory as lab_controller
 from odoo.addons.yoya_emr_api.services.lab_desk_serializers import (
     LAB_DESK_ACTIVE_STATUSES,
     LAB_DESK_STATUS_LABELS,
     LAB_DESK_STATUS_STATE,
 )
 from odoo.addons.yoya_emr_api.services.reception_scope import LAB_DESK_GROUPS
+from odoo.addons.yoya_emr_api.services.result_serializers import released_results
 
 from .test_doctor_desk_api import DoctorDeskCase
 
@@ -66,6 +72,9 @@ WORKLIST = "/yoya-emr/api/v1/lab/worklist"
 DETAIL = "/yoya-emr/api/v1/lab/requests/%s"
 COLLECT = "/yoya-emr/api/v1/lab/requests/%s/collect"
 START_PROCESSING = "/yoya-emr/api/v1/lab/requests/%s/start-processing"
+OPEN_RESULT = "/yoya-emr/api/v1/lab/requests/%s/result"
+SAVE_RESULT = "/yoya-emr/api/v1/lab/results/%s/save"
+ENTER_RESULT = "/yoya-emr/api/v1/lab/results/%s/enter"
 
 G_LAB_TECH = "hospital_management.group_hospital_lab_technician"
 G_RECEPTIONIST = "hospital_management.group_hospital_receptionist"
@@ -89,7 +98,21 @@ EXPECTED_ROW_KEYS = {
     "result_count", "released_count",
 }
 
-EXPECTED_DETAIL_EXTRA_KEYS = {"tests", "clinical_notes", "instructions"}
+# `result` and `result_conflict` arrived with Slice 3 (result entry). They are
+# detail-only: the queue row still carries counts and never values.
+EXPECTED_DETAIL_EXTRA_KEYS = {
+    "tests", "clinical_notes", "instructions", "result", "result_conflict",
+}
+
+EXPECTED_RESULT_KEYS = {
+    "id", "name", "state", "state_label", "result_date", "interpretation",
+    "remarks", "lines", "abnormal_flag_options",
+}
+
+EXPECTED_RESULT_LINE_KEYS = {
+    "id", "request_line_id", "test", "sample_type", "result_value", "unit",
+    "reference_range", "abnormal_flag", "notes", "sequence",
+}
 
 EXPECTED_PATIENT_KEYS = {"id", "name", "mrn", "age", "gender"}
 
@@ -1989,3 +2012,833 @@ class TestLabDeskStartProcessing(LabDeskCase):
             after["active_bench"], before["active_bench"],
             "Starting processing moves work within the bench, not off it.",
         )
+
+
+@tagged("post_install", "-at_install", "lab_desk")
+class TestLabDeskResultEntry(LabDeskCase):
+    """SLICE 3. Result entry: draft -> saved values -> entered, and STOP.
+
+    WHAT THE DESK ADDS, AND WHAT IT LEAVES TO THE MODEL.
+
+      desk policy   entry only while the request is in_progress; exactly ONE
+                    operational result per request; only allow-listed fields
+                    are writable; only a draft is editable
+      model         what a complete result is (action_mark_entered), the
+                    sequence, the line structure, the specimen, the audit entry
+
+    So the refusal tests below come in two kinds, and each asserts the code
+    that says which kind it is: `lab_result_*` for the desk's own policy, and
+    `lab_result_incomplete` when the model's completeness gate refused.
+
+    NOTHING HERE VALIDATES OR RELEASES THROUGH THE API, because no such route
+    exists. Where a test needs a validated or released result it drives the
+    model directly, exactly as a laboratory manager would in Odoo, to prove the
+    desk refuses to start a second one beside it.
+    """
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+    def _post_json(self, url, body, user=None, password=None):
+        self._auth(user or self.lab_tech, password or self.lab_password)
+        response = self.url_open(
+            url,
+            data=json.dumps(body),
+            headers={"Content-Type": "application/json"},
+        )
+        return response, json.loads(response.text)
+
+    def _open(self, record, user=None, password=None):
+        return self._post_json(OPEN_RESULT % record.id, {}, user, password)
+
+    def _save(self, result_id, body, user=None, password=None):
+        return self._post_json(SAVE_RESULT % result_id, body, user, password)
+
+    def _enter(self, result_id, body=None, user=None, password=None):
+        return self._post_json(ENTER_RESULT % result_id, body or {}, user, password)
+
+    def _results_of(self, record):
+        """Every result of the request, archived included -- the real count."""
+        return (
+            self.env["hospital.laboratory.result"]
+            .sudo()
+            .with_context(active_test=False)
+            .search([("request_id", "=", record.id)])
+        )
+
+    def _opened(self, **kwargs):
+        """An in_progress request with its draft result opened through the API."""
+        record = self._in_progress(**kwargs)
+        response, payload = self._open(record)
+        self.assertEqual(response.status_code, 200, payload)
+        result = self.env["hospital.laboratory.result"].sudo().browse(
+            payload["data"]["result"]["id"]
+        )
+        return record, result, payload
+
+    def _line_body(self, result, **values):
+        return {
+            "lines": [dict({"id": line.id}, **values) for line in result.line_ids]
+        }
+
+    def _audit_entries(self, result):
+        return self.env["hospital.audit.log"].sudo().search(
+            [
+                ("model_name", "=", "hospital.laboratory.result"),
+                ("record_id", "=", result.id),
+            ],
+            order="id desc",
+        )
+
+    def _sysadmin(self, login):
+        password = "lab-admin-result-pw"
+        user = self._make_user(
+            login, password,
+            ["hospital_management.group_hospital_system_administrator"],
+        )
+        return user, password
+
+    def _denied_roles(self):
+        return (
+            (self.doctor_user, self.doctor_password),
+            (self.nurse, self.nurse_password),
+            (self.receptionist, self.receptionist_password),
+            (self.cashier, self.cashier_password),
+            (self.pharmacist, self.pharmacist_password),
+            (self.accountant, self.accountant_password),
+            (self.front_desk, self.fd_password),
+        )
+
+    def _assert_no_money(self, payload):
+        blob = json.dumps(payload).lower()
+        for banned in FORBIDDEN_KEYS:
+            self.assertNotIn(banned, blob, "'%s' must never reach the bench." % banned)
+
+    # ==================================================================
+    # Result lookup and serialization
+    # ==================================================================
+    def test_400_detail_result_is_null_when_none_exists(self):
+        record = self._in_progress()
+        _response, payload = self._lab_get(DETAIL % record.id)
+        detail = payload["data"]["request"]
+        self.assertIsNone(detail["result"])
+        self.assertFalse(detail["result_conflict"])
+
+    def test_401_detail_serializes_an_existing_draft(self):
+        record = self._in_progress()
+        result = self.env["hospital.laboratory.result"].sudo().create(
+            {"request_id": record.id}
+        )
+        _response, payload = self._lab_get(DETAIL % record.id)
+        serialized = payload["data"]["request"]["result"]
+        self.assertEqual(serialized["id"], result.id)
+        self.assertEqual(serialized["name"], result.name)
+        self.assertEqual(serialized["state"], "draft")
+        self.assertEqual(serialized["state_label"], "Draft")
+        self.assertEqual(len(serialized["lines"]), 1)
+        line = serialized["lines"][0]
+        self.assertEqual(line["test"]["id"], self.cleared_test.id)
+        self.assertEqual(line["test"]["code"], self.cleared_test.code)
+        self.assertEqual(line["sample_type"], "blood")
+        self.assertEqual(line["request_line_id"], record.line_ids.id)
+        self.assertEqual(line["abnormal_flag"], "normal")
+        self.assertIsNone(line["result_value"])
+
+    def test_402_only_the_allowed_result_fields_are_exposed(self):
+        _record, _result, payload = self._opened()
+        serialized = payload["data"]["result"]
+        self.assertEqual(set(serialized), EXPECTED_RESULT_KEYS)
+        for line in serialized["lines"]:
+            self.assertEqual(set(line), EXPECTED_RESULT_LINE_KEYS)
+            self.assertEqual(set(line["test"]), {"id", "name", "code"})
+        # The flag options are the MODEL'S selection, and nothing invented.
+        self.assertEqual(
+            [option["value"] for option in serialized["abnormal_flag_options"]],
+            ["normal", "low", "high", "critical", "abnormal"],
+        )
+        for absent in ("lab_technician_id", "physician_id", "patient_id",
+                       "validated_by", "released_at", "entered_at", "active"):
+            self.assertNotIn(absent, serialized)
+
+    def test_403_no_money_in_the_result_payloads(self):
+        record, _result, payload = self._opened()
+        self._assert_no_money(payload)
+        _response, detail = self._lab_get(DETAIL % record.id)
+        self._assert_no_money(detail)
+        self.assertNotIn("120.0", json.dumps(detail))
+
+    # ==================================================================
+    # Find or create
+    # ==================================================================
+    def test_410_lab_technician_can_open_a_result(self):
+        record = self._in_progress()
+        response, payload = self._open(record)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload["data"]["created"])
+        results = self._results_of(record)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results.state, "draft")
+        self.assertEqual(results.lab_technician_id, self.lab_tech)
+        self.assertEqual(results.patient_id, record.patient_id)
+        self.assertTrue(results.name.startswith("LABRES"))
+        self.assertEqual(payload["data"]["result"]["id"], results.id)
+        self.assertEqual(payload["data"]["request"]["result"]["id"], results.id)
+
+    def test_411_manager_can_open_a_result(self):
+        record = self._in_progress()
+        response, _payload = self._open(
+            record, user=self.manager, password=self.manager_password
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(self._results_of(record)), 1)
+
+    def test_412_system_administrator_can_open_a_result(self):
+        administrator, password = self._sysadmin("lab_admin_result_open")
+        record = self._in_progress()
+        response, _payload = self._open(record, user=administrator, password=password)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(self._results_of(record)), 1)
+
+    def test_413_every_other_role_is_refused_and_nothing_is_created(self):
+        """Doctor, nurse, receptionist, cashier, pharmacist, accountant and the
+        front-desk nurse. Each asserts the STATUS and the absence of a record:
+        a gate that answered 403 after creating would pass a status-only test."""
+        record = self._in_progress()
+        for user, password in self._denied_roles():
+            response, payload = self._open(record, user=user, password=password)
+            self.assertEqual(
+                response.status_code, 403,
+                "%s must not open a laboratory result." % user.login,
+            )
+            self.assertEqual(payload["error"]["code"], "lab_desk_not_authorized")
+        self.assertFalse(self._results_of(record))
+
+    def test_414_unauthenticated_never_reaches_the_endpoint(self):
+        record = self._in_progress()
+        self.authenticate(None, None)
+        response = self.url_open(
+            OPEN_RESULT % record.id, data="{}",
+            headers={"Content-Type": "application/json"},
+            allow_redirects=False,
+        )
+        self.assertIn(response.status_code, (301, 302, 303, 401, 403))
+        self.assertFalse(self._results_of(record))
+
+    def test_415_entry_is_offered_only_while_in_progress(self):
+        """DESK POLICY, narrower than the model: the model would accept a
+        result against sample_collected; the bench does not."""
+        for record in (
+            self._collected(),
+            self._lab_request(),
+            self._lab_request(confirm=False),
+            self._cancelled(),
+        ):
+            response, payload = self._open(record)
+            self.assertEqual(response.status_code, 422, record.state)
+            self.assertEqual(
+                payload["error"]["code"], "lab_result_entry_not_available"
+            )
+            self.assertIn("In progress", payload["error"]["message"])
+            self.assertFalse(
+                self._results_of(record),
+                "A refused open must not create a result (%s)." % record.state,
+            )
+
+    def test_416_an_existing_draft_is_resumed_not_duplicated(self):
+        record, result, _payload = self._opened()
+        response, payload = self._open(record)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(payload["data"]["created"])
+        self.assertEqual(payload["data"]["result"]["id"], result.id)
+        self.assertEqual(len(self._results_of(record)), 1)
+
+    def test_417_an_entered_result_is_returned_not_duplicated(self):
+        record, result, _payload = self._opened()
+        response, _payload = self._enter(
+            result.id, self._line_body(result, result_value="7.4")
+        )
+        self.assertEqual(response.status_code, 200)
+
+        response, payload = self._open(record)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(payload["data"]["created"])
+        self.assertEqual(payload["data"]["result"]["id"], result.id)
+        self.assertEqual(payload["data"]["result"]["state"], "entered")
+        self.assertEqual(len(self._results_of(record)), 1)
+
+    def test_418_a_validated_result_refuses_a_new_one(self):
+        record, result, _payload = self._opened()
+        result.line_ids.write({"result_value": "7.4"})
+        result.action_mark_entered()
+        result.action_validate()
+        record.invalidate_recordset()
+        self.assertEqual(record.state, "in_progress")
+
+        response, payload = self._open(record)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(payload["error"]["code"], "lab_result_already_final")
+        self.assertEqual(len(self._results_of(record)), 1)
+
+    def test_419_a_released_result_refuses_a_new_one(self):
+        """Release completes a fully covered request, so the entry policy
+        refuses first -- either way no second result is created."""
+        record = self._completed()
+        response, payload = self._open(record)
+        self.assertIn(response.status_code, (409, 422))
+        self.assertIn(
+            payload["error"]["code"],
+            ("lab_result_already_final", "lab_result_entry_not_available"),
+        )
+        self.assertEqual(len(self._results_of(record)), 1)
+
+    def test_420_a_cancelled_result_refuses_a_replacement(self):
+        """The known cancelled-coverage gap is NOT fixed here; the desk simply
+        refuses to add a second result on top of it."""
+        record, result, _payload = self._opened()
+        result.action_cancel()
+        response, payload = self._open(record)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(payload["error"]["code"], "lab_result_cancelled")
+        self.assertEqual(len(self._results_of(record)), 1)
+        self._assert_no_money(payload)
+
+    def test_421_several_existing_results_are_refused_not_guessed(self):
+        record = self._in_progress()
+        Result = self.env["hospital.laboratory.result"].sudo()
+        Result.create({"request_id": record.id})
+        Result.create({"request_id": record.id})
+
+        response, payload = self._open(record)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(payload["error"]["code"], "lab_result_ambiguous")
+        self.assertEqual(len(self._results_of(record)), 2)
+
+        _response, detail = self._lab_get(DETAIL % record.id)
+        self.assertIsNone(detail["data"]["request"]["result"])
+        self.assertTrue(detail["data"]["request"]["result_conflict"])
+
+    def test_422_a_double_open_yields_one_result(self):
+        """Sequential double click. The CONCURRENT case cannot be reproduced
+        inside HttpCase (one shared test cursor serializes every request); it
+        rests on the lock + row modification + Odoo replay, whose two
+        load-bearing parts are pinned by test_423 and test_424."""
+        record = self._in_progress()
+        first, one = self._open(record)
+        second, two = self._open(record)
+        self.assertEqual((first.status_code, second.status_code), (200, 200))
+        self.assertTrue(one["data"]["created"])
+        self.assertFalse(two["data"]["created"])
+        self.assertEqual(one["data"]["result"]["id"], two["data"]["result"]["id"])
+        self.assertEqual(len(self._results_of(record)), 1)
+
+    def test_423_concurrency_failures_reach_odoo_retry_unenveloped(self):
+        """lab_endpoint must RE-RAISE a serialization failure so Odoo replays
+        the request, instead of enveloping it as a 500 the bench would see."""
+        for error_type in (
+            pg_errors.SerializationFailure,
+            pg_errors.LockNotAvailable,
+            pg_errors.DeadlockDetected,
+        ):
+            def handler(error_type=error_type):
+                raise error_type("simulated concurrent update")
+
+            wrapped = lab_controller.lab_endpoint(handler)
+            # An explicit mock: patch() would otherwise introspect werkzeug's
+            # request proxy, which raises outside a bound request.
+            fake_request = MagicMock()
+            fake_request.env.user._is_public.return_value = False
+            with patch.object(lab_controller, "request", new=fake_request):
+                with self.assertRaises(error_type):
+                    wrapped()
+
+    def test_424_the_create_path_modifies_the_locked_request_row(self):
+        """THE HALF OF THE GUARD THAT A PLAIN LOCK LACKS. Without the no-op row
+        update a concurrent creator's stale REPEATABLE READ snapshot would find
+        no result after acquiring the lock and create a second one."""
+        record = self._in_progress()
+        executed = []
+        original = type(self.env.cr).execute
+
+        def spy(cursor, query, params=None, log_exceptions=True):
+            executed.append(str(query))
+            return original(cursor, query, params, log_exceptions)
+
+        with patch.object(type(self.env.cr), "execute", spy):
+            response, _payload = self._open(record)
+        self.assertEqual(response.status_code, 200)
+        lock = "SELECT id FROM hospital_laboratory_request WHERE id = %s FOR UPDATE"
+        touch = (
+            "UPDATE hospital_laboratory_request SET write_date = write_date "
+            "WHERE id = %s"
+        )
+        self.assertIn(lock, executed)
+        self.assertIn(touch, executed)
+        self.assertLess(executed.index(lock), executed.index(touch))
+
+        # Resuming does not touch the row.
+        executed.clear()
+        with patch.object(type(self.env.cr), "execute", spy):
+            self._open(record)
+        self.assertIn(lock, executed)
+        self.assertNotIn(touch, executed)
+
+    def test_425_opening_moves_no_request_state_and_no_charge(self):
+        record = self._in_progress()
+        before = {
+            c.id: (c.charge_state, c.delivery_state)
+            for c in record.sudo().charge_line_ids
+        }
+        self._open(record)
+        self.env.invalidate_all()
+        record.invalidate_recordset()
+        self.assertEqual(record.state, "in_progress")
+        after = {
+            c.id: (c.charge_state, c.delivery_state)
+            for c in record.sudo().charge_line_ids
+        }
+        self.assertEqual(before, after)
+
+    def test_426_an_open_response_failure_creates_nothing(self):
+        record = self._in_progress()
+        with patch.object(
+            lab_controller, "serialize_operational_result",
+            side_effect=AccessError("simulated response failure reading Patient"),
+        ):
+            response, payload = self._open(record)
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(payload["error"]["code"], "lab_result_open_response_failed")
+        self.assertNotIn("simulated", json.dumps(payload))
+        self.assertFalse(self._results_of(record))
+
+    # ==================================================================
+    # Save draft
+    # ==================================================================
+    def test_430_save_persists_the_allowed_fields_and_stays_draft(self):
+        _record, result, _payload = self._opened()
+        body = {
+            "interpretation": "Mild leukocytosis.",
+            "remarks": "Routine CBC result.",
+            "lines": [{
+                "id": result.line_ids.id,
+                "result_value": "WBC 11.8, Hgb 14.2, Plt 265",
+                "unit": "mixed",
+                "reference_range": "WBC 4.0-10.0, Hgb 13-17, Plt 150-400",
+                "abnormal_flag": "high",
+                "notes": "Entered during test.",
+            }],
+        }
+        response, payload = self._save(result.id, body)
+        self.assertEqual(response.status_code, 200, payload)
+
+        result.invalidate_recordset()
+        line = result.line_ids
+        self.assertEqual(result.state, "draft")
+        self.assertEqual(result.interpretation, "Mild leukocytosis.")
+        self.assertEqual(result.remarks, "Routine CBC result.")
+        self.assertEqual(line.result_value, "WBC 11.8, Hgb 14.2, Plt 265")
+        self.assertEqual(line.unit, "mixed")
+        self.assertEqual(line.reference_range, "WBC 4.0-10.0, Hgb 13-17, Plt 150-400")
+        self.assertEqual(line.abnormal_flag, "high")
+        self.assertEqual(line.notes, "Entered during test.")
+
+        serialized = payload["data"]["result"]
+        self.assertEqual(serialized["state"], "draft")
+        self.assertEqual(serialized["lines"][0]["result_value"], line.result_value)
+        self.assertEqual(payload["data"]["request"]["state"], "in_progress")
+
+    def test_431_forbidden_header_fields_are_refused(self):
+        _record, result, _payload = self._opened()
+        other = self._in_progress()
+        for field_name, value in (
+            ("request_id", other.id),
+            ("patient_id", other.patient_id.id),
+            ("physician_id", self.doctor.id),
+            ("lab_technician_id", self.manager.id),
+            ("result_date", "2020-01-01"),
+            ("state", "entered"),
+            ("name", "LABRES9999"),
+            ("active", False),
+            ("line_ids", []),
+        ):
+            response, payload = self._save(result.id, {field_name: value})
+            self.assertEqual(response.status_code, 400, field_name)
+            self.assertEqual(
+                payload["error"]["code"], "lab_result_field_not_allowed", field_name
+            )
+        result.invalidate_recordset()
+        self.assertEqual(result.state, "draft")
+        self.assertEqual(result.request_id, result.line_ids.request_line_id.request_id)
+        self.assertEqual(result.lab_technician_id, self.lab_tech)
+        self.assertTrue(result.active)
+
+    def test_432_a_foreign_result_line_is_refused(self):
+        _record, result, _payload = self._opened()
+        _other_record, other, _payload = self._opened()
+        response, payload = self._save(
+            result.id,
+            {"lines": [{"id": other.line_ids.id, "result_value": "hijack"}]},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(payload["error"]["code"], "lab_result_line_not_found")
+        other.invalidate_recordset()
+        self.assertFalse(other.line_ids.result_value)
+
+    def test_433_line_structure_and_linkage_cannot_be_changed(self):
+        _record, result, _payload = self._opened()
+        line = result.line_ids
+        for field_name, value in (
+            ("test_id", self.second_test.id),
+            ("request_line_id", 1),
+            ("sample_type", "urine"),
+            ("sequence", 99),
+            ("result_id", 1),
+        ):
+            response, payload = self._save(
+                result.id, {"lines": [{"id": line.id, field_name: value}]}
+            )
+            self.assertEqual(response.status_code, 400, field_name)
+            self.assertEqual(
+                payload["error"]["code"], "lab_result_field_not_allowed", field_name
+            )
+        line.invalidate_recordset()
+        self.assertEqual(line.test_id, self.cleared_test)
+        self.assertEqual(line.sample_type, "blood")
+        self.assertEqual(line.sequence, 10)
+
+    def test_434_zero_persists_as_a_value(self):
+        _record, result, _payload = self._opened()
+        response, payload = self._save(result.id, self._line_body(result, result_value="0"))
+        self.assertEqual(response.status_code, 200)
+        result.invalidate_recordset()
+        self.assertEqual(result.line_ids.result_value, "0")
+        self.assertEqual(payload["data"]["result"]["lines"][0]["result_value"], "0")
+
+    def test_435_whitespace_saves_as_a_draft_but_cannot_be_entered(self):
+        _record, result, _payload = self._opened()
+        response, _payload = self._save(
+            result.id, self._line_body(result, result_value="   ")
+        )
+        self.assertEqual(response.status_code, 200)
+        result.invalidate_recordset()
+        self.assertEqual(result.line_ids.result_value, "   ")
+        self.assertEqual(result.state, "draft")
+
+        response, payload = self._enter(result.id)
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(payload["error"]["code"], "lab_result_incomplete")
+        result.invalidate_recordset()
+        self.assertEqual(result.state, "draft")
+
+    def test_436_only_a_draft_is_editable_through_save(self):
+        _record, result, _payload = self._opened()
+        self._enter(result.id, self._line_body(result, result_value="7.4"))
+        result.invalidate_recordset()
+        self.assertEqual(result.state, "entered")
+
+        response, payload = self._save(
+            result.id, self._line_body(result, result_value="")
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(payload["error"]["code"], "lab_result_not_editable")
+        result.invalidate_recordset()
+        self.assertEqual(result.line_ids.result_value, "7.4")
+
+    def test_437_a_draft_on_a_request_not_in_progress_is_not_editable(self):
+        """A legacy draft on a sample_collected request exists in real data; the
+        desk's entry policy applies to saving as well as opening."""
+        record = self._collected()
+        result = self.env["hospital.laboratory.result"].sudo().create(
+            {"request_id": record.id}
+        )
+        response, payload = self._save(
+            result.id, self._line_body(result, result_value="7.4")
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(payload["error"]["code"], "lab_result_entry_not_available")
+        result.invalidate_recordset()
+        self.assertFalse(result.line_ids.result_value)
+
+    def test_438_save_writes_through_the_parent_and_is_audited(self):
+        _record, result, _payload = self._opened()
+        before = len(self._audit_entries(result))
+        response, _payload = self._save(
+            result.id, self._line_body(result, result_value="7.4")
+        )
+        self.assertEqual(response.status_code, 200)
+        entries = self._audit_entries(result)
+        self.assertGreater(len(entries), before)
+        self.assertEqual(entries[0].action_type, "update")
+        self.assertEqual(entries[0].description, "Laboratory result updated.")
+        self.assertEqual(entries[0].user_id, self.lab_tech)
+
+    def test_439_no_money_in_save_success_or_error(self):
+        _record, result, _payload = self._opened()
+        _response, ok = self._save(result.id, self._line_body(result, result_value="1"))
+        _response, refused = self._save(result.id, {"state": "entered"})
+        for payload in (ok, refused):
+            self._assert_no_money(payload)
+
+    def test_440_invalid_flags_and_types_are_refused(self):
+        _record, result, _payload = self._opened()
+        line_id = result.line_ids.id
+        for entry in (
+            {"id": line_id, "abnormal_flag": "unassessed"},
+            {"id": line_id, "abnormal_flag": None},
+            {"id": line_id, "result_value": 7.4},
+            {"result_value": "no id"},
+            {"id": "1", "result_value": "string id"},
+        ):
+            response, payload = self._save(result.id, {"lines": [entry]})
+            self.assertEqual(response.status_code, 400, entry)
+            self.assertFalse(payload["success"])
+        response, _payload = self._save(result.id, {"lines": "nope"})
+        self.assertEqual(response.status_code, 400)
+        result.invalidate_recordset()
+        self.assertEqual(result.line_ids.abnormal_flag, "normal")
+        self.assertFalse(result.line_ids.result_value)
+
+    def test_441_save_is_refused_for_every_other_role(self):
+        _record, result, _payload = self._opened()
+        for user, password in self._denied_roles():
+            response, payload = self._save(
+                result.id, self._line_body(result, result_value="forged"),
+                user=user, password=password,
+            )
+            self.assertEqual(response.status_code, 403, user.login)
+            self.assertEqual(payload["error"]["code"], "lab_desk_not_authorized")
+        result.invalidate_recordset()
+        self.assertFalse(result.line_ids.result_value)
+
+    def test_442_an_unknown_result_is_a_flat_404(self):
+        response, payload = self._save(99999999, {})
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(payload["error"]["code"], "lab_result_not_found")
+        response, payload = self._enter(99999999)
+        self.assertEqual(response.status_code, 404)
+
+    # ==================================================================
+    # Mark entered
+    # ==================================================================
+    def test_450_a_complete_draft_becomes_entered(self):
+        record, result, _payload = self._opened()
+        response, payload = self._enter(
+            result.id,
+            dict(
+                self._line_body(result, result_value="WBC 11.8", unit="mixed"),
+                interpretation="Mild leukocytosis.",
+            ),
+        )
+        self.assertEqual(response.status_code, 200, payload)
+        result.invalidate_recordset()
+        self.assertEqual(result.state, "entered")
+        self.assertEqual(result.line_ids.result_value, "WBC 11.8")
+        self.assertEqual(result.interpretation, "Mild leukocytosis.")
+        self.assertEqual(payload["data"]["result"]["state"], "entered")
+        self.assertEqual(payload["data"]["request"]["result"]["state"], "entered")
+        self.assertEqual(payload["data"]["request"]["state"], "in_progress")
+
+        entries = self._audit_entries(result)
+        self.assertIn(
+            "State: entered", entries.filtered(
+                lambda e: e.action_type == "state_change"
+            ).mapped("new_value"),
+        )
+
+    def test_451_a_blank_value_is_refused_by_the_model(self):
+        _record, result, _payload = self._opened()
+        response, payload = self._enter(result.id)
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(payload["error"]["code"], "lab_result_incomplete")
+        self.assertIn("no result value entered", payload["error"]["message"])
+        self.assertNotIn("Traceback", json.dumps(payload))
+        self._assert_no_money(payload)
+        result.invalidate_recordset()
+        self.assertEqual(result.state, "draft")
+
+    def test_452_whitespace_is_refused(self):
+        _record, result, _payload = self._opened()
+        response, payload = self._enter(
+            result.id, self._line_body(result, result_value=" \t ")
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(payload["error"]["code"], "lab_result_incomplete")
+        result.invalidate_recordset()
+        self.assertEqual(result.state, "draft")
+
+    def test_453_zero_is_accepted(self):
+        _record, result, _payload = self._opened()
+        response, _payload = self._enter(
+            result.id, self._line_body(result, result_value="0")
+        )
+        self.assertEqual(response.status_code, 200)
+        result.invalidate_recordset()
+        self.assertEqual(result.state, "entered")
+        self.assertEqual(result.line_ids.result_value, "0")
+
+    def test_454_the_request_stays_in_progress_and_no_charge_moves(self):
+        record, result, _payload = self._opened()
+        before = {
+            c.id: (c.charge_state, c.delivery_state)
+            for c in record.sudo().charge_line_ids
+        }
+        self._enter(result.id, self._line_body(result, result_value="7.4"))
+        self.env.invalidate_all()
+        record.invalidate_recordset()
+        self.assertEqual(record.state, "in_progress")
+        after = {
+            c.id: (c.charge_state, c.delivery_state)
+            for c in record.sudo().charge_line_ids
+        }
+        self.assertEqual(before, after, "Entering a result delivers nothing.")
+
+    def test_455_a_second_enter_is_refused(self):
+        _record, result, _payload = self._opened()
+        first, _payload = self._enter(result.id, self._line_body(result, result_value="7.4"))
+        self.assertEqual(first.status_code, 200)
+        second, payload = self._enter(result.id)
+        self.assertEqual(second.status_code, 409)
+        self.assertEqual(payload["error"]["code"], "lab_result_not_editable")
+        result.invalidate_recordset()
+        self.assertEqual(result.state, "entered")
+
+    def test_456_enter_carrying_new_values_on_an_entered_result_writes_nothing(self):
+        _record, result, _payload = self._opened()
+        self._enter(result.id, self._line_body(result, result_value="7.4"))
+        response, _payload = self._enter(
+            result.id, self._line_body(result, result_value="9.9")
+        )
+        self.assertEqual(response.status_code, 409)
+        result.invalidate_recordset()
+        self.assertEqual(result.line_ids.result_value, "7.4")
+
+    def test_457_a_refused_enter_rolls_the_values_back_too(self):
+        """ATOMIC: the write and the transition are one savepoint. The refused
+        attempt must not leave its new values behind on the draft."""
+        _record, result, _payload = self._opened()
+        self._save(
+            result.id,
+            dict(self._line_body(result, result_value="old"), interpretation="old"),
+        )
+        response, _payload = self._enter(
+            result.id,
+            dict(self._line_body(result, result_value="   "), interpretation="new"),
+        )
+        self.assertEqual(response.status_code, 422)
+        result.invalidate_recordset()
+        self.assertEqual(result.state, "draft")
+        self.assertEqual(result.line_ids.result_value, "old")
+        self.assertEqual(result.interpretation, "old")
+
+    def test_458_a_response_failure_leaves_no_hidden_entered_state(self):
+        _record, result, _payload = self._opened()
+        with patch.object(
+            lab_controller, "serialize_operational_result",
+            side_effect=AccessError("simulated response failure reading Patient"),
+        ):
+            response, payload = self._enter(
+                result.id, self._line_body(result, result_value="7.4")
+            )
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(payload["error"]["code"], "lab_result_enter_response_failed")
+        self.assertNotEqual(payload["error"]["code"], "lab_desk_not_authorized")
+        self.assertNotIn("simulated", json.dumps(payload))
+        result.invalidate_recordset()
+        self.assertEqual(result.state, "draft")
+        self.assertFalse(result.line_ids.result_value)
+
+    def test_459_enter_is_refused_for_every_other_role(self):
+        _record, result, _payload = self._opened()
+        for user, password in self._denied_roles():
+            response, payload = self._enter(
+                result.id, self._line_body(result, result_value="forged"),
+                user=user, password=password,
+            )
+            self.assertEqual(response.status_code, 403, user.login)
+            self.assertEqual(payload["error"]["code"], "lab_desk_not_authorized")
+        result.invalidate_recordset()
+        self.assertEqual(result.state, "draft")
+
+    def test_460_manager_and_sysadmin_can_enter(self):
+        administrator, password = self._sysadmin("lab_admin_result_enter")
+        for user, user_password in (
+            (self.manager, self.manager_password),
+            (administrator, password),
+        ):
+            _record, result, _payload = self._opened()
+            response, _payload = self._enter(
+                result.id, self._line_body(result, result_value="7.4"),
+                user=user, password=user_password,
+            )
+            self.assertEqual(response.status_code, 200, user.login)
+            result.invalidate_recordset()
+            self.assertEqual(result.state, "entered")
+
+    def test_461_no_validate_release_cancel_or_reset_route_exists(self):
+        _record, result, _payload = self._opened()
+        for verb in ("validate", "release", "cancel", "reset", "reset-to-draft"):
+            self._auth(self.lab_tech, self.lab_password)
+            response = self.url_open(
+                "/yoya-emr/api/v1/lab/results/%s/%s" % (result.id, verb),
+                data="{}", headers={"Content-Type": "application/json"},
+            )
+            self.assertIn(response.status_code, (404, 405), verb)
+        result.invalidate_recordset()
+        self.assertEqual(result.state, "draft")
+
+    def test_462_the_result_routes_refuse_get(self):
+        record, result, _payload = self._opened()
+        for url in (OPEN_RESULT % record.id, SAVE_RESULT % result.id,
+                    ENTER_RESULT % result.id):
+            self._auth(self.lab_tech, self.lab_password)
+            response = self.url_open(url)
+            self.assertIn(response.status_code, (404, 405), url)
+
+    # ==================================================================
+    # Regression
+    # ==================================================================
+    def test_470_collect_and_start_still_work(self):
+        record = self._lab_request()
+        collected, _payload = self._collect(record)
+        self.assertEqual(collected.status_code, 200)
+        started, payload = self._lab_post(START_PROCESSING % record.id)
+        self.assertEqual(started.status_code, 200)
+        detail = payload["data"]["request"]
+        self.assertEqual(detail["status"], "in_progress")
+        self.assertIsNone(detail["result"])
+
+    def test_471_the_read_routes_still_work(self):
+        record, _result, _payload = self._opened()
+        for url in (SESSION, WORKLIST, DETAIL % record.id):
+            response, payload = self._lab_get(url)
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(payload["success"])
+
+    def test_472_a_draft_or_entered_result_moves_no_lane_count(self):
+        record = self._in_progress()
+        _response, payload = self._lab_get(WORKLIST)
+        before = payload["data"]["summary"]
+
+        _response, opened = self._open(record)
+        result_id = opened["data"]["result"]["id"]
+        _response, payload = self._lab_get(WORKLIST)
+        self.assertEqual(payload["data"]["summary"], before)
+
+        result = self.env["hospital.laboratory.result"].sudo().browse(result_id)
+        self._enter(result_id, self._line_body(result, result_value="7.4"))
+        _response, payload = self._lab_get(WORKLIST)
+        self.assertEqual(payload["data"]["summary"], before)
+
+    def test_473_the_doctor_still_receives_no_unreleased_result(self):
+        """released_results() is what the Doctor Desk's Results tab serializes
+        from; an entered result must not appear in it."""
+        record, result, _payload = self._opened()
+        self._enter(result.id, self._line_body(result, result_value="7.4"))
+        record.invalidate_recordset()
+        self.assertFalse(released_results(record.sudo()))
+
+    def test_474_the_queue_row_shape_is_unchanged(self):
+        record, _result, _payload = self._opened()
+        row = self._row_for(record)
+        self.assertEqual(set(row), EXPECTED_ROW_KEYS)
+        self.assertEqual(row["result_count"], 1)
+        self.assertEqual(row["released_count"], 0)

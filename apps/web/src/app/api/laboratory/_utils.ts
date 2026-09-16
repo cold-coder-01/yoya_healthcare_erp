@@ -8,11 +8,11 @@
  * The generic helpers are imported from the reception BFF rather than copied,
  * which is the pattern doctor/_utils.ts and front-desk/_utils.ts both follow.
  *
- * NO BODY OR BINARY HELPER IS EXPORTED. `readJsonObject` and `streamOdooBinary`
- * are deliberately absent: the write routes that exist (collect,
- * start-processing) send an empty body and read no field from it, and there is
- * no binary on this desk. Re-exporting a helper nothing calls invites a route
- * that should not exist. They arrive with the slices that need them.
+ * `readJsonObject` ARRIVED WITH RESULT ENTRY (Slice 3), for the two routes that
+ * carry a body (results/<id>/save and results/<id>/enter). It only checks that
+ * the body IS a JSON object; WHICH fields are writable is the Lab API's
+ * allow-list and is not duplicated here. `streamOdooBinary` stays absent: there
+ * is no binary on this desk.
  */
 import "server-only";
 
@@ -21,10 +21,17 @@ import {
   errorResponse,
   forwardOdooResult,
   handleRouteError,
+  readJsonObject,
   requireOdooSession,
 } from "@/app/api/reception/_utils";
 
-export { errorResponse, forwardOdooResult, handleRouteError, requireOdooSession };
+export {
+  errorResponse,
+  forwardOdooResult,
+  handleRouteError,
+  readJsonObject,
+  requireOdooSession,
+};
 
 /**
  * How this desk names the upstream service in fallback wording.
@@ -82,4 +89,24 @@ export function parseRequestId(raw: string) {
     };
   }
   return { ok: true as const, value: requestId };
+}
+
+/**
+ * Parse the `[resultId]` segment. The same rule as parseRequestId: only what is
+ * needed to build a safe upstream URL. Whether the result exists, is readable,
+ * and is still a draft are all Odoo's decisions.
+ */
+export function parseResultId(raw: string) {
+  const resultId = Number(raw);
+  if (!Number.isInteger(resultId) || resultId <= 0) {
+    return {
+      ok: false as const,
+      response: errorResponse(
+        "invalid_result_id",
+        "Laboratory result ID is invalid.",
+        400,
+      ),
+    };
+  }
+  return { ok: true as const, value: resultId };
 }
