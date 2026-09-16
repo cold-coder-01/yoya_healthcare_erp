@@ -18,6 +18,7 @@ import type {
   LabDeskStatus,
   LabQueueRow,
   LabRequestDetail,
+  LabWorklistSummary,
 } from "@/types/lab-desk";
 
 /* ------------------------------------------------------------------ *
@@ -184,20 +185,41 @@ export function orDash(value: string | null | undefined) {
  * ------------------------------------------------------------------ */
 
 /**
- * Counts for the status tabs, over the rows the server actually sent.
+ * The badge for one lane, read from the SERVER'S scope-wide summary.
  *
- * The server sends its own `counts` describing the same rows; this exists for
- * the client-side text filter, which narrows what is on screen without
- * refetching. Both are derived from the same array, so they cannot disagree
- * about a population.
+ * THE DEFECT THIS REPLACES. The client used to recount the rows it had on
+ * screen -- rows already narrowed to the selected lane, to the search box, and
+ * to one bounded page. Every lane the technician had not clicked therefore
+ * read 0, and clicking it "discovered" the real number. A badge you have to
+ * click to make true is worse than no badge.
+ *
+ * NOTHING IS DERIVED HERE. The client neither counts nor classifies; it reads
+ * the number the server computed with the same lab_desk_status() the rows use.
+ * In particular the browser never splits `requested` into awaiting/ready --
+ * that is hospital_billing's verdict and it stays server-side.
+ *
+ * Returns `null` when the count is genuinely unknown (the server could not do
+ * the clearance split within its scan cap), so the caller renders a dash
+ * rather than a zero that would read as "there is no work here".
  */
-export function statusCounts(rows: LabQueueRow[]): Record<string, number> {
-  const counts: Record<string, number> = {};
-  for (const status of LAB_DESK_STATUS_ORDER) counts[status] = 0;
-  for (const row of rows) {
-    counts[row.status] = (counts[row.status] ?? 0) + 1;
-  }
-  return counts;
+export function laneCount(
+  summary: LabWorklistSummary | null,
+  laneKey: string,
+): number | null {
+  if (!summary) return null;
+  const value = (summary as unknown as Record<string, unknown>)[
+    laneKey === "active" ? "active_bench" : laneKey
+  ];
+  return typeof value === "number" ? value : null;
+}
+
+/** "50", or an em dash when the server could not determine the count. */
+export function laneCountLabel(
+  summary: LabWorklistSummary | null,
+  laneKey: string,
+): string {
+  const value = laneCount(summary, laneKey);
+  return value === null ? "—" : String(value);
 }
 
 /**
@@ -277,6 +299,65 @@ export function requestPath(requestId: number) {
   return `/api/laboratory/requests/${requestId}`;
 }
 
+/** The BFF collect route. The browser never posts anywhere else. */
+export function collectPath(requestId: number) {
+  return `/api/laboratory/requests/${requestId}/collect`;
+}
+
+/**
+ * May the bench be offered a Collect control for this row?
+ *
+ * DERIVED FROM THE SERVER'S DERIVED STATUS, AND FROM NOTHING ELSE. The one
+ * status that means "the sample may be drawn now" is `ready_for_collection`,
+ * which the server computes as `state == "requested" AND NOT billing_blocked`.
+ *
+ * This function deliberately takes a STATUS KEY, not a row and not a boolean
+ * pair. It cannot look at `billing_blocked`, an amount or a balance even by
+ * accident, because none of that is in scope here -- which is the structural
+ * version of "the browser never decides whether the patient has paid".
+ *
+ * AND IT IS AN AFFORDANCE, NEVER A PERMISSION. The server re-checks clearance
+ * and the state machine inside action_mark_sample_collected() on every call;
+ * a button rendered from stale data still gets a clean refusal.
+ */
+export function canCollect(status: string | null | undefined): boolean {
+  return status === "ready_for_collection";
+}
+
+/**
+ * The message shown when a collection is refused.
+ *
+ * The server's own sentence is preferred -- it is the only thing that says
+ * WHY, and the Laboratory API has already sanitised the one refusal whose
+ * wording could carry an amount. The fallback exists for transport failures,
+ * where there is no server sentence at all.
+ */
+export function collectErrorMessage(
+  serverMessage: string | null | undefined,
+  fallback = "The sample could not be marked collected.",
+) {
+  const trimmed = typeof serverMessage === "string" ? serverMessage.trim() : "";
+  return trimmed ? trimmed : fallback;
+}
+
+/**
+ * Error codes after which the desk must RE-READ rather than trust its screen.
+ *
+ * All three mean the browser was looking at a request whose real state has
+ * moved on: the workflow refused it, money now blocks it, or it is no longer
+ * reachable. Leaving the stale row on screen would invite the technician to
+ * press Collect again against a request that has already changed.
+ */
+const RECONCILE_CODES = new Set([
+  "invalid_workflow_state",
+  "lab_not_financially_cleared",
+  "lab_request_not_found",
+]);
+
+export function shouldReconcileAfter(code: string | null | undefined): boolean {
+  return typeof code === "string" && RECONCILE_CODES.has(code);
+}
+
 /**
  * A detail payload is only shown against the row it belongs to.
  *
@@ -288,6 +369,59 @@ export function detailMatchesSelection(
   selectedId: number | null,
 ) {
   return detail !== null && selectedId !== null && detail.id === selectedId;
+}
+
+/**
+ * Which request the detail panel may render.
+ *
+ * TWO WAYS IN, and the second is what makes collection usable.
+ *
+ *   activeId     the current queue selection
+ *   justActedId  a request the technician has just acted on -- collected --
+ *                which has therefore LEFT the lane they are looking at
+ *
+ * Without the second, collecting a sample makes the request vanish from the
+ * Ready lane and takes the detail panel with it, so the technician gets no
+ * confirmation that the thing they clicked actually happened. Pinning it keeps
+ * the answer on screen: the panel now reads Sample collected and the Collect
+ * button is gone, because the status moved.
+ */
+export function visibleDetail(
+  detail: LabRequestDetail | null,
+  activeId: number | null,
+  justActedId: number | null = null,
+): LabRequestDetail | null {
+  if (!detail) return null;
+  if (activeId !== null && detail.id === activeId) return detail;
+  if (justActedId !== null && detail.id === justActedId) return detail;
+  return null;
+}
+
+/**
+ * Whether the detail panel should show its loading state.
+ *
+ * DERIVED, NEVER STORED, and that is the whole point of this function.
+ *
+ * THE UAT DEFECT IT FIXES. The panel used to consume the raw `detailLoading`
+ * flag. Collecting a sample moved the request out of the Ready lane, which
+ * emptied the queue, which made the active selection null -- and the flag was
+ * left true by two paths that cannot clear it: an aborted fetch skips its own
+ * `finally`, and the "nothing selected" branch of the effect returns without
+ * touching state (it must, or it cascades a render). The desk sat on
+ * "Loading request…" indefinitely.
+ *
+ * Deriving makes that impossible rather than merely unlikely: with nothing
+ * selected there is nothing to load, and a request already on screen is never
+ * loading from an empty state.
+ */
+export function detailIsLoading(
+  activeId: number | null,
+  loadingFlag: boolean,
+  visible: LabRequestDetail | null,
+): boolean {
+  if (activeId === null) return false;
+  if (visible !== null) return false;
+  return loadingFlag;
 }
 
 /** Narrowing helper for the styling maps, which are keyed by known status. */

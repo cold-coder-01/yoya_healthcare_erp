@@ -138,9 +138,37 @@ export type LabDeskCapabilities = {
   lab_desk: boolean;
 };
 
+/**
+ * Lane counts over the whole date+search scope.
+ *
+ * NOT the rows on this page, and NOT the selected lane. The server counts
+ * every request matching the two COMMON filters, so a badge is right before
+ * the technician clicks anything, and selecting one lane never zeros the
+ * others.
+ *
+ * `awaiting_clearance` and `ready_for_collection` are `number | null`: they
+ * are the one split the server cannot do in SQL (it is hospital_billing's
+ * `billing_blocked`, a per-encounter compute), so past a scan cap they come
+ * back null with `meta.summary_exact === false`. Render a dash, never a guess.
+ * `active_bench` is null for the same reason, since it includes both.
+ */
+export type LabWorklistSummary = {
+  active_bench: number | null;
+  draft: number;
+  awaiting_clearance: number | null;
+  ready_for_collection: number | null;
+  sample_collected: number;
+  in_progress: number;
+  completed: number;
+  cancelled: number;
+  /** All `requested` rows in scope, before the clearance split. */
+  requested_total: number;
+};
+
 export type LabWorklistResponse = {
   rows: LabQueueRow[];
-  counts: Record<string, number>;
+  /** Scope-wide lane counts. See LabWorklistSummary. */
+  summary: LabWorklistSummary;
   filters: {
     date: string | null;
     status: string[];
@@ -148,10 +176,13 @@ export type LabWorklistResponse = {
     limit: number;
   };
   meta: {
+    /** Rows on THIS page -- not a lane total. */
     row_count: number;
     truncated: boolean;
     statuses: string[];
     default_statuses: string[];
+    /** False when the awaiting/ready split exceeded the server's scan cap. */
+    summary_exact: boolean;
   };
   capabilities: LabDeskCapabilities;
 };

@@ -78,6 +78,32 @@ LAB_API = "/yoya-emr/api/v1/lab"
 WORKLIST_LIMIT_DEFAULT = 100
 WORKLIST_LIMIT_MAX = 300
 
+# How many `requested` rows the summary will classify before giving up on the
+# awaiting/ready split.
+#
+# The split is the one count that cannot be done in SQL: it is hospital_billing's
+# `billing_blocked`, a non-stored compute that asks the billing engine per
+# encounter. Every other status is settled by one GROUP BY.
+#
+# Past this cap the two split counts are reported as null rather than guessed,
+# and `meta.summary_exact` says so. A wrong number on a badge the bench works
+# from is worse than an honest dash.
+SUMMARY_CLEARANCE_SCAN_MAX = 1000
+
+
+class CollectResponseError(Exception):
+    """The sample was marked collected, but its confirmation could not be built.
+
+    A separate type on purpose, and the reason is the same one cashier.py's
+    PaymentResponseError documents: without it, an AccessError raised while
+    SERIALIZING the result is indistinguishable from one raised by the desk
+    gate, and the bench would be told it was not authorized to collect a sample
+    it had in fact just collected.
+
+    By the time this reaches the handler the savepoint has already rolled the
+    collection back, so the message may honestly say nothing was changed.
+    """
+
 
 def lab_endpoint(func):
     """Stable error envelope for the Laboratory Desk. Never leaks a traceback.
@@ -87,9 +113,9 @@ def lab_endpoint(func):
     UserError, so the broad handler has to come last or it swallows the two
     specific ones and reports an authorization failure as a workflow refusal.
 
-    Slice 1 has no mutation, so there is no response-failure type and no
-    savepoint here -- a read that fails to serialize has nothing to roll back.
-    Those branches belong with the slices that introduce a write.
+    CollectResponseError sits ABOVE AccessError for exactly that reason -- it is
+    a plain Exception, but placing it first keeps the "response failed" case
+    from ever being reported as a denial.
     """
 
     @functools.wraps(func)
@@ -102,6 +128,15 @@ def lab_endpoint(func):
             return func(*args, **kwargs)
         except ApiError as error:
             return api_error_response(error)
+        except CollectResponseError:
+            # Already logged with its cause at the raise site, and the savepoint
+            # has already rolled the collection back.
+            return error_response(
+                "lab_collect_response_failed",
+                "The sample was not marked collected because the confirmation "
+                "could not be produced. Nothing was changed. Please retry.",
+                500,
+            )
         except AccessError as error:
             # Reaching here means the ORM refused a row the role gate had
             # already admitted -- a record rule, not the desk gate. Odoo's own
@@ -142,6 +177,97 @@ def _require_lab_desk(env):
             "Hospital Manager or Hospital System Administrator role.",
             403,
         )
+
+
+def _load_request(env, request_id):
+    """Resolve one laboratory request through the CALLER'S OWN record rules.
+
+    Shared by the detail read and the collection mutation so the two can never
+    disagree about which requests a caller may reach.
+
+    RESOLVED BY search(), NOT browse().exists(). The difference is the whole
+    point: browse() applies no record rule, and exists() checks the row in raw
+    SQL, so a hidden record would come back present and fail later with an
+    AccessError -- a 403 that says "this id is real, but not yours". search()
+    applies the caller's own rules in the query, so an unreadable request is
+    simply absent and answers 404 like any id that is not theirs to see. It
+    also inherits the ORM's active_test, so an archived request is unreachable.
+    """
+    if request_id <= 0:
+        raise ApiError(
+            "invalid_request_id", "Laboratory request ID is invalid.", 400
+        )
+    record = env["hospital.laboratory.request"].search(
+        [("id", "=", request_id)], limit=1
+    )
+    if not record:
+        raise ApiError(
+            "lab_request_not_found", "Laboratory request not found.", 404
+        )
+    return record
+
+
+# THE ONE SENTENCE THE BENCH IS TOLD WHEN MONEY BLOCKS A COLLECTION.
+#
+# WHY THE MODEL'S OWN WORDING IS NOT FORWARDED HERE, unlike every other refusal
+# in this module. hospital_billing._clearance_error builds its detail line from
+# the caller's groups:
+#
+#     may_see_cash -> "<test> -- unpaid, 900.00 due"
+#     otherwise    -> "<test> -- payment not cleared (see front desk)"
+#
+# and `may_see_cash` is true for receptionist, accountant, MANAGER and SYSTEM
+# ADMINISTRATOR. The last two are in LAB_DESK_GROUPS, so forwarding that
+# sentence verbatim would put an amount on the Laboratory Desk for exactly
+# those two roles -- a confidentiality rule that held for a lab technician and
+# silently broke for their manager.
+#
+# This message is therefore FIXED and role-independent. It says what the bench
+# can act on: the request is not cleared, and the cashier is who clears it.
+CLEARANCE_REFUSED_MESSAGE = (
+    "This request is not financially cleared, so the sample cannot be "
+    "collected yet. The patient settles it at the cashier; the request moves "
+    "to Ready for collection by itself once that is done. Nothing has been "
+    "changed."
+)
+
+
+def _collection_refusal(record, error):
+    """Turn a refused collection into a safe ApiError. CLASSIFY, never decide.
+
+    The model has already refused by the time this runs, and the savepoint has
+    already rolled the attempt back. The only question left is WHICH sentence
+    the bench may safely be shown, and there are exactly two kinds:
+
+      FINANCIAL  hospital_billing._clearance_error, whose text is role-
+                 dependent and CAN carry an amount (see
+                 CLEARANCE_REFUSED_MESSAGE). Replaced wholesale with the fixed
+                 wording -- the original is never forwarded, never logged into
+                 the response, and never reaches the browser.
+
+      WORKFLOW   the base model's "Only requested lab requests can be marked as
+                 sample collected", or _assert_all_lines_charged's "N ordered
+                 test(s) have no valid charge". Both name tests and states, no
+                 money, and both tell the technician something true and useful
+                 -- so Odoo's own sentence is forwarded, as everywhere else in
+                 this module.
+
+    THE CLASSIFIER IS THE AUTHORITATIVE BOOLEAN, not a string match. Sniffing
+    the message for digits would break the moment the wording changed, and
+    would fail open -- the wrong direction. `billing_blocked` is the same
+    compute Slice 1 already serializes, re-read after the rollback.
+
+    A request that is still `requested` and still blocked can only have been
+    refused by the clearance gate: that gate runs first, and the base method
+    would have accepted `requested`.
+    """
+    record.invalidate_recordset()
+    still_requested = record.state == "requested"
+    if still_requested and record.billing_blocked:
+        return ApiError(
+            "lab_not_financially_cleared", CLEARANCE_REFUSED_MESSAGE, 422
+        )
+    return ApiError("invalid_workflow_state", str(error), 422)
 
 
 def _limit_param(raw):
@@ -247,16 +373,96 @@ def _prefetch_worklist(requests):
     requests.mapped("result_ids.state")
 
 
-def _status_counts(rows):
-    """One count per bench status, over the rows actually returned.
+def _worklist_summary(env, day, search):
+    """One count per bench status over the WHOLE date+search scope.
 
-    Every status is present with a zero rather than omitted, so a client can
-    render a fixed set of tabs without branching on which keys came back.
+    THE DEFECT THIS REPLACES. The previous version counted the rows the client
+    had just been handed. Those rows are narrowed twice over -- to the selected
+    lane's states, and then to `limit` -- so every lane the technician had not
+    clicked read zero, and a lane whose rows fell outside the first page read
+    zero even when it was selected. A badge that only becomes true once you
+    click it is worse than no badge.
+
+    THE LANE IS DELIBERATELY IGNORED HERE. Counts answer "what is in this date
+    and search scope", so selecting Ready for collection must not zero the
+    other seven. Only the two COMMON filters narrow them, exactly as the user
+    sees them: the ordered day (or Any day) and the search box.
+
+    TWO QUERIES, AND THE SPLIT IS THE REASON THERE ARE TWO.
+
+      1. _read_group by `state` -- one SQL GROUP BY. It settles draft,
+         sample_collected, in_progress, completed and cancelled exactly, and
+         gives the `requested` TOTAL.
+
+      2. `requested` alone cannot be grouped further, because the split into
+         awaiting_clearance / ready_for_collection is hospital_billing's
+         `billing_blocked` -- a non-stored compute that asks the billing engine
+         per encounter. It cannot appear in a domain or a GROUP BY at all. So
+         the requested rows are read and classified through lab_desk_status(),
+         THE SAME function the rows use. No status logic is duplicated, and the
+         clearance rule is never reimplemented here.
+
+    BOUNDED, AND HONEST WHEN IT CANNOT BE. Step 2 is O(requested) clearance
+    evaluations, so it is capped. Past the cap the two split counts come back
+    as null and `summary_exact` is False -- the desk shows a dash rather than a
+    number that is wrong. Guessing would be the one outcome worse than not
+    knowing.
+
+    RECORD RULES APPLY. _read_group runs through _search, so the summary is
+    scoped to the caller exactly as the rows are; it can never count a request
+    the technician may not read.
     """
-    counts = {status: 0 for status in LAB_DESK_STATUSES}
-    for row in rows:
-        counts[row["status"]] = counts.get(row["status"], 0) + 1
-    return counts
+    Request = env["hospital.laboratory.request"]
+    # Reuses the SAME domain builder as the rows, asked for every status, so
+    # the date and search predicates cannot drift between the two.
+    scope = _worklist_domain(LAB_DESK_STATUSES, day, search)
+
+    by_state = dict(Request._read_group(scope, ["state"], ["__count"]))
+
+    summary = {
+        status: by_state.get(LAB_DESK_STATUS_STATE[status], 0)
+        for status in LAB_DESK_STATUSES
+        if status not in ("awaiting_clearance", "ready_for_collection")
+    }
+
+    requested_total = by_state.get("requested", 0)
+    exact = requested_total <= SUMMARY_CLEARANCE_SCAN_MAX
+    if not exact:
+        _logger.warning(
+            "Laboratory summary: %s requested rows exceeds the %s clearance "
+            "scan cap; the awaiting/ready split is reported as unavailable.",
+            requested_total,
+            SUMMARY_CLEARANCE_SCAN_MAX,
+        )
+        summary["awaiting_clearance"] = None
+        summary["ready_for_collection"] = None
+        summary["active_bench"] = None
+        summary["requested_total"] = requested_total
+        return summary, exact
+
+    awaiting = 0
+    if requested_total:
+        pending = Request.search(
+            expression.AND([scope, [("state", "=", "requested")]])
+        )
+        # Warm the one compute the classification needs, across the whole
+        # recordset rather than per row.
+        pending.mapped("encounter_id")
+        awaiting = sum(
+            1 for req in pending if lab_desk_status(req) == "awaiting_clearance"
+        )
+
+    summary["awaiting_clearance"] = awaiting
+    summary["ready_for_collection"] = requested_total - awaiting
+    # ACTIVE BENCH, stated once and derived from the same numbers the lanes
+    # show, so the tab and its parts can never disagree. Preserves Slice 1's
+    # LAB_DESK_ACTIVE_STATUSES exactly: draft, completed and cancelled are not
+    # bench work.
+    summary["active_bench"] = sum(
+        summary[status] for status in LAB_DESK_ACTIVE_STATUSES
+    )
+    summary["requested_total"] = requested_total
+    return summary, exact
 
 
 class YoyaEmrLaboratoryController(http.Controller):
@@ -339,6 +545,10 @@ class YoyaEmrLaboratoryController(http.Controller):
 
         _prefetch_worklist(candidates)
 
+        # Computed over the date+search scope, INDEPENDENT of the selected
+        # lane, so every badge is right before the technician clicks anything.
+        summary, summary_exact = _worklist_summary(env, day, search)
+
         wanted = set(statuses)
         # The Python refinement. `serialize_worklist` recomputes the status per
         # row through the SAME lab_desk_status(), so the filter and the label a
@@ -359,12 +569,21 @@ class YoyaEmrLaboratoryController(http.Controller):
                 "truncated": truncated,
                 "statuses": list(LAB_DESK_STATUSES),
                 "default_statuses": list(LAB_DESK_ACTIVE_STATUSES),
+                # False only when the requested rows exceeded the clearance
+                # scan cap, in which case the two split counts are null.
+                "summary_exact": summary_exact,
             },
             capabilities=capabilities,
         )
-        # Counts describe exactly the rows the client received, so a tab count
-        # and the list under it can never describe different populations.
-        payload["counts"] = _status_counts(payload["rows"])
+        # THE LANE COUNTS, AND THEY DESCRIBE THE SCOPE RATHER THAN THE PAGE.
+        #
+        # `summary` counts every request matching the date and search filters,
+        # whatever lane is selected and however many rows fitted in this page.
+        # `meta.row_count` and `meta.truncated` describe the PAGE. The two
+        # answer different questions and are deliberately not the same number:
+        # a page of 100 out of 173 matching reports row_count 100, truncated
+        # true, and a summary that still totals 173.
+        payload["summary"] = summary
         return success_response(payload)
 
     # ------------------------------------------------------------------
@@ -399,22 +618,97 @@ class YoyaEmrLaboratoryController(http.Controller):
         env = request.env
         _require_lab_desk(env)
 
-        if request_id <= 0:
-            raise ApiError(
-                "invalid_request_id", "Laboratory request ID is invalid.", 400
-            )
-
-        record = env["hospital.laboratory.request"].search(
-            [("id", "=", request_id)], limit=1
-        )
-        if not record:
-            raise ApiError(
-                "lab_request_not_found", "Laboratory request not found.", 404
-            )
+        record = _load_request(env, request_id)
 
         return success_response(
             {
                 "request": serialize_request_detail(record),
+                "capabilities": lab_desk_capability_flags(env),
+            }
+        )
+
+    # ------------------------------------------------------------------
+    # 4. Sample collection -- THE ONLY MUTATION IN THE LABORATORY DESK
+    # ------------------------------------------------------------------
+    @http.route(
+        "%s/requests/<int:request_id>/collect" % LAB_API,
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @lab_endpoint
+    def collect_sample(self, request_id, **params):
+        """Mark the sample collected. THE CONTROLLER DECIDES NOTHING.
+
+        It resolves the request through the caller's own record rules and calls
+        ONE authoritative model method:
+
+            hospital.laboratory.request.action_mark_sample_collected()
+
+        No state is written here. That method is where the two gates live, and
+        neither is reimplemented or second-guessed:
+
+          hospital_billing's override   financial clearance, evaluated across
+                                        EVERY charge on the request BEFORE any
+                                        clinical state moves, via
+                                        billing_engine.check_financial_clearance
+          hospital_management's base    requested -> sample_collected only
+
+        NO CLEARANCE DECISION IS DUPLICATED. This endpoint never asks whether
+        the request is cleared; it asks the model to collect, and reports what
+        the model said. `billing_blocked` is read afterwards only to CLASSIFY a
+        refusal that already happened, so the right sentence is chosen -- never
+        to make the call.
+
+        ATOMICITY. The transition, the charge moves it triggers and the
+        serialized response are ONE savepoint. Two things make that necessary
+        rather than decorative:
+
+          * check_financial_clearance(persist=True) WRITES
+            financial_clearance_state on the billing account before the refusal
+            is raised. Catching that UserError without a savepoint would commit
+            that write while telling the bench nothing happened.
+          * a failure while serializing must not leave a collected sample
+            behind a message saying the collection failed -- the technician
+            would collect a second time.
+
+        IDEMPOTENCY IS THE STATE MACHINE'S, and no token is added. The base
+        method refuses anything but `requested`, so a double-clicked Collect
+        makes the second call a clean 422 rather than a second transition. The
+        charge moves are idempotent in the engine, and the browser disables the
+        button on submit -- see the note in lab-request-panel.tsx.
+        """
+        env = request.env
+        _require_lab_desk(env)
+
+        record = _load_request(env, request_id)
+
+        try:
+            # ONE atomic unit: the transition AND its serialized response.
+            with env.cr.savepoint():
+                record.action_mark_sample_collected()
+
+                try:
+                    # Re-serialized AFTER the transition, from the record as it
+                    # now stands. The status the bench renders is the DERIVED
+                    # one, never a value the client guessed from its own click.
+                    record.invalidate_recordset()
+                    payload = serialize_request_detail(record)
+                except Exception as error:
+                    _logger.exception(
+                        "Laboratory collect response failed for request=%s "
+                        "uid=%s; rolling the collection back",
+                        request_id,
+                        env.uid,
+                    )
+                    raise CollectResponseError(str(error)) from error
+        except (UserError, ValidationError) as error:
+            # The savepoint has already rolled everything back, so the record
+            # below is the state the caller still has, and the message may
+            # honestly say nothing changed.
+            raise _collection_refusal(record, error) from error
+
+        return success_response(
+            {
+                "request": payload,
                 "capabilities": lab_desk_capability_flags(env),
             }
         )

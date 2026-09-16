@@ -2,12 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { messageFromPayload } from "@/lib/api-error";
+import { codeFromPayload, messageFromPayload } from "@/lib/api-error";
 import {
+  collectErrorMessage,
+  collectPath,
+  detailIsLoading,
   matchesSearch,
   requestPath,
   resolveSelection,
-  statusCounts,
+  shouldReconcileAfter,
+  visibleDetail,
   worklistPath,
 } from "@/lib/lab-desk-format";
 import type {
@@ -17,6 +21,7 @@ import type {
   LabRequestResponse,
   LabSessionResponse,
   LabWorklistResponse,
+  LabWorklistSummary,
 } from "@/types/lab-desk";
 
 import LabFilters, { laneStatuses } from "./lab-filters";
@@ -35,7 +40,12 @@ import LabRequestPanel from "./lab-request-panel";
  * services/reception_scope.may_lab_desk before it touches a record and scoped
  * by Odoo record rules after it does.
  *
- * SLICE 1 IS READ-ONLY. There is no mutation anywhere in this tree.
+ * ONE MUTATION IN THIS TREE: sample collection, which calls one authoritative
+ * model method and decides nothing locally.
+ *
+ * THE LANE COUNTS COME FROM THE SERVER, and are never recounted here. They
+ * describe the whole date+search scope rather than the rows on screen, so a
+ * badge is right before any lane is clicked -- see the note on `summary`.
  */
 export default function LabWorkstation() {
   const [lane, setLane] = useState("active");
@@ -48,6 +58,15 @@ export default function LabWorkstation() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
 
   const [rows, setRows] = useState<LabQueueRow[]>([]);
+  /*
+    THE LANE COUNTS, HELD AS THE SERVER SENT THEM.
+
+    Never recomputed from `rows`: those are narrowed to the selected lane and
+    capped at one page, which is exactly the bug this replaces -- an unclicked
+    lane read 0, and a lane whose rows fell past the page limit read 0 even
+    when selected. The server counts the whole date+search scope instead.
+  */
+  const [summary, setSummary] = useState<LabWorklistSummary | null>(null);
   const [truncated, setTruncated] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [detail, setDetail] = useState<LabRequestDetail | null>(null);
@@ -120,6 +139,7 @@ export default function LabWorkstation() {
 
         if (!response.ok || !payload.success) {
           setRows([]);
+          setSummary(null);
           setQueueError(
             messageFromPayload(payload, "Unable to load the laboratory queue."),
           );
@@ -127,11 +147,16 @@ export default function LabWorkstation() {
         }
 
         setRows(payload.data.rows ?? []);
+        // Arrives with the very first response, so every badge is right before
+        // the technician clicks a lane. Refreshed by the same effect on a date,
+        // Any-day, search or refresh change -- one fetch, one consistent scope.
+        setSummary(payload.data.summary ?? null);
         setTruncated(payload.data.meta.truncated);
         setQueueError(null);
       } catch {
         if (!controller.signal.aborted) {
           setRows([]);
+          setSummary(null);
           setQueueError("Unable to reach the laboratory queue service.");
         }
       } finally {
@@ -171,10 +196,23 @@ export default function LabWorkstation() {
   /* ---------------- selected request ---------------- */
   useEffect(() => {
     if (activeId === null) {
-      // The queue emptied under the selection. NOTHING IS CLEARED HERE: the
-      // panel is derived from `activeId` below, so a stale `detail` is already
-      // invisible, and writing state from an effect body would cascade a
-      // render for no gain (react-hooks/set-state-in-effect).
+      /*
+        The queue emptied under the selection -- which is EXACTLY what
+        collecting a sample does when the Ready lane is showing.
+
+        NOTHING IS SET HERE, deliberately: writing state from an effect body
+        cascades a render (react-hooks/set-state-in-effect). In particular
+        `detailLoading` is NOT cleared here, and must not be -- it is DERIVED
+        at the render site instead (`detailIsLoading` below).
+
+        THE BUG THAT TAUGHT US THIS. Previously the panel consumed
+        `detailLoading` raw. On a collection the sequence was: the effect
+        re-ran, started a fetch and set the flag true; the queue refetch then
+        emptied the lane, so `activeId` went null; the re-run aborted the
+        in-flight fetch, whose `finally` skips the reset when aborted; and this
+        early return then left the flag true with nothing to turn it off. The
+        desk sat on "Loading request…" forever.
+      */
       return;
     }
 
@@ -215,18 +253,125 @@ export default function LabWorkstation() {
 
   const refresh = useCallback(() => setRefreshToken((token) => token + 1), []);
 
-  // Counts describe the rows on screen, so a lane count and the list under it
-  // can never disagree.
-  const counts = useMemo(() => statusCounts(visibleRows), [visibleRows]);
+  /* ---------------- sample collection ---------------- */
+  /*
+    THE ONLY MUTATION ON THIS SCREEN.
+
+    It posts to the BFF and does not decide anything: whether the request may
+    be collected is settled by hospital.laboratory.request
+    .action_mark_sample_collected(), which re-runs the financial-clearance gate
+    and the state machine server-side on every call. The button is an
+    affordance drawn from the server's own derived status.
+
+    `collectingId` is the REQUEST ID rather than a boolean, so a collection in
+    flight can never grey out the button of a request the technician has since
+    selected instead.
+  */
+  const [collectingId, setCollectingId] = useState<number | null>(null);
+  /*
+    The request the technician just collected, kept on screen after it leaves
+    the lane. See detailForSelection. Cleared by any fresh selection.
+  */
+  const [justActedId, setJustActedId] = useState<number | null>(null);
+  const [collectErrorFor, setCollectErrorFor] = useState<{
+    requestId: number;
+    message: string;
+  } | null>(null);
+
+  const collect = useCallback(
+    async (requestId: number) => {
+      // Guard against a second submit slipping past a disabled button.
+      if (collectingId !== null) return;
+      setCollectingId(requestId);
+      setCollectErrorFor(null);
+      try {
+        const response = await fetch(collectPath(requestId), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+          cache: "no-store",
+        });
+        const payload = (await response.json()) as ApiEnvelope<LabRequestResponse>;
+
+        if (!response.ok || !payload.success) {
+          setCollectErrorFor({
+            requestId,
+            message: collectErrorMessage(
+              messageFromPayload(payload, ""),
+              "The sample could not be marked collected.",
+            ),
+          });
+          /*
+            RECONCILE AFTER A REFUSAL THE SCREEN CAUSED. A workflow conflict, a
+            clearance block or a vanished request all mean the row on screen no
+            longer matches the database -- so re-read rather than leave a
+            Collect button the server has just refused.
+          */
+          if (shouldReconcileAfter(codeFromPayload(payload))) {
+            refresh();
+          }
+          return;
+        }
+
+        /*
+          THE AUTHORITATIVE PAYLOAD WINS. The server re-serialized the request
+          AFTER the transition, so the status rendered is the derived one and
+          never a value guessed from the click. The detail updates immediately;
+          the queue is refetched so its rows, lane membership and counts move
+          with it.
+        */
+        setDetail(payload.data.request);
+        // Pin it so the transition stays visible even though the request has
+        // just left the Ready lane the technician is looking at.
+        setJustActedId(requestId);
+        refresh();
+      } catch {
+        setCollectErrorFor({
+          requestId,
+          message:
+            "Unable to reach the laboratory service. The sample was not marked collected.",
+        });
+      } finally {
+        setCollectingId(null);
+      }
+    },
+    [collectingId, refresh],
+  );
 
   /*
+    WHICH REQUEST THE PANEL MAY SHOW.
+
     Matching the loaded detail against the ACTIVE id is what stops the panel
     showing the previous request for a frame after the selection moves, and it
     is also why the loader never nulls `detail` on a same-request refresh: the
     record stays on screen while "Updating…" carries the feedback.
+
+    `justActedId` IS THE SECOND WAY IN, AND IT EXISTS FOR COLLECTION. A
+    collected request leaves the Ready lane the instant it transitions, so
+    `activeId` drops it -- and the technician would watch the request they just
+    acted on vanish, with no confirmation that anything happened. Keeping it
+    pinned means the panel answers the question the click asked: it now reads
+    Sample collected, and the Collect button is gone because the status moved.
+
+    The pin is cleared the moment the technician selects anything else, so it
+    can never shadow a real selection.
   */
-  const detailForSelection =
-    detail && activeId !== null && detail.id === activeId ? detail : null;
+  const detailForSelection = visibleDetail(detail, activeId, justActedId);
+
+  /*
+    THE LOADING FLAG THE PANEL ACTUALLY SEES, derived rather than stored.
+
+    `detailLoading` is raw state that the effect above cannot always reset --
+    an aborted fetch skips its own `finally`, and the activeId===null branch
+    returns without touching it. Deriving here makes a stuck spinner
+    structurally impossible: with nothing selected there is nothing to load, and
+    a request already on screen is never "loading" from an empty state.
+  */
+  const panelIsLoading = detailIsLoading(
+    activeId,
+    detailLoading,
+    detailForSelection,
+  );
 
   return (
     /*
@@ -249,7 +394,7 @@ export default function LabWorkstation() {
         date={date}
         search={search}
         loading={queueLoading}
-        counts={counts}
+        summary={summary}
         onLaneChange={setLane}
         onDateChange={setDate}
         onSearchChange={setSearch}
@@ -263,13 +408,31 @@ export default function LabWorkstation() {
           loading={queueLoading}
           error={queueError}
           truncated={truncated}
-          onSelect={setSelectedId}
+          onSelect={(requestId) => {
+            setSelectedId(requestId);
+            // A real selection always wins over the post-collection pin.
+            setJustActedId(null);
+          }}
         />
         <LabRequestPanel
           detail={detailForSelection}
-          loading={detailLoading}
+          loading={panelIsLoading}
           error={activeId !== null ? detailError : null}
           empty={visibleRows.length === 0}
+          onCollect={() => {
+            if (activeId !== null) void collect(activeId);
+          }}
+          /*
+            Both keyed on the ACTIVE request, so a pending collection or a
+            refusal belonging to one request can never be shown against
+            another after the selection moves.
+          */
+          collecting={collectingId !== null && collectingId === activeId}
+          collectError={
+            collectErrorFor && collectErrorFor.requestId === activeId
+              ? collectErrorFor.message
+              : null
+          }
         />
       </div>
     </div>

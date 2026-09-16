@@ -1,4 +1,5 @@
-"""Laboratory Desk, Slice 1: the read-only bench queue and request detail.
+"""Laboratory Desk: the bench queue, request detail (Slice 1) and sample
+collection (Slice 2).
 
 WHAT THESE TESTS ARE FOR
 ------------------------
@@ -31,6 +32,14 @@ Four properties carry this slice.
   4. THE QUEUE IS BOUNDED. An unbounded bench queue is a table scan with a
      per-row clearance compute behind it.
 
+  5. (SLICE 2) THE DESK CALLS THE AUTHORITATIVE METHOD AND DECIDES NOTHING.
+     Collection is hospital.laboratory.request.action_mark_sample_collected(),
+     where hospital_billing's clearance gate and the base state machine both
+     live. The endpoint writes no state, re-checks no clearance, and sanitises
+     the ONE refusal whose wording can carry an amount -- see
+     TestLabDeskCollection.test_141, which is about a manager, not a
+     technician.
+
 FIXTURES ARE DRIVEN THROUGH THE REAL WORKFLOW. No test below writes `state`.
 Requests reach sample_collected through action_mark_sample_collected() (which
 is the clearance gate), in_progress through action_mark_in_progress(), and
@@ -55,6 +64,7 @@ from .test_doctor_desk_api import DoctorDeskCase
 SESSION = "/yoya-emr/api/v1/lab/session"
 WORKLIST = "/yoya-emr/api/v1/lab/worklist"
 DETAIL = "/yoya-emr/api/v1/lab/requests/%s"
+COLLECT = "/yoya-emr/api/v1/lab/requests/%s/collect"
 
 G_LAB_TECH = "hospital_management.group_hospital_lab_technician"
 G_RECEPTIONIST = "hospital_management.group_hospital_receptionist"
@@ -254,6 +264,17 @@ class LabDeskCase(DoctorDeskCase):
             **params,
         )
 
+    def _lab_post(self, url, user=None, password=None):
+        """POST as a chosen role, matching DoctorDeskCase._post exactly."""
+        self._auth(user or self.lab_tech, password or self.lab_password)
+        response = self.url_open(
+            url, data="{}", headers={"Content-Type": "application/json"}
+        )
+        return response, json.loads(response.text)
+
+    def _collect(self, record, user=None, password=None):
+        return self._lab_post(COLLECT % record.id, user=user, password=password)
+
     def _rows_by_id(self, payload):
         return {row["id"]: row for row in payload["data"]["rows"]}
 
@@ -406,8 +427,12 @@ class TestLabDeskAuthorization(LabDeskCase):
             ),
         )
 
-    def test_15_no_write_route_exists_in_this_slice(self):
-        """Slice 1 is read-only, and the routing table is the proof."""
+    def test_15_the_read_routes_are_read_only(self):
+        """The routing table is the proof.
+
+        Slice 2 adds exactly one write route, on its own path
+        (.../requests/<id>/collect). These three stay GET-only.
+        """
         for url in (SESSION, WORKLIST, DETAIL % 1):
             self._auth(self.lab_tech, self.lab_password)
             response = self.url_open(
@@ -415,7 +440,7 @@ class TestLabDeskAuthorization(LabDeskCase):
             )
             self.assertIn(
                 response.status_code, (404, 405),
-                "%s must not accept a POST in Slice 1." % url,
+                "%s must not accept a POST." % url,
             )
 
 
@@ -645,20 +670,19 @@ class TestLabDeskQueue(LabDeskCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(payload["error"]["code"], "invalid_parameter")
 
-    def test_51_counts_describe_the_rows_that_were_returned(self):
+    def test_51_the_page_meta_describes_the_page(self):
+        """row_count is the PAGE. The lane counts are `summary`.
+
+        They deliberately answer different questions -- see
+        TestLabDeskSummary, which owns the scope-wide counts.
+        """
         self._lab_request()
         self._lab_request(tests=[self.prepaid_test])
         _response, payload = self._lab_get(WORKLIST)
 
-        counts = payload["data"]["counts"]
-        rows = payload["data"]["rows"]
-        for status in LAB_DESK_STATUS_LABELS:
-            self.assertEqual(
-                counts[status],
-                len([row for row in rows if row["status"] == status]),
-                "The count for '%s' must describe the rows actually sent."
-                % status,
-            )
+        self.assertEqual(
+            payload["data"]["meta"]["row_count"], len(payload["data"]["rows"])
+        )
 
     def test_52_the_queue_is_ordered_oldest_first(self):
         first = self._lab_request()
@@ -873,3 +897,709 @@ class TestLabDeskConfidentiality(LabDeskCase):
         _response, payload = self._lab_get(SESSION)
         self.assertEqual(set(payload["data"]), {"user", "company", "capabilities"})
         self.assertEqual(set(payload["data"]["user"]), {"id", "name"})
+
+
+@tagged("post_install", "-at_install", "lab_desk")
+class TestLabDeskCollection(LabDeskCase):
+    """SLICE 2. Sample collection -- the desk's only mutation.
+
+    THE CONTROLLER DECIDES NOTHING, and these tests are written to prove that
+    rather than to re-test the model. Every assertion below is about what the
+    ENDPOINT does with the authoritative method's answer:
+
+      * it calls action_mark_sample_collected() and writes no state itself
+      * it refuses every role outside LAB_DESK_GROUPS before touching a record
+      * it never lets a financial figure reach the bench, for ANY role
+      * a refusal leaves the request, its charges and its clearance untouched
+
+    THE FIXTURES DRIVE THE REAL WORKFLOW. No test below writes `state`.
+    """
+
+    # ------------------------------------------------------------------
+    # Authorization
+    # ------------------------------------------------------------------
+    def test_100_lab_technician_can_collect(self):
+        record = self._lab_request()
+        self.assertEqual(record.state, "requested")
+
+        response, payload = self._collect(record)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["data"]["request"]["status"], "sample_collected")
+
+        record.invalidate_recordset()
+        self.assertEqual(record.state, "sample_collected")
+
+    def test_101_manager_can_collect(self):
+        record = self._lab_request()
+        response, payload = self._collect(
+            record, user=self.manager, password=self.manager_password
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload["success"])
+        record.invalidate_recordset()
+        self.assertEqual(record.state, "sample_collected")
+
+    def test_102_system_administrator_can_collect(self):
+        password = "lab-admin-collect-pw"
+        administrator = self._make_user(
+            "lab_admin_collect", password,
+            ["hospital_management.group_hospital_system_administrator"],
+        )
+        record = self._lab_request()
+        response, _payload = self._collect(
+            record, user=administrator, password=password
+        )
+        self.assertEqual(response.status_code, 200)
+        record.invalidate_recordset()
+        self.assertEqual(record.state, "sample_collected")
+
+    def _assert_collect_denied(self, user, password):
+        """A denied role is refused AND changes nothing.
+
+        The state assertion is the half that matters: a gate that returned 403
+        after the transition would pass a status-only test.
+        """
+        record = self._lab_request()
+        response, payload = self._collect(record, user=user, password=password)
+        self.assertEqual(
+            response.status_code, 403,
+            "%s must not be able to collect a sample." % user.login,
+        )
+        self.assertEqual(payload["error"]["code"], "lab_desk_not_authorized")
+        record.invalidate_recordset()
+        self.assertEqual(
+            record.state, "requested",
+            "A refused caller must not move the request.",
+        )
+
+    def test_103_doctor_cannot_collect(self):
+        """THE CASE THIS GATE EXISTS FOR.
+
+        A Doctor holds read/write/create on hospital.laboratory.request in
+        hospital_management -- they order the tests -- so the ORM alone would
+        let them call action_mark_sample_collected() quite happily. The Lab API
+        role gate is the independent operational boundary that refuses them.
+        """
+        self._assert_collect_denied(self.doctor_user, self.doctor_password)
+
+    def test_104_nurse_cannot_collect(self):
+        self._assert_collect_denied(self.nurse, self.nurse_password)
+
+    def test_105_receptionist_cannot_collect(self):
+        self._assert_collect_denied(self.receptionist, self.receptionist_password)
+
+    def test_106_cashier_cannot_collect(self):
+        self._assert_collect_denied(self.cashier, self.cashier_password)
+
+    def test_107_pharmacist_and_accountant_cannot_collect(self):
+        self._assert_collect_denied(self.pharmacist, self.pharmacist_password)
+        self._assert_collect_denied(self.accountant, self.accountant_password)
+
+    def test_108_front_desk_nurse_cannot_collect(self):
+        self._assert_collect_denied(self.front_desk, self.fd_password)
+
+    def test_109_unauthenticated_never_reaches_the_endpoint(self):
+        """auth=user REDIRECTS a public caller; it does not return 401.
+
+        Same contract test_13 documents for the read routes.
+        """
+        record = self._lab_request()
+        self.authenticate(None, None)
+        response = self.url_open(
+            COLLECT % record.id, data="{}",
+            headers={"Content-Type": "application/json"},
+            allow_redirects=False,
+        )
+        self.assertIn(response.status_code, (301, 302, 303, 401, 403))
+        record.invalidate_recordset()
+        self.assertEqual(record.state, "requested")
+
+    def test_110_the_gate_precedes_existence(self):
+        """A refused role learns nothing about which request ids are real."""
+        record = self._lab_request()
+        real, _p = self._collect(
+            record, user=self.nurse, password=self.nurse_password
+        )
+        fake, _p = self._lab_post(
+            COLLECT % 99999999, user=self.nurse, password=self.nurse_password
+        )
+        self.assertEqual(real.status_code, 403)
+        self.assertEqual(fake.status_code, 403)
+
+    # ------------------------------------------------------------------
+    # Workflow
+    # ------------------------------------------------------------------
+    def test_120_a_ready_request_becomes_sample_collected(self):
+        record = self._lab_request()
+        self.assertFalse(record.sudo().billing_blocked)
+
+        _response, payload = self._collect(record)
+        detail = payload["data"]["request"]
+
+        self.assertEqual(detail["state"], "sample_collected")
+        self.assertEqual(detail["status"], "sample_collected")
+        self.assertEqual(detail["status_label"], "Sample collected")
+        self.assertEqual(detail["id"], record.id)
+
+    def test_121_the_response_is_serialized_after_the_transition(self):
+        """The status the bench renders is DERIVED, never guessed from the click."""
+        record = self._lab_request()
+        _response, payload = self._collect(record)
+        record.invalidate_recordset()
+        self.assertEqual(payload["data"]["request"]["state"], record.state)
+
+    def test_122_a_blocked_request_cannot_be_collected(self):
+        record = self._lab_request(tests=[self.prepaid_test])
+        self.assertTrue(record.sudo().billing_blocked)
+
+        response, payload = self._collect(record)
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(payload["error"]["code"], "lab_not_financially_cleared")
+
+    def test_123_a_blocked_request_stays_requested(self):
+        """ATOMICITY. The refusal leaves the clinical state exactly as it was."""
+        record = self._lab_request(tests=[self.prepaid_test])
+        self._collect(record)
+        record.invalidate_recordset()
+        self.assertEqual(record.state, "requested")
+        self.assertTrue(record.sudo().billing_blocked)
+
+    def test_124_the_authoritative_method_rechecks_clearance(self):
+        """Paying makes the SAME request collectable, with no desk change.
+
+        Proves the endpoint asks the model rather than caching a verdict: the
+        first call is refused, the encounter is settled through the cashier's
+        own path, and the second call succeeds.
+        """
+        record = self._lab_request(tests=[self.prepaid_test])
+        refused, _payload = self._collect(record)
+        self.assertEqual(refused.status_code, 422)
+
+        self._pay(record.encounter_id)
+        record.invalidate_recordset()
+        self.env.invalidate_all()
+        self.assertFalse(record.sudo().billing_blocked)
+
+        allowed, payload = self._collect(record)
+        self.assertEqual(allowed.status_code, 200)
+        self.assertEqual(payload["data"]["request"]["status"], "sample_collected")
+
+    def test_125_a_collected_request_cannot_be_collected_again(self):
+        """IDEMPOTENCY IS THE STATE MACHINE'S. No token, no second transition."""
+        record = self._lab_request()
+        first, _payload = self._collect(record)
+        self.assertEqual(first.status_code, 200)
+
+        second, payload = self._collect(record)
+        self.assertEqual(second.status_code, 422)
+        self.assertEqual(payload["error"]["code"], "invalid_workflow_state")
+
+        record.invalidate_recordset()
+        self.assertEqual(record.state, "sample_collected")
+
+    def test_126_in_progress_cannot_be_collected(self):
+        record = self._in_progress()
+        response, payload = self._collect(record)
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(payload["error"]["code"], "invalid_workflow_state")
+        record.invalidate_recordset()
+        self.assertEqual(record.state, "in_progress")
+
+    def test_127_completed_cannot_be_collected(self):
+        record = self._completed()
+        response, _payload = self._collect(record)
+        self.assertEqual(response.status_code, 422)
+        record.invalidate_recordset()
+        self.assertEqual(record.state, "completed")
+
+    def test_128_cancelled_cannot_be_collected(self):
+        record = self._cancelled()
+        response, _payload = self._collect(record)
+        self.assertEqual(response.status_code, 422)
+        record.invalidate_recordset()
+        self.assertEqual(record.state, "cancelled")
+
+    def test_129_draft_cannot_be_collected(self):
+        record = self._lab_request(confirm=False)
+        response, _payload = self._collect(record)
+        self.assertEqual(response.status_code, 422)
+        record.invalidate_recordset()
+        self.assertEqual(record.state, "draft")
+
+    def test_130_an_unknown_request_is_a_flat_404(self):
+        response, payload = self._lab_post(COLLECT % 99999999)
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(payload["error"]["code"], "lab_request_not_found")
+        self.assertEqual(
+            payload["error"]["message"], "Laboratory request not found."
+        )
+
+    def test_131_a_zero_id_is_rejected_before_any_lookup(self):
+        response, payload = self._lab_post(COLLECT % 0)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(payload["error"]["code"], "invalid_request_id")
+
+    def test_132_the_read_routes_still_refuse_a_post(self):
+        """Slice 2 adds ONE write route. The reads stay reads.
+
+        url_open directly rather than _lab_post: a router-level 404/405 is an
+        HTML page, not the JSON envelope, so there is nothing to decode.
+        """
+        record = self._lab_request()
+        for url in (SESSION, WORKLIST, DETAIL % record.id):
+            self._auth(self.lab_tech, self.lab_password)
+            response = self.url_open(
+                url, data="{}", headers={"Content-Type": "application/json"}
+            )
+            self.assertIn(
+                response.status_code, (404, 405),
+                "%s must not accept a POST." % url,
+            )
+
+    # ------------------------------------------------------------------
+    # Confidentiality -- the half that is specific to Slice 2
+    # ------------------------------------------------------------------
+    def test_140_a_clearance_refusal_carries_no_money_for_a_technician(self):
+        record = self._lab_request(tests=[self.prepaid_test])
+        _response, payload = self._collect(record)
+        blob = json.dumps(payload).lower()
+        for banned in FORBIDDEN_KEYS:
+            self.assertNotIn(banned, blob, "'%s' must not reach the bench." % banned)
+        for rendering in ("640", "640.0", "640.00"):
+            self.assertNotIn(rendering, json.dumps(payload))
+
+    def test_141_a_clearance_refusal_carries_no_money_for_a_MANAGER(self):
+        """THE TRAP THIS SLICE HAD TO CLOSE, AND IT IS NOT THEORETICAL.
+
+        hospital_billing._clearance_error builds its detail line from the
+        CALLER'S groups:
+
+            may_see_cash -> "<test> -- unpaid, 640.00 due"
+            otherwise    -> "<test> -- payment not cleared (see front desk)"
+
+        and may_see_cash is true for receptionist, accountant, MANAGER and
+        SYSTEM ADMINISTRATOR. Manager and admin are both in LAB_DESK_GROUPS, so
+        forwarding that sentence verbatim would have put an amount on the
+        Laboratory Desk for exactly those two roles -- a confidentiality rule
+        that held for a lab technician and broke silently for their manager.
+
+        Asserted at the HTTP boundary AND against the raw model error, so this
+        fails loudly if the sanitisation is ever removed.
+        """
+        record = self._lab_request(tests=[self.prepaid_test])
+
+        # The model's own sentence DOES name the amount for this role.
+        raw = record.with_user(self.manager)._clearance_error(
+            {"cleared": False, "reason": "probe"}
+        )
+        self.assertIn(
+            "640", str(raw),
+            "Fixture drift: the model error no longer contains the amount, so "
+            "this test would pass for the wrong reason.",
+        )
+
+        # The desk's answer does not.
+        response, payload = self._collect(
+            record, user=self.manager, password=self.manager_password
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(payload["error"]["code"], "lab_not_financially_cleared")
+        blob = json.dumps(payload)
+        self.assertNotIn("640", blob)
+        for banned in FORBIDDEN_KEYS:
+            self.assertNotIn(banned, blob.lower())
+
+    def test_142_a_workflow_refusal_forwards_the_models_own_sentence(self):
+        """Not every refusal is sanitised -- only the one that can carry money.
+
+        A state-machine refusal names states and nothing else, and it is the
+        only thing that tells the technician WHY, so Odoo's wording is kept.
+        """
+        record = self._collected()
+        _response, payload = self._collect(record)
+        self.assertIn("requested", payload["error"]["message"].lower())
+        for banned in FORBIDDEN_KEYS:
+            self.assertNotIn(banned, payload["error"]["message"].lower())
+
+    def test_143_the_success_payload_is_the_slice_1_shape(self):
+        """No new field, and no financial field, arrives with the mutation."""
+        record = self._lab_request()
+        _response, payload = self._collect(record)
+        detail = payload["data"]["request"]
+        self.assertEqual(
+            set(detail), EXPECTED_ROW_KEYS | EXPECTED_DETAIL_EXTRA_KEYS
+        )
+        billing_keys = [key for key in detail if "billing" in key]
+        self.assertEqual(billing_keys, ["billing_blocked"])
+        self.assertIsInstance(detail["billing_blocked"], bool)
+
+    def test_144_no_money_vocabulary_in_a_successful_collection(self):
+        record = self._lab_request()
+        _response, payload = self._collect(record)
+        blob = json.dumps(payload).lower()
+        for banned in FORBIDDEN_KEYS:
+            self.assertNotIn(banned, blob)
+
+    # ------------------------------------------------------------------
+    # Atomicity
+    # ------------------------------------------------------------------
+    def test_150_a_refused_collection_changes_no_charge_state(self):
+        """THE SAVEPOINT'S REASON FOR EXISTING.
+
+        check_financial_clearance(persist=True) WRITES financial_clearance_state
+        on the billing account before the refusal is raised. Without the
+        savepoint the controller would commit that write while telling the
+        bench nothing happened, and the charges would be left mid-flight.
+        """
+        record = self._lab_request(tests=[self.prepaid_test])
+        charges = record.sudo().charge_line_ids
+        before = {c.id: (c.charge_state, c.delivery_state) for c in charges}
+
+        response, _payload = self._collect(record)
+        self.assertEqual(response.status_code, 422)
+
+        record.invalidate_recordset()
+        self.env.invalidate_all()
+        after = {
+            c.id: (c.charge_state, c.delivery_state)
+            for c in record.sudo().charge_line_ids
+        }
+        self.assertEqual(before, after, "A refusal must move no charge.")
+        self.assertEqual(record.state, "requested")
+
+    def test_151_a_successful_collection_commences_the_charges(self):
+        """The override's own post-transition work really did run.
+
+        Proves the endpoint called the AUTHORITATIVE method rather than writing
+        state: marking charges in progress is hospital_billing's behaviour, not
+        anything this API knows how to do.
+        """
+        record = self._lab_request()
+        response, _payload = self._collect(record)
+        self.assertEqual(response.status_code, 200)
+
+        self.env.invalidate_all()
+        record.invalidate_recordset()
+        self.assertEqual(record.state, "sample_collected")
+        self.assertTrue(
+            record.sudo().charge_line_ids,
+            "The fixture must have raised charges at confirmation.",
+        )
+        for charge in record.sudo().charge_line_ids:
+            self.assertNotEqual(
+                charge.delivery_state, "delivered",
+                "Collection commences work; it does not deliver it.",
+            )
+
+    def test_152_the_queue_reflects_the_collection_immediately(self):
+        """The desk and the database agree on the very next read."""
+        record = self._lab_request()
+        before = self._row_for(record)
+        self.assertEqual(before["status"], "ready_for_collection")
+
+        self._collect(record)
+
+        after = self._row_for(record)
+        self.assertEqual(after["status"], "sample_collected")
+
+
+@tagged("post_install", "-at_install", "lab_desk")
+class TestLabDeskSummary(LabDeskCase):
+    """The lane counts. A UAT defect fix, and these pin what went wrong.
+
+    THE BUG. `counts` used to be computed from the rows the client had just
+    been handed. Those rows are narrowed twice -- to the SELECTED lane's states
+    and then to `limit` -- so every lane the technician had not clicked read
+    zero, and clicking one "discovered" its real number. In the UAT database
+    Ready for collection showed 0 and became 50 on click, because the oldest
+    100 of 173 active rows happened to contain none of it.
+
+    THE CONTRACT NOW. `summary` counts the whole date+search scope, ignoring
+    the selected lane, and `meta.row_count` / `meta.truncated` continue to
+    describe the page. They answer different questions and must never be the
+    same number.
+    """
+
+    SUMMARY_KEYS = {
+        "active_bench", "draft", "awaiting_clearance", "ready_for_collection",
+        "sample_collected", "in_progress", "completed", "cancelled",
+        "requested_total",
+    }
+
+    def _summary(self, **params):
+        _response, payload = self._lab_get(WORKLIST, **params)
+        return payload["data"]["summary"], payload["data"]
+
+    # ------------------------------------------------------------------
+    # Present on the first load, for every lane
+    # ------------------------------------------------------------------
+    def test_200_every_lane_count_arrives_on_the_default_load(self):
+        """THE DEFECT, ASSERTED DIRECTLY: no lane needs to be clicked."""
+        self._lab_request()
+        self._lab_request(tests=[self.prepaid_test])
+        self._collected()
+        self._in_progress()
+        self._completed()
+        self._cancelled()
+        self._lab_request(confirm=False)
+
+        summary, _payload = self._summary()
+        self.assertEqual(set(summary), self.SUMMARY_KEYS)
+        for key in self.SUMMARY_KEYS:
+            self.assertIsNotNone(summary[key], "%s must be counted" % key)
+
+        # Every lane is non-zero WITHOUT having been selected -- the default
+        # lane is active bench, which excludes three of these.
+        self.assertGreaterEqual(summary["ready_for_collection"], 1)
+        self.assertGreaterEqual(summary["awaiting_clearance"], 1)
+        self.assertGreaterEqual(summary["sample_collected"], 1)
+        self.assertGreaterEqual(summary["in_progress"], 1)
+        self.assertGreaterEqual(summary["draft"], 1)
+        self.assertGreaterEqual(summary["completed"], 1)
+        self.assertGreaterEqual(summary["cancelled"], 1)
+
+    def test_201_ready_count_exists_without_selecting_that_lane(self):
+        ready = self._lab_request()
+        summary, payload = self._summary(status="awaiting_clearance")
+        # The selected lane returns no ready rows at all...
+        self.assertNotIn(ready.id, self._rows_by_id({"data": payload}))
+        # ...and the badge for it is still right.
+        self.assertGreaterEqual(summary["ready_for_collection"], 1)
+
+    def test_202_awaiting_count_exists_without_selecting_that_lane(self):
+        blocked = self._lab_request(tests=[self.prepaid_test])
+        summary, payload = self._summary(status="ready_for_collection")
+        self.assertNotIn(blocked.id, self._rows_by_id({"data": payload}))
+        self.assertGreaterEqual(summary["awaiting_clearance"], 1)
+
+    def test_203_selecting_a_lane_zeroes_nothing(self):
+        """Counts are identical whichever lane is selected, for one scope."""
+        self._lab_request()
+        self._lab_request(tests=[self.prepaid_test])
+        self._collected()
+        self._completed()
+
+        baseline, _p = self._summary()
+        for lane in ("ready_for_collection", "awaiting_clearance",
+                     "sample_collected", "completed", "cancelled", "draft"):
+            other, _p = self._summary(status=lane)
+            self.assertEqual(
+                other, baseline,
+                "Selecting '%s' must not change any lane count." % lane,
+            )
+
+    # ------------------------------------------------------------------
+    # The clearance split
+    # ------------------------------------------------------------------
+    def test_210_blocked_requested_counts_only_as_awaiting(self):
+        base, _p = self._summary()
+        self._lab_request(tests=[self.prepaid_test])
+        after, _p = self._summary()
+        self.assertEqual(
+            after["awaiting_clearance"], base["awaiting_clearance"] + 1
+        )
+        self.assertEqual(
+            after["ready_for_collection"], base["ready_for_collection"]
+        )
+        self.assertEqual(after["requested_total"], base["requested_total"] + 1)
+
+    def test_211_cleared_requested_counts_only_as_ready(self):
+        base, _p = self._summary()
+        self._lab_request()
+        after, _p = self._summary()
+        self.assertEqual(
+            after["ready_for_collection"], base["ready_for_collection"] + 1
+        )
+        self.assertEqual(
+            after["awaiting_clearance"], base["awaiting_clearance"]
+        )
+
+    def test_212_the_split_always_totals_the_requested_rows(self):
+        self._lab_request()
+        self._lab_request(tests=[self.prepaid_test])
+        summary, _p = self._summary()
+        self.assertEqual(
+            summary["awaiting_clearance"] + summary["ready_for_collection"],
+            summary["requested_total"],
+        )
+
+    def test_213_active_bench_is_the_four_active_statuses(self):
+        """Pinned, so draft/completed/cancelled can never be folded in."""
+        self._lab_request()
+        self._lab_request(tests=[self.prepaid_test])
+        self._collected()
+        self._in_progress()
+        self._completed()
+        self._cancelled()
+        self._lab_request(confirm=False)
+
+        summary, _p = self._summary()
+        self.assertEqual(
+            summary["active_bench"],
+            sum(summary[status] for status in LAB_DESK_ACTIVE_STATUSES),
+        )
+        # And it really does exclude the other three.
+        self.assertLess(
+            summary["active_bench"],
+            sum(summary[s] for s in LAB_DESK_STATUS_LABELS),
+        )
+
+    # ------------------------------------------------------------------
+    # The common filters narrow the counts; the lane does not
+    # ------------------------------------------------------------------
+    def test_220_counts_respect_the_date_filter(self):
+        record = self._lab_request()
+        same_day, _p = self._summary(date=str(record.request_date))
+        self.assertGreaterEqual(same_day["ready_for_collection"], 1)
+
+        other_day, _p = self._summary(date="2001-01-01")
+        for key in self.SUMMARY_KEYS:
+            self.assertEqual(
+                other_day[key], 0,
+                "A day with no laboratory work counts zero everywhere.",
+            )
+
+    def test_221_counts_respect_the_search_filter(self):
+        record = self._lab_request()
+        blocked = self._lab_request(tests=[self.prepaid_test])
+
+        mine, _p = self._summary(q=record.name)
+        self.assertEqual(mine["ready_for_collection"], 1)
+        self.assertEqual(mine["awaiting_clearance"], 0)
+        self.assertEqual(mine["requested_total"], 1)
+
+        theirs, _p = self._summary(q=blocked.name)
+        self.assertEqual(theirs["awaiting_clearance"], 1)
+        self.assertEqual(theirs["ready_for_collection"], 0)
+
+    def test_222_search_counts_describe_the_whole_status_distribution(self):
+        """One patient, several statuses: the badges describe all of them.
+
+        The scenario the brief names -- searching a patient must show that
+        patient's distribution across every lane, not only the selected one.
+        """
+        appointment, encounter = self._ready_visit()
+
+        def _request_for(tests, collect=False):
+            record = self.env["hospital.laboratory.request"].sudo().create({
+                "patient_id": appointment.patient_id.id,
+                "physician_id": self.doctor.id,
+                "appointment_id": appointment.id,
+                "encounter_id": encounter.id,
+                "line_ids": [(0, 0, {"test_id": test.id}) for test in tests],
+            })
+            record.action_confirm_request()
+            if collect:
+                record.action_mark_sample_collected()
+            record.invalidate_recordset()
+            return record
+
+        _request_for([self.cleared_test])
+        _request_for([self.second_test], collect=True)
+        name = appointment.patient_id.name
+
+        summary, _p = self._summary(q=name, status="ready_for_collection")
+        self.assertGreaterEqual(summary["ready_for_collection"], 1)
+        self.assertGreaterEqual(
+            summary["sample_collected"], 1,
+            "Selecting one lane must not hide the patient's other work.",
+        )
+
+    # ------------------------------------------------------------------
+    # Truncation must not make the summary lie
+    # ------------------------------------------------------------------
+    def test_230_the_summary_is_not_the_page(self):
+        """THE EXACT UAT MECHANISM, reproduced in miniature.
+
+        With limit=1 the page holds one row and reports truncated; the summary
+        still counts every matching request. A count that equalled the page
+        would be the old bug.
+        """
+        for _index in range(3):
+            self._lab_request()
+        summary, payload = self._summary(limit=1)
+
+        self.assertEqual(len(payload["rows"]), 1)
+        self.assertEqual(payload["meta"]["row_count"], 1)
+        self.assertTrue(payload["meta"]["truncated"])
+        self.assertGreaterEqual(
+            summary["ready_for_collection"], 3,
+            "The summary counts the scope, never the page.",
+        )
+
+    def test_231_a_truncated_page_still_counts_unselected_lanes(self):
+        self._lab_request(tests=[self.prepaid_test])
+        for _index in range(3):
+            self._lab_request()
+        summary, payload = self._summary(status="ready_for_collection", limit=1)
+        self.assertTrue(payload["meta"]["truncated"])
+        self.assertGreaterEqual(summary["awaiting_clearance"], 1)
+
+    def test_232_summary_exact_is_reported(self):
+        self._lab_request()
+        _response, payload = self._lab_get(WORKLIST)
+        self.assertTrue(payload["data"]["meta"]["summary_exact"])
+
+    # ------------------------------------------------------------------
+    # Contract hygiene
+    # ------------------------------------------------------------------
+    def test_240_the_old_row_scoped_counts_key_is_gone(self):
+        """Left in place it would be a trap -- a future reader would grab it
+        and rebuild exactly this bug."""
+        _response, payload = self._lab_get(WORKLIST)
+        self.assertNotIn("counts", payload["data"])
+
+    def test_241_the_summary_carries_no_financial_field(self):
+        self._lab_request(tests=[self.prepaid_test])
+        _response, payload = self._lab_get(WORKLIST)
+        blob = json.dumps(payload["data"]["summary"]).lower()
+        for banned in FORBIDDEN_KEYS:
+            self.assertNotIn(banned, blob)
+        for rendering in ("640", "640.0", "640.00"):
+            self.assertNotIn(rendering, json.dumps(payload["data"]["summary"]))
+
+    def test_242_a_denied_role_gets_no_summary(self):
+        self._lab_request()
+        response, payload = self._lab_get(
+            WORKLIST, user=self.nurse, password=self.nurse_password
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertNotIn("data", payload)
+
+    # ------------------------------------------------------------------
+    # Slice 2 interaction
+    # ------------------------------------------------------------------
+    def test_250_collecting_moves_one_count_across(self):
+        """After a collection the badges must reconcile on the next read.
+
+        ready_for_collection -1, sample_collected +1, active_bench unchanged --
+        the request moved between lanes, it did not leave the bench.
+        """
+        record = self._lab_request()
+        before, _p = self._summary()
+
+        response, _payload = self._collect(record)
+        self.assertEqual(response.status_code, 200)
+
+        after, _p = self._summary()
+        self.assertEqual(
+            after["ready_for_collection"], before["ready_for_collection"] - 1
+        )
+        self.assertEqual(
+            after["sample_collected"], before["sample_collected"] + 1
+        )
+        self.assertEqual(
+            after["active_bench"], before["active_bench"],
+            "Collection moves work within the bench, not off it.",
+        )
+
+    def test_251_a_refused_collection_leaves_the_counts_alone(self):
+        record = self._lab_request(tests=[self.prepaid_test])
+        before, _p = self._summary()
+
+        response, _payload = self._collect(record)
+        self.assertEqual(response.status_code, 422)
+
+        after, _p = self._summary()
+        self.assertEqual(after, before)

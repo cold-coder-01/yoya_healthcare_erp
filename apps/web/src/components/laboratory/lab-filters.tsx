@@ -5,7 +5,9 @@ import {
   LAB_DESK_STATUS_ORDER,
   labStatusCode,
   labStatusLabel,
+  laneCountLabel,
 } from "@/lib/lab-desk-format";
+import type { LabWorklistSummary } from "@/types/lab-desk";
 
 /**
  * The bench filter strip: status lane, date, search, refresh.
@@ -49,7 +51,7 @@ export default function LabFilters({
   date,
   search,
   loading,
-  counts,
+  summary,
   onLaneChange,
   onDateChange,
   onSearchChange,
@@ -59,8 +61,13 @@ export default function LabFilters({
   date: string;
   search: string;
   loading: boolean;
-  /** Counts over the rows the server returned, for the single-status lanes. */
-  counts: Record<string, number>;
+  /**
+   * The SERVER'S scope-wide lane counts, or null before the first load.
+   *
+   * Every lane gets a badge, including the one the technician has not clicked
+   * and including "Active bench". Nothing is recounted here.
+   */
+  summary: LabWorklistSummary | null;
   onLaneChange: (lane: string) => void;
   onDateChange: (date: string) => void;
   onSearchChange: (search: string) => void;
@@ -77,10 +84,14 @@ export default function LabFilters({
       >
         {LANES.map((entry) => {
           const active = entry.key === lane;
-          // Only a single-status lane has a meaningful count in `counts`; the
-          // "Active bench" lane is the sum of four and is left uncounted rather
-          // than shown as a number that means something different.
-          const count = entry.statuses.length === 1 ? counts[entry.key] : undefined;
+          /*
+            EVERY lane carries a badge now, Active bench included, and every
+            one of them describes the whole date+search scope rather than the
+            rows on screen. Before the summary has loaded, and for a count the
+            server could not determine, this is an em dash -- never a zero,
+            which would read as "no work here".
+          */
+          const count = laneCountLabel(summary, entry.key);
           return (
             <button
               key={entry.key}
@@ -98,11 +109,15 @@ export default function LabFilters({
                 {entry.key === "active" ? "ALL" : labStatusCode(entry.key)}
               </span>
               {entry.label}
-              {typeof count === "number" ? (
-                <span className="rounded bg-slate-100 px-1 cl-micro tabular-nums text-slate-600">
-                  {count}
-                </span>
-              ) : null}
+              <span
+                className={`rounded px-1 cl-micro tabular-nums ${
+                  active
+                    ? "bg-indigo-100 text-indigo-900"
+                    : "bg-slate-100 text-slate-600"
+                }`}
+              >
+                {count}
+              </span>
             </button>
           );
         })}
