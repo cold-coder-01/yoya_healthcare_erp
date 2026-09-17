@@ -1,0 +1,672 @@
+/**
+ * THE LABORATORY RESULT SHEET'S WIRING, HELD AT THE SOURCE.
+ *
+ * WHY SOURCE ASSERTIONS. lab-result-format.test.ts proves the pure decisions.
+ * It cannot prove what the COMPONENTS do with them -- whether Save draft stays
+ * open, whether Mark entered closes on a refusal, whether a queue refresh can
+ * reach the typed draft -- and this project ships no DOM test stack. Reading
+ * the source pins those properties exactly where they would regress, the
+ * technique order-wizard-contract.test.ts and lab-workstation-contract.test.ts
+ * already use.
+ *
+ * PROPERTIES HELD HERE:
+ *
+ *   1. THE MODAL IS LAB-OWNED. It imports nothing from the Doctor Desk: not
+ *      ClinicalOrderModal, not the order draft store, not a doctor editor. It
+ *      reuses only the pure keyboard/close rules from lib.
+ *   2. IT IS A REAL, ACCESSIBLE MODAL DIALOG: dialog semantics, labelled and
+ *      described, focus in and back, Tab trapped, alert for errors.
+ *   3. UNSAVED TYPING IS PROTECTED on every way out, and Ctrl/Cmd+Enter marks
+ *      entered while bare Enter is left alone.
+ *   4. SAVE DRAFT STAYS OPEN; MARK ENTERED CLOSES ONLY ON SUCCESS; a failure
+ *      never touches the typed draft; busy disables the controls.
+ *   5. THE MODAL OWNS ITS DRAFT: it is bound to the result it opened with, and
+ *      the workstation's refreshes cannot reach it.
+ *   6. SLICE 3 STOPS AT ENTERED: no validate, release, cancel or reset control
+ *      or route anywhere in the laboratory tree.
+ */
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+function read(relative: string): string {
+  return readFileSync(new URL(`../${relative}`, import.meta.url), "utf8");
+}
+
+/** Source with comments removed: the property is what a file DOES. */
+function code(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\{\s*\/\*[\s\S]*?\*\/\s*\}/g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+}
+
+/** The body of one `const name = useCallback(` block, up to the next one. */
+function block(source: string, start: string, end: string): string {
+  const from = source.indexOf(start);
+  assert.ok(from >= 0, `missing ${start}`);
+  const to = source.indexOf(end, from + start.length);
+  assert.ok(to > from, `missing ${end} after ${start}`);
+  return source.slice(from, to);
+}
+
+function count(source: string, pattern: RegExp): number {
+  return source.match(pattern)?.length ?? 0;
+}
+
+const MODAL = read("components/laboratory/lab-result-modal.tsx");
+const WORKSTATION = read("components/laboratory/lab-workstation.tsx");
+const PANEL = read("components/laboratory/lab-request-panel.tsx");
+const FILTERS = read("components/laboratory/lab-filters.tsx");
+const QUEUE = read("components/laboratory/lab-queue.tsx");
+
+const LAB_TREE = [
+  ["lab-result-modal", MODAL],
+  ["lab-workstation", WORKSTATION],
+  ["lab-request-panel", PANEL],
+  ["lab-filters", FILTERS],
+  ["lab-queue", QUEUE],
+] as const;
+
+/* ------------------------------------------------------------------ *
+ * 1. Lab-owned
+ * ------------------------------------------------------------------ */
+
+test("the result modal lives in the laboratory tree and imports nothing from the Doctor Desk", () => {
+  for (const [name, source] of LAB_TREE) {
+    const emitted = code(source);
+    assert.ok(!emitted.includes("@/components/doctor"), `${name} imports a Doctor component`);
+    assert.ok(!emitted.includes("clinical-order-modal"), `${name} uses the Doctor shell`);
+    assert.ok(!emitted.includes("ClinicalOrderModal"), `${name} uses the Doctor shell`);
+    assert.ok(!emitted.includes("order-draft-context"), `${name} uses the consultation draft store`);
+    assert.ok(!emitted.includes("order-draft-format"), `${name} uses consultation drafts`);
+    assert.ok(!emitted.includes("note-editor-modal"), `${name} imports a Doctor editor`);
+  }
+});
+
+test("the modal reuses only the pure close/keyboard rules, from lib", () => {
+  assert.ok(MODAL.includes('from "@/lib/note-editor-format"'));
+  for (const helper of ["closeIntent", "escapeIntent", "isSaveShortcut", "shouldCloseAfterSave"]) {
+    assert.ok(MODAL.includes(helper), `the modal should reuse ${helper}`);
+  }
+});
+
+test("the modal carries no Doctor wording", () => {
+  const emitted = code(MODAL).toLowerCase();
+  for (const word of ["doctor", "consultation", "prescription", "clinical order", "add to order"]) {
+    assert.ok(!emitted.includes(word), `"${word}" is Doctor Desk wording`);
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * 2. A real, accessible dialog
+ * ------------------------------------------------------------------ */
+
+test("the sheet is a labelled, described modal dialog", () => {
+  assert.ok(MODAL.includes('role="dialog"'));
+  assert.ok(MODAL.includes('aria-modal="true"'));
+  assert.ok(MODAL.includes("aria-labelledby={titleId}"));
+  assert.ok(MODAL.includes("aria-describedby={subtitleId}"));
+  assert.ok(MODAL.includes('aria-label="Close laboratory result sheet"'));
+  assert.ok(MODAL.includes("Enter laboratory results"));
+});
+
+test("errors inside the modal are announced", () => {
+  assert.ok(MODAL.includes('role="alert"'));
+  assert.ok(MODAL.includes("{error}"));
+});
+
+test("focus enters the first result value and returns to the trigger", () => {
+  assert.ok(MODAL.includes("ref={index === 0 ? firstValueRef : undefined}"));
+  assert.ok(MODAL.includes("readOnly ? closeRef.current : firstValueRef.current"));
+  assert.ok(
+    MODAL.includes("return () => returnFocus?.focus()"),
+    "closing must return focus to the Enter results / View result button",
+  );
+  assert.ok(WORKSTATION.includes("onEnterResults={(trigger) =>"));
+  assert.ok(PANEL.includes("onEnterResults(event.currentTarget)"));
+  assert.ok(PANEL.includes("onViewResult(event.currentTarget)"));
+});
+
+test("Tab is trapped inside the sheet", () => {
+  assert.ok(MODAL.includes("onKeyDown={trapFocus}"));
+  assert.ok(MODAL.includes('if (event.key !== "Tab") return'));
+  assert.ok(MODAL.includes("event.shiftKey && document.activeElement === first"));
+  assert.ok(MODAL.includes("select:not([disabled])"), "the flag select must be in the trap");
+});
+
+/* ------------------------------------------------------------------ *
+ * 3. Unsaved typing and the keyboard
+ * ------------------------------------------------------------------ */
+
+test("every way out asks before discarding typed results", () => {
+  assert.ok(MODAL.includes("closeIntent({ readOnly, changed, busy: isBusy })"));
+  assert.equal(
+    count(MODAL, /onClick=\{requestClose\}/g),
+    3, // backdrop, X, Cancel
+    "one of the ways out no longer asks about unsaved results",
+  );
+  assert.ok(MODAL.includes("Discard changes"));
+  assert.ok(MODAL.includes("Keep editing"));
+});
+
+test("Escape follows the shared rule, and dismisses the discard prompt first", () => {
+  assert.ok(MODAL.includes('event.key === "Escape"'));
+  assert.ok(MODAL.includes("escapeIntent({"));
+  assert.ok(MODAL.includes('if (intent === "dismiss-confirm") setConfirmDiscard(false)'));
+});
+
+test("Ctrl/Cmd+Enter marks entered, and bare Enter is left alone", () => {
+  const keyboard = block(MODAL, "function onKeyDown(event: KeyboardEvent)", "document.addEventListener");
+  assert.ok(
+    keyboard.includes("isSaveShortcut(event, { readOnly, confirmingDiscard: confirmDiscard })"),
+  );
+  assert.ok(keyboard.includes("void markEntered()"));
+  assert.ok(!keyboard.includes("saveDraft"), "the shortcut is Mark entered, not Save draft");
+  assert.ok(!MODAL.includes('event.key === "Enter" &&'), "no second copy of the shortcut rule");
+  assert.ok(!code(MODAL).includes("<form"), "a form would turn bare Enter into a submit");
+});
+
+/* ------------------------------------------------------------------ *
+ * 4. Save draft, Mark entered, busy and failure
+ * ------------------------------------------------------------------ */
+
+const SAVE_DRAFT = block(MODAL, "const saveDraft = useCallback(", "const markEntered = useCallback(");
+const MARK_ENTERED = block(MODAL, "const markEntered = useCallback(", "/* ---------------- validate / release (Slices 3B, 3C)");
+
+test("Save draft stays open and confirms only what the server accepted", () => {
+  assert.ok(!SAVE_DRAFT.includes("onClose("), "Save draft must never close the sheet");
+  assert.ok(SAVE_DRAFT.includes("await onSaveDraft(resultPayload(draft))"));
+  assert.ok(SAVE_DRAFT.includes("setBaseline(draftFromResult(outcome.result))"));
+  assert.ok(SAVE_DRAFT.includes("setSavedSinceOpen(true)"));
+});
+
+test("Mark entered closes only on success", () => {
+  assert.ok(MARK_ENTERED.includes("await onMarkEntered(resultPayload(draft))"));
+  assert.ok(MARK_ENTERED.includes("if (shouldCloseAfterSave(ok)) onClose();"));
+  assert.equal(count(MARK_ENTERED, /onClose\(/g), 1, "no other close path in Mark entered");
+});
+
+test("a failure keeps every typed value and shows the reason", () => {
+  for (const [name, source] of [
+    ["saveDraft", SAVE_DRAFT],
+    ["markEntered", MARK_ENTERED],
+  ] as const) {
+    assert.ok(!source.includes("setDraft("), `${name} must never replace the typed draft`);
+    assert.ok(source.includes("setError(outcome.message)"), `${name} must show the refusal`);
+    assert.ok(source.includes("finally {"), `${name} must always clear busy`);
+    assert.ok(source.includes("setBusy(null)"), `${name} must always clear busy`);
+  }
+});
+
+test("a submit in flight blocks a second one and disables the controls", () => {
+  assert.ok(SAVE_DRAFT.includes("if (readOnly || busy !== null) return;"));
+  assert.ok(MARK_ENTERED.includes("if (readOnly || busy !== null) return;"));
+  assert.ok(MODAL.includes("const fieldsDisabled = !readOnly && isBusy;"));
+  assert.ok(count(MODAL, /disabled=\{fieldsDisabled\}/g) >= 6, "every text field disables while busy");
+  assert.ok(MODAL.includes("disabled={readOnly || fieldsDisabled}"), "the flag select disables too");
+  assert.ok(MODAL.includes("disabled={isBusy || !changed}"), "Save draft");
+  assert.ok(count(MODAL, /disabled=\{isBusy\}/g) >= 3, "X, Cancel and Mark entered");
+});
+
+test("the completeness rule is not restated in the modal", () => {
+  // Mark entered is never disabled for a blank value; the model decides.
+  const emitted = code(MODAL);
+  assert.ok(!emitted.includes(".trim()"), "the modal must not trim result values");
+  assert.ok(!/disabled=\{[^}]*result_value/.test(emitted));
+});
+
+test("the specimen and the test are shown, never editable", () => {
+  assert.ok(MODAL.includes("sampleTypeLabel(source?.sample_type)"));
+  assert.ok(MODAL.includes("(read-only)"));
+  const emitted = code(MODAL);
+  for (const forbidden of ["sample_type: event", "test_id", "request_line_id:", "sequence:"]) {
+    assert.ok(!emitted.includes(forbidden), `${forbidden} must not be editable`);
+  }
+});
+
+test("the abnormal flag offers the model's options and names the default honestly", () => {
+  assert.ok(MODAL.includes("result.abnormal_flag_options.map("));
+  assert.ok(MODAL.includes("abnormalFlagHint(line.abnormal_flag)"));
+  assert.ok(!code(MODAL).toLowerCase().includes("unassessed"));
+});
+
+test("a read-only sheet offers no save and no entry", () => {
+  // Save draft / Mark entered render only when neither confirming nor read-only.
+  assert.ok(MODAL.includes(") : readOnly ? null : ("));
+  // A plain read-only sheet says Close; the validation sheet says Cancel
+  // because it still has an act to cancel.
+  assert.ok(MODAL.includes('{readOnly && !confirming ? "Close" : "Cancel"}'));
+  assert.ok(MODAL.includes("Read only"));
+});
+
+/* ------------------------------------------------------------------ *
+ * 5. The modal owns its draft
+ * ------------------------------------------------------------------ */
+
+test("the draft is copied once from the result the modal opened with", () => {
+  assert.ok(MODAL.includes("useState<LabResultDraft>(() =>"));
+  assert.equal(
+    count(MODAL, /draftFromResult\(result\)/g),
+    2,
+    "baseline and draft are each captured once from the opening result",
+  );
+  // No effect may resync the draft from props: the only writers are the
+  // technician's own change handlers.
+  for (const effect of MODAL.split("useEffect(").slice(1)) {
+    const body = effect.slice(0, effect.indexOf("}, ["));
+    assert.ok(!body.includes("setDraft("), "an effect must not overwrite the typed draft");
+    assert.ok(!body.includes("setBaseline("), "an effect must not move the baseline");
+  }
+});
+
+test("the workstation binds the modal to its snapshot, not to the live detail", () => {
+  assert.ok(WORKSTATION.includes("key={resultEditor.result.id}"));
+  assert.ok(WORKSTATION.includes("request={resultEditor.request}"));
+  assert.ok(WORKSTATION.includes("result={resultEditor.result}"));
+  assert.ok(!WORKSTATION.includes("result={detail"), "a refresh would reach the typed draft");
+  assert.ok(!WORKSTATION.includes("LabResultDraft"), "the workstation must not hold the draft");
+});
+
+test("a background refresh updates the panel, never the modal", () => {
+  const writer = block(WORKSTATION, "const writeResult = useCallback(", "const saveResultDraft = useCallback(");
+  assert.ok(writer.includes("setDetail(payload.data.request)"));
+  assert.ok(!writer.includes("setResultEditor("), "a write must not replace the open sheet");
+});
+
+/* ------------------------------------------------------------------ *
+ * No duplicate results from the browser
+ * ------------------------------------------------------------------ */
+
+test("a second Enter results click is never sent", () => {
+  const opener = block(WORKSTATION, "const openResultEntry = useCallback(", "const viewResult = useCallback(");
+  assert.ok(opener.includes("if (pendingId !== null || resultEditor !== null) return;"));
+  assert.ok(opener.includes("setPendingId(requestId)"));
+  assert.ok(opener.includes("openResultPath(requestId)"));
+  assert.ok(PANEL.includes("canEnterResults(detail)"));
+});
+
+test("reopening goes back to the server, so it loads the same persisted result", () => {
+  // The open route is find-or-create: a reopen returns the saved draft.
+  const opener = block(WORKSTATION, "const openResultEntry = useCallback(", "const viewResult = useCallback(");
+  assert.ok(opener.includes("result: payload.data.result"));
+});
+
+test("View result opens what is on screen read-only and sends nothing", () => {
+  const viewer = block(WORKSTATION, "const viewResult = useCallback(", "const writeResult = useCallback(");
+  assert.ok(viewer.includes("readOnly: true"));
+  assert.ok(!viewer.includes("postLab("));
+  assert.ok(!viewer.includes("fetch("));
+  assert.ok(PANEL.includes("canViewResult(detail)"));
+});
+
+test("the panel never renders entry as a disabled control for the wrong status", () => {
+  assert.ok(!PANEL.includes("disabled={!canEnterResults"));
+  assert.ok(!PANEL.includes("disabled={!canViewResult"));
+});
+
+/* ------------------------------------------------------------------ *
+ * 6. Slice 3 stops at entered
+ * ------------------------------------------------------------------ */
+
+test("no cancel, reset, retract or amend control exists in the laboratory tree", () => {
+  // Validate (3B) and Release (3C) are held by their own tests below.
+  for (const [name, source] of LAB_TREE) {
+    const emitted = code(source);
+    for (const pattern of [
+      />\s*Reset to draft\b/,
+      />\s*Return to draft\b/,
+      />\s*Cancel result\b/,
+      />\s*Retract\b/,
+      />\s*Amend\b/,
+      /\/cancel\b/,
+      /\/reset/,
+      /\/retract/,
+      /\/amend/,
+      /onReset|onCancelResult|onReturnToDraft|onRetract|onAmend/,
+    ]) {
+      assert.ok(!pattern.test(emitted), `${name} matches ${pattern}`);
+    }
+  }
+});
+
+test("the modal performs no fetch and knows no Odoo address", () => {
+  const emitted = code(MODAL);
+  assert.ok(!emitted.includes("fetch("), "the modal carries its writes through props");
+  for (const banned of ["yoya-emr", "ODOO_BASE_URL", "localhost:8", "/api/laboratory"]) {
+    assert.ok(!emitted.includes(banned), banned);
+  }
+});
+
+test("the workstation's result routes are the BFF's", () => {
+  for (const helper of ["openResultPath(", "saveResultPath(", "enterResultPath("]) {
+    assert.ok(WORKSTATION.includes(helper), helper);
+  }
+  assert.ok(!WORKSTATION.includes("yoya-emr/api"));
+  assert.ok(!WORKSTATION.includes("/save\""));
+});
+
+test("Mark entered is ONE request, never save followed by enter", () => {
+  const marker = block(WORKSTATION, "const markResultEntered = useCallback(", "WHICH REQUEST THE PANEL MAY SHOW.");
+  assert.ok(marker.includes("enterResultPath(resultId)"));
+  assert.ok(!marker.includes("saveResultPath("), "the atomic route replaces a save+enter chain");
+});
+
+test("no financial vocabulary is rendered by the result sheet or its status", () => {
+  const rendered = [code(MODAL), code(block(PANEL, "function ResultStatus(", "export default function LabRequestPanel("))]
+    .join("\n")
+    .toLowerCase();
+  // Whole words: "etb" would otherwise match inside identifiers like setBusy.
+  for (const banned of ["amount", "balance", "outstanding", "invoice", "receipt", "payer", "birr", "etb", "cashier"]) {
+    assert.ok(!new RegExp(`\\b${banned}\\b`).test(rendered), banned);
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * 7. Validation (Slice 3B)
+ *
+ * Validation delivers the test to billing and cannot be undone from the desk.
+ * These hold the properties that make it safe to put one button away from a
+ * technician: the same lab-owned sheet, read-only; two deliberate steps; no key
+ * that performs the final act; the server's refusal kept inside the sheet; and
+ * a confirmed success that no later refresh can take off the screen.
+ * ------------------------------------------------------------------ */
+
+const ASK = block(MODAL, "const askToConfirm = useCallback(", "const confirmAct = useCallback(");
+const CONFIRM = block(MODAL, "const confirmAct = useCallback(", "Focus follows the step.");
+const KEYBOARD = block(MODAL, "function onKeyDown(event: KeyboardEvent)", "document.addEventListener");
+
+test("validation is a mode of the SAME lab-owned sheet, not another dialog", () => {
+  assert.equal(count(MODAL, /role="dialog"/g), 1, "one dialog element, one shell");
+  assert.ok(MODAL.includes("const confirming = confirmAction !== null;"));
+  assert.ok(MODAL.includes('"Validate laboratory result"'));
+  assert.ok(WORKSTATION.includes("<LabResultModal"));
+  assert.equal(count(WORKSTATION, /<LabResultModal/g), 1, "the workstation renders one sheet");
+  for (const [name, source] of LAB_TREE) {
+    assert.ok(!code(source).includes("window.confirm"), `${name} must not use a browser confirm`);
+  }
+});
+
+test("the validation sheet is read-only", () => {
+  const opener = block(WORKSTATION, "const openValidation = useCallback(", "const validateResult = useCallback(");
+  assert.ok(opener.includes("readOnly: true"));
+  assert.ok(opener.includes("validating: true"));
+  assert.ok(opener.includes("canValidateResult(current)"));
+  // Every value field is bound to readOnly; the flag select to disabled.
+  assert.ok(count(MODAL, /readOnly=\{readOnly\}/g) >= 6);
+  assert.ok(MODAL.includes("disabled={readOnly || fieldsDisabled}"));
+  // Save and Mark entered are not rendered in validation mode.
+  const footer = MODAL.slice(MODAL.indexOf("{/* ---- Footer ---- */}"));
+  assert.ok(footer.indexOf("{confirming ? (") < footer.indexOf('"Save draft"'));
+  assert.ok(footer.includes(") : readOnly ? null : ("));
+});
+
+test("step one moves to confirmation and never validates", () => {
+  assert.ok(ASK.includes('setConfirmStep("confirm")'));
+  assert.ok(!ASK.includes("onValidate("), "Validate result… must not send anything");
+  assert.ok(MODAL.includes("onClick={askToConfirm}"));
+  assert.ok(MODAL.includes("Validate result…"));
+});
+
+test("only Confirm validation sends the request, and only from the confirmation step", () => {
+  assert.ok(CONFIRM.includes('confirmStep !== "confirm"'));
+  assert.ok(CONFIRM.includes("await onConfirm()"));
+  assert.equal(count(MODAL, /onConfirm\(\)/g), 1, "exactly one call site for the validation");
+  assert.ok(MODAL.includes("onClick={() => void confirmAct()}"));
+  assert.equal(count(MODAL, /confirmAct\(\)/g), 1, "no keyboard or effect path calls it");
+  assert.ok(MODAL.includes(">\n                  {busy === \"validate\" ? \"Validating…\" : \"Confirm validation\"}") ||
+    MODAL.includes('"Confirm validation"'));
+});
+
+test("Ctrl/Cmd+Enter can reach the confirmation step but never performs validation", () => {
+  const validatingBranch = KEYBOARD.slice(KEYBOARD.indexOf("if (confirming) {"));
+  assert.ok(validatingBranch.includes("askToConfirm()"));
+  assert.ok(!KEYBOARD.includes("confirmAct()"), "no key performs the final act");
+  // The confirming branch returns before the Mark entered shortcut.
+  const branchEnd = validatingBranch.indexOf("return;");
+  assert.ok(branchEnd > 0);
+  assert.ok(validatingBranch.indexOf("void markEntered()") > branchEnd);
+});
+
+test("Escape in the confirmation step goes back instead of closing", () => {
+  assert.ok(KEYBOARD.includes('if (confirming && confirmStep === "confirm") {'));
+  assert.ok(KEYBOARD.includes('if (!isBusy) setConfirmStep("review")'));
+});
+
+test("focus lands on Go back, never on the final button", () => {
+  assert.ok(MODAL.includes('if (confirmStep === "confirm") goBackRef.current?.focus();'));
+  assert.ok(MODAL.includes("ref={goBackRef}"));
+  const confirmButton = MODAL.slice(
+    MODAL.indexOf("onClick={() => void confirmAct()}") - 200,
+    MODAL.indexOf("onClick={() => void confirmAct()}"),
+  );
+  assert.ok(!confirmButton.includes("ref="), "the final button must not take focus");
+  assert.ok(!code(MODAL).includes("autoFocus"));
+});
+
+test("the final confirmation names the result, patient and tests, and says it is irreversible", () => {
+  assert.ok(MODAL.includes("{validationConfirmText(request, result)}"));
+  assert.ok(MODAL.includes("VALIDATION_IRREVERSIBLE_TEXT"));
+  assert.ok(MODAL.includes("RELEASE_REVIEW_TEXT : VALIDATION_REVIEW_TEXT}"));
+  assert.ok(MODAL.includes("Go back"));
+});
+
+test("a refusal stays in the sheet, returns to review, and always clears busy", () => {
+  assert.ok(CONFIRM.includes("setError(outcome.message)"));
+  assert.ok(CONFIRM.includes('setConfirmStep("review")'));
+  assert.ok(CONFIRM.includes("finally {"));
+  assert.ok(CONFIRM.includes("setBusy(null)"));
+  assert.ok(CONFIRM.includes("if (shouldCloseAfterSave(ok)) onClose();"));
+  assert.equal(count(CONFIRM, /onClose\(/g), 1, "the sheet closes only on success");
+  assert.ok(MODAL.includes("else if (error) reviewActionRef.current?.focus();"));
+});
+
+test("busy disables every way out and both confirmation buttons", () => {
+  assert.ok(CONFIRM.includes("setBusy(confirmAction)"));
+  assert.ok(CONFIRM.includes("busy !== null"));
+  const confirmStep = MODAL.slice(
+    MODAL.indexOf('confirming && confirmStep === "confirm" ? ('),
+    MODAL.indexOf("{confirming ? (", MODAL.indexOf('confirming && confirmStep === "confirm" ? (')),
+  );
+  assert.equal(count(confirmStep, /disabled=\{isBusy\}/g), 2, "Go back and Confirm validation");
+  assert.ok(MODAL.includes("closeIntent({ readOnly, changed, busy: isBusy })"), "X, Cancel, backdrop blocked while busy");
+});
+
+test("the workstation sends ONE bodiless validation POST to the BFF", () => {
+  const validator = block(WORKSTATION, "const validateResult = useCallback(", "/* ---------------- release (Slice 3C)");
+  assert.ok(validator.includes("postLab<LabResultResponse>("));
+  assert.ok(validator.includes("validateResultPath(resultId),\n          {},") || validator.includes("validateResultPath(resultId)"));
+  assert.equal(count(validator, /postLab</g), 1);
+  assert.ok(!validator.includes("saveResultPath(") && !validator.includes("enterResultPath("));
+  assert.ok(WORKSTATION.includes("resultEditor.validating"));
+});
+
+test("success shows the authoritative VALIDATED request and pins it", () => {
+  const validator = block(WORKSTATION, "const validateResult = useCallback(", "/* ---------------- release (Slice 3C)");
+  assert.ok(validator.includes("setDetail(payload.data.request)"));
+  assert.ok(validator.includes("setJustActedId(payload.data.request.id)"));
+  assert.ok(validator.includes("return { ok: true, result: payload.data.result }"));
+});
+
+test("a failed re-read keeps the confirmed state on screen instead of erasing it", () => {
+  const loader = block(WORKSTATION, "async function loadRequest(requestId: number)", "void loadRequest(activeId);");
+  assert.equal(
+    count(loader, /if \(detailRef\.current\?\.id === requestId\) \{/g), 2,
+    "both the refused and the unreachable re-read must keep the request",
+  );
+  assert.equal(count(loader, /setDetailStaleFor\(requestId\)/g), 2);
+  // The keep-branch returns before anything is cleared.
+  for (const branch of loader.split("if (detailRef.current?.id === requestId) {").slice(1)) {
+    const keep = branch.slice(0, branch.indexOf("}"));
+    assert.ok(keep.includes("return;"));
+    assert.ok(!keep.includes("setDetail(null)"));
+  }
+  assert.ok(WORKSTATION.includes("detailStaleFor === detailForSelection.id"));
+  assert.ok(PANEL.includes("Could not refresh this request. Showing the last confirmed state."));
+});
+
+test("a lost validation response is not reported as 'not validated'", () => {
+  const validator = block(WORKSTATION, "const validateResult = useCallback(", "/* ---------------- release (Slice 3C)");
+  const transport = validator.slice(validator.indexOf("} catch {"));
+  assert.ok(transport.includes("refresh()"), "re-read so the true state is shown");
+  assert.ok(!transport.toLowerCase().includes("was not validated"));
+});
+
+test("the panel offers View and Validate for entered, and View alone once validated", () => {
+  assert.ok(PANEL.includes("canValidateResult(detail) ? ("));
+  assert.ok(PANEL.includes("canViewResult(detail) ? ("));
+  assert.ok(PANEL.includes("onValidateResult(event.currentTarget)"));
+  assert.ok(PANEL.includes(">\n            Validate result\n") || PANEL.includes("Validate result"));
+  assert.ok(!PANEL.includes("disabled={!canValidateResult"));
+  assert.ok(PANEL.includes("Sample collection, processing, result entry, validation and release."));
+});
+
+test("the validation opener sends nothing; only confirmation does", () => {
+  const opener = block(WORKSTATION, "const openValidation = useCallback(", "const validateResult = useCallback(");
+  assert.ok(!opener.includes("postLab("));
+  assert.ok(!opener.includes("fetch("));
+});
+
+test("the modal still performs no fetch for validation", () => {
+  const emitted = code(MODAL);
+  assert.ok(!emitted.includes("fetch("));
+  assert.ok(!emitted.includes("/validate"));
+  assert.ok(!emitted.includes("yoya-emr"));
+});
+
+/* ------------------------------------------------------------------ *
+ * 8. Release (Slice 3C)
+ *
+ * Release publishes a result to the ordering clinician and completes the
+ * request; neither can be undone from the desk. It reuses the validation
+ * mechanism EXACTLY -- one two-step flow, one keyboard rule, one focus rule --
+ * and these tests hold both that the mechanism is shared and that release's
+ * own words and reconciliation are right.
+ * ------------------------------------------------------------------ */
+
+const RELEASER = block(WORKSTATION, "const releaseResult = useCallback(", "WHICH REQUEST THE PANEL MAY SHOW.");
+const RELEASE_OPENER = block(WORKSTATION, "const openRelease = useCallback(", "const releaseResult = useCallback(");
+
+test("release is a mode of the SAME sheet, sharing the one confirmation mechanism", () => {
+  assert.equal(count(MODAL, /role="dialog"/g), 1);
+  assert.equal(count(WORKSTATION, /<LabResultModal/g), 1);
+  assert.ok(MODAL.includes('onRelease?: () => Promise<LabResultOutcome>;'));
+  assert.ok(MODAL.includes("const onConfirm = onValidate ?? onRelease;"));
+  assert.ok(MODAL.includes('"Release laboratory result"'));
+  // ONE confirm path for both acts: no release-specific copy of the logic.
+  assert.equal(count(MODAL, /useCallback\(async \(\) => \{\n    if \(!onConfirm/g), 1);
+  assert.ok(!MODAL.includes("confirmRelease"), "no second confirm handler");
+  assert.ok(!MODAL.includes("askToConfirmRelease"), "no second step-one handler");
+  assert.ok(WORKSTATION.includes("resultEditor.releasing"));
+});
+
+test("the release sheet is read-only", () => {
+  assert.ok(RELEASE_OPENER.includes("readOnly: true"));
+  assert.ok(RELEASE_OPENER.includes("releasing: true"));
+  assert.ok(RELEASE_OPENER.includes("canReleaseResult(current)"));
+  assert.ok(!RELEASE_OPENER.includes("postLab("), "opening sends nothing");
+  assert.ok(!RELEASE_OPENER.includes("validating: true"), "never both acts at once");
+});
+
+test("step one moves to confirmation; only Confirm release sends", () => {
+  assert.ok(MODAL.includes('{confirmAction === "release" ? "Release result…" : "Validate result…"}'));
+  assert.ok(MODAL.includes('"Confirm release"'));
+  assert.equal(count(MODAL, /onConfirm\(\)/g), 1, "exactly one call site sends the act");
+  assert.equal(count(MODAL, /confirmAct\(\)/g), 1, "only the Confirm button calls it");
+});
+
+test("Ctrl/Cmd+Enter cannot perform the final release, and Escape goes back", () => {
+  const keyboard = block(MODAL, "function onKeyDown(event: KeyboardEvent)", "document.addEventListener");
+  assert.ok(!keyboard.includes("confirmAct()"), "no key performs the final act");
+  assert.ok(!keyboard.includes("onRelease"), "the keyboard never reaches release directly");
+  assert.ok(keyboard.includes("askToConfirm()"));
+  assert.ok(keyboard.includes('if (confirming && confirmStep === "confirm") {'));
+});
+
+test("focus lands on Go back for release too, never on Confirm release", () => {
+  assert.ok(MODAL.includes('if (confirmStep === "confirm") goBackRef.current?.focus();'));
+  const finalButton = MODAL.slice(
+    MODAL.indexOf("onClick={() => void confirmAct()}") - 200,
+    MODAL.indexOf("onClick={() => void confirmAct()}"),
+  );
+  assert.ok(!finalButton.includes("ref="));
+  assert.ok(!code(MODAL).includes("autoFocus"));
+});
+
+test("the release confirmation names result, clinician, patient, tests and the request", () => {
+  assert.ok(MODAL.includes("{releaseConfirmTitle(request, result)}"));
+  assert.ok(MODAL.includes("{releaseConfirmIdentity(request, result)}"));
+  assert.ok(MODAL.includes("RELEASE_VISIBILITY_TEXT"));
+  assert.ok(MODAL.includes("{releaseCompletionText(request)}"));
+  // The ordering clinician is also stated in the header while reviewing.
+  assert.ok(MODAL.includes("request.ordering_physician?.name"));
+});
+
+test("busy, failure and success are the shared rules for release too", () => {
+  const confirm = block(MODAL, "const confirmAct = useCallback(", "Focus follows the step.");
+  assert.ok(confirm.includes("setBusy(confirmAction)"));
+  assert.ok(confirm.includes('setConfirmStep("review")'), "a refusal returns to review");
+  assert.ok(confirm.includes("setError(outcome.message)"), "and shows the reason in the sheet");
+  assert.ok(confirm.includes("if (shouldCloseAfterSave(ok)) onClose();"), "closes only on success");
+  assert.ok(confirm.includes("finally {"));
+  assert.ok(MODAL.includes('busy === "release" ? "Releasing…"'));
+});
+
+test("the workstation sends ONE bodiless release POST to the BFF", () => {
+  assert.equal(count(RELEASER, /postLab</g), 1);
+  assert.ok(RELEASER.includes("releaseResultPath(resultId)"));
+  assert.ok(!RELEASER.includes("validateResultPath(") && !RELEASER.includes("enterResultPath("));
+  assert.equal(count(WORKSTATION, /method: "POST"/g), 1, "still one POST site");
+});
+
+test("a successful release pins the request and shows the server's outcome", () => {
+  assert.ok(RELEASER.includes("setDetail(released)"));
+  assert.ok(RELEASER.includes("setJustActedId(released.id)"), "the completed request stays on screen");
+  assert.ok(RELEASER.includes("setDetailStaleFor(null)"));
+  assert.ok(RELEASER.includes("releaseOutcomeText(payload.data.completion)"));
+  assert.ok(RELEASER.includes("refresh();"), "queue and lane counts are re-read");
+  assert.ok(WORKSTATION.includes("releaseOutcomeFor.requestId === detailForSelection.id"));
+  assert.ok(WORKSTATION.includes("setReleaseOutcomeFor(null);"), "a new selection clears it");
+});
+
+test("a lost release response is not reported as 'not released'", () => {
+  const transport = RELEASER.slice(RELEASER.indexOf("} catch {"));
+  assert.ok(transport.includes("refresh()"));
+  assert.ok(!transport.toLowerCase().includes("was not released"));
+});
+
+test("the infinite-loading defect cannot return after release", () => {
+  // The panel still consumes the derived loading value, and the nothing-
+  // selected branch still writes no state -- the two halves of that fix.
+  assert.ok(WORKSTATION.includes("loading={panelIsLoading}"));
+  assert.ok(!WORKSTATION.includes("loading={detailLoading}"));
+  assert.ok(WORKSTATION.includes("visibleDetail(detail, activeId, justActedId)"));
+});
+
+test("a failed re-read after release keeps the confirmed RELEASED state", () => {
+  const loader = block(WORKSTATION, "async function loadRequest(requestId: number)", "void loadRequest(activeId);");
+  assert.equal(count(loader, /setDetailStaleFor\(requestId\)/g), 2);
+  assert.ok(PANEL.includes("Could not refresh this request. Showing the last confirmed state."));
+});
+
+test("the panel offers Release only for validated, and nothing after release", () => {
+  assert.ok(PANEL.includes("canReleaseResult(detail) ? ("));
+  assert.ok(PANEL.includes("onReleaseResult(event.currentTarget)"));
+  assert.ok(PANEL.includes("Release result"));
+  assert.ok(!PANEL.includes("disabled={!canReleaseResult"));
+  // The outcome line is announced.
+  assert.ok(PANEL.includes("{releaseOutcome.text}"));
+  assert.ok(PANEL.includes('role="status"'));
+});
+
+test("nothing financial is rendered for release", () => {
+  const rendered = [
+    code(MODAL),
+    code(block(PANEL, "function ResultStatus(", "export default function LabRequestPanel(")),
+  ]
+    .join("\n")
+    .toLowerCase();
+  for (const banned of ["amount", "balance", "invoice", "receipt", "payer", "charge", "delivered", "birr", "etb"]) {
+    assert.ok(!new RegExp(`\\b${banned}\\b`).test(rendered), banned);
+  }
+});

@@ -62,12 +62,33 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
-function normalizeError(value: unknown, fallbackStatus: number) {
+/**
+ * How an upstream service names itself when it has nothing better to say.
+ *
+ * WHY THIS IS A PARAMETER. These helpers are shared by every workstation BFF
+ * -- reception, front desk, cashier, insurance/credit, doctor and laboratory --
+ * and the fallback wording is only ever reached when Odoo returns a body that
+ * is not the JSON envelope: an HTML 404 from the router, or an error page. A
+ * hardcoded "reception service" then surfaces on whichever desk hit it, which
+ * is exactly how a Laboratory Desk came to tell a technician that "the
+ * reception service returned an error" when the laboratory route was missing.
+ *
+ * THE DEFAULT PRESERVES EVERY EXISTING CALLER'S TEXT, so nothing outside the
+ * laboratory changes: a desk that wants its own wording passes it explicitly.
+ */
+const DEFAULT_SERVICE_LABEL = "reception service";
+
+function normalizeError(
+  value: unknown,
+  fallbackStatus: number,
+  serviceLabel: string = DEFAULT_SERVICE_LABEL,
+) {
+  const fallbackMessage = `The ${serviceLabel} returned an error.`;
   if (isRecord(value)) {
     const message =
       typeof value.message === "string" && value.message.trim()
         ? value.message
-        : "The reception service returned an error.";
+        : fallbackMessage;
     const code =
       typeof value.code === "string" && value.code.trim()
         ? value.code
@@ -77,11 +98,15 @@ function normalizeError(value: unknown, fallbackStatus: number) {
 
   return {
     code: `odoo_http_${fallbackStatus}`,
-    message: "The reception service returned an error.",
+    message: fallbackMessage,
   };
 }
 
-function normalizeEnvelope<T>(payload: unknown, status: number): ApiEnvelope<T> {
+function normalizeEnvelope<T>(
+  payload: unknown,
+  status: number,
+  serviceLabel: string = DEFAULT_SERVICE_LABEL,
+): ApiEnvelope<T> {
   if (isRecord(payload) && payload.success === true && "data" in payload) {
     return {
       success: true,
@@ -92,14 +117,18 @@ function normalizeEnvelope<T>(payload: unknown, status: number): ApiEnvelope<T> 
   if (isRecord(payload) && payload.success === false) {
     return {
       success: false,
-      error: normalizeError(payload.error, status),
+      error: normalizeError(payload.error, status, serviceLabel),
     };
   }
 
   if (status >= 400) {
     return {
       success: false,
-      error: normalizeError(isRecord(payload) ? payload.error : null, status),
+      error: normalizeError(
+        isRecord(payload) ? payload.error : null,
+        status,
+        serviceLabel,
+      ),
     };
   }
 
@@ -107,7 +136,7 @@ function normalizeEnvelope<T>(payload: unknown, status: number): ApiEnvelope<T> 
     success: false,
     error: {
       code: "invalid_response",
-      message: "The reception service returned an invalid response.",
+      message: `The ${serviceLabel} returned an invalid response.`,
       details: payload,
     },
   };
@@ -154,6 +183,8 @@ export async function callOdooApi<T>(
   path: string,
   method: "GET" | "POST",
   body?: unknown,
+  /** Names the service in fallback wording. See DEFAULT_SERVICE_LABEL. */
+  serviceLabel: string = DEFAULT_SERVICE_LABEL,
 ) {
   const baseUrl = getOdooBaseUrl();
 
@@ -178,7 +209,11 @@ export async function callOdooApi<T>(
 
   return {
     status: response.status,
-    body: normalizeEnvelope<T>(await readJson(response), response.status),
+    body: normalizeEnvelope<T>(
+      await readJson(response),
+      response.status,
+      serviceLabel,
+    ),
   };
 }
 
