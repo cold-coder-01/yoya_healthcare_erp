@@ -19,3 +19,4 @@ from . import test_doctor_history_api
 from . import test_lab_desk_api
 from . import test_lab_desk_release_doctor
 from . import test_radiology_roles
+from . import test_radiology_desk_api

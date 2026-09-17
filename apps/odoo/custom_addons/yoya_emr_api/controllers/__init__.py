@@ -8,3 +8,4 @@ from . import insurance_credit
 from . import front_desk
 from . import doctor
 from . import laboratory
+from . import radiology

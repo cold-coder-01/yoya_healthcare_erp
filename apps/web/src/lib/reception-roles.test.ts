@@ -8,10 +8,12 @@ import {
   LABORATORY_ROUTE,
   CLINICAL_ROUTE,
   FRONT_DESK_ROUTE,
+  RADIOLOGY_ROUTE,
   RECEPTION_ROUTE,
   canUseCashier,
   canUseDoctorDesk,
   canUseInsuranceCredit,
+  canUseRadiologyDesk,
   landingRouteForRoles,
   parseReceptionRoles,
   type ReceptionRoles,
@@ -43,6 +45,8 @@ function roles(overrides: Partial<ReceptionRoles> = {}): ReceptionRoles {
     insurance_officer: false,
     doctor: false,
     lab_technician: false,
+    radiology_technician: false,
+    radiologist: false,
     ...overrides,
   };
 }
@@ -345,4 +349,91 @@ test("the landing route is a default, never a permission", () => {
   // user STARTS; it cannot grant a desk, which is why a forged flag is
   // harmless -- the desk still answers 403.
   assert.equal(LABORATORY_ROUTE, "/laboratory");
+});
+
+/* ------------------------------------------------------------------ *
+ * Radiology Desk routing
+ *
+ * The same shape of regression again: a pure Radiology Technician or
+ * Radiologist holds no reception-side, doctor or laboratory role, and without a
+ * branch they would fall through to /triage.
+ * ------------------------------------------------------------------ */
+
+test("a pure radiology technician lands on the radiology desk", () => {
+  assert.equal(
+    landingRouteForRoles(roles({ radiology_technician: true })),
+    RADIOLOGY_ROUTE,
+  );
+});
+
+test("a pure radiologist lands on the radiology desk", () => {
+  assert.equal(landingRouteForRoles(roles({ radiologist: true })), RADIOLOGY_ROUTE);
+  assert.equal(
+    landingRouteForRoles(roles({ radiology_technician: true, radiologist: true })),
+    RADIOLOGY_ROUTE,
+  );
+});
+
+test("a lab technician is never routed to radiology", () => {
+  assert.equal(landingRouteForRoles(roles({ lab_technician: true })), LABORATORY_ROUTE);
+  // Holding both keeps the landing page a lab technician already has.
+  assert.equal(
+    landingRouteForRoles(roles({ lab_technician: true, radiology_technician: true })),
+    LABORATORY_ROUTE,
+  );
+});
+
+test("doctor, manager, admin and front desk keep their landing pages", () => {
+  assert.equal(
+    landingRouteForRoles(roles({ doctor: true, radiologist: true })),
+    DOCTOR_ROUTE,
+  );
+  assert.equal(
+    landingRouteForRoles(managerRoles({ radiology_technician: true })),
+    RECEPTION_ROUTE,
+  );
+  assert.equal(
+    landingRouteForRoles(adminRoles({ radiologist: true })),
+    RECEPTION_ROUTE,
+  );
+  assert.equal(
+    landingRouteForRoles(roles({ front_desk_nurse: true, radiologist: true })),
+    FRONT_DESK_ROUTE,
+  );
+});
+
+test("a plain nurse still lands on the clinical queue", () => {
+  assert.equal(landingRouteForRoles(roles({})), CLINICAL_ROUTE);
+});
+
+test("canUseRadiologyDesk mirrors the server's RAD_DESK_GROUPS", () => {
+  assert.equal(canUseRadiologyDesk(roles({ radiology_technician: true })), true);
+  assert.equal(canUseRadiologyDesk(roles({ radiologist: true })), true);
+  assert.equal(canUseRadiologyDesk(roles({ manager: true })), true);
+  assert.equal(canUseRadiologyDesk(roles({ system_administrator: true })), true);
+  for (const denied of [
+    { lab_technician: true },
+    { doctor: true },
+    { receptionist: true },
+    { front_desk_nurse: true },
+    { cashier: true },
+    { accountant: true },
+    { insurance_officer: true },
+    {},
+  ]) {
+    assert.equal(canUseRadiologyDesk(roles(denied)), false, JSON.stringify(denied));
+  }
+  assert.equal(canUseRadiologyDesk(null), false);
+});
+
+test("the radiology flags are parsed strictly", () => {
+  const parsed = parseReceptionRoles({ radiology_technician: true, radiologist: true });
+  assert.equal(parsed?.radiology_technician, true);
+  assert.equal(parsed?.radiologist, true);
+  assert.equal(parsed?.lab_technician, false);
+  // An Odoo that predates the flags, or sends a non-boolean, grants nothing.
+  assert.equal(parseReceptionRoles({ receptionist: true })?.radiologist, false);
+  assert.equal(parseReceptionRoles({ radiologist: "yes" })?.radiologist, false);
+  assert.equal(parseReceptionRoles({ radiology_technician: 1 })?.radiology_technician, false);
+  assert.equal(RADIOLOGY_ROUTE, "/radiology");
 });
