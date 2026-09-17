@@ -44,8 +44,10 @@ class TestRadiologyImageRecordRules(TransactionCase):
         cls.user_b = cls._make_user(
             "radimg_doctor_b", "hospital_management.group_hospital_doctor"
         )
+        # The imaging bench is the Radiology Technician (Radiology Slice 0A);
+        # Lab Technician no longer holds any Radiology rule.
         cls.bench = cls._make_user(
-            "radimg_bench", "hospital_management.group_hospital_lab_technician"
+            "radimg_bench", "hospital_radiology.group_hospital_radiology_technician"
         )
         cls.manager = cls._make_user(
             "radimg_manager", "hospital_management.group_hospital_manager"

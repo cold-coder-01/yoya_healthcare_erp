@@ -662,14 +662,27 @@
              imaging scope and their laboratory scope cannot drift apart.
 
              WHAT IS DELIBERATELY LEFT ALONE, AND WHY THAT IS NOT AN OVERSIGHT.
-             Lab Technician (which is the operational imaging role, there being
-             no radiographer group in this repository), Nurse, Receptionist and
-             the DPO get no rule here, so their access is exactly what it was.
-             A rule for a group only ever narrows it; the imaging bench works a
-             cross-patient queue and scoping it would break the department; and
+             Nurse, Receptionist and the DPO get no rule here, so their access is
+             exactly what it was. A rule for a group only ever narrows it, and
              narrowing the front office or the DPO is a separate decision
              belonging to whoever owns those screens. This slice tightens the
              one role it is adding a feature for, and no other.
+
+             THE IMAGING DEPARTMENT IS ITS OWN TWO ROLES (Radiology Slice 0A).
+             This block originally named Lab Technician as the operational
+             imaging role, because no radiographer group existed. It now names
+             hospital_radiology.group_hospital_radiology_technician and
+             hospital_radiology.group_hospital_radiologist instead, and Lab
+             Technician holds no Radiology rule at all. The department works a
+             cross-patient queue, so both roles keep the unrestricted scope the
+             bench had; what each may DO within it is the ACL's decision.
+
+             THE GROUPS BELOW ARE WRITTEN WITH (6, 0, [...]), NOT (4, ...).
+             This file is noupdate="0", so it is re-applied on upgrade, and a
+             (4, id) command only LINKS: swapping the ref inside it would add the
+             Radiology roles on an upgraded database while leaving Lab
+             Technician attached to every rule. (6, 0, ids) replaces the set, so
+             a fresh install and an upgrade end in the same state.
 
              THE OPERATIONAL ROLES ARE GIVEN AN EXPLICIT UNRESTRICTED RULE even
              though omitting them would have the same effect today, for the
@@ -777,9 +790,9 @@
         </record>
 
         <record id="rule_radiology_request_operations" model="ir.rule">
-            <field name="name">Radiology Request: all (imaging bench / manager / system administrator)</field>
+            <field name="name">Radiology Request: all (radiology technician / radiologist / manager / system administrator)</field>
             <field name="model_id" ref="hospital_radiology.model_hospital_radiology_request"/>
-            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="groups" eval="[(6, 0, [ref('hospital_radiology.group_hospital_radiology_technician'), ref('hospital_radiology.group_hospital_radiologist'), ref('hospital_management.group_hospital_manager'), ref('hospital_management.group_hospital_system_administrator')])]"/>
             <field name="domain_force">[(1, '=', 1)]</field>
             <field name="perm_read" eval="True"/>
             <field name="perm_write" eval="True"/>
@@ -788,9 +801,9 @@
         </record>
 
         <record id="rule_radiology_request_line_operations" model="ir.rule">
-            <field name="name">Radiology Request Line: all (imaging bench / manager / system administrator)</field>
+            <field name="name">Radiology Request Line: all (radiology technician / radiologist / manager / system administrator)</field>
             <field name="model_id" ref="hospital_radiology.model_hospital_radiology_request_line"/>
-            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="groups" eval="[(6, 0, [ref('hospital_radiology.group_hospital_radiology_technician'), ref('hospital_radiology.group_hospital_radiologist'), ref('hospital_management.group_hospital_manager'), ref('hospital_management.group_hospital_system_administrator')])]"/>
             <field name="domain_force">[(1, '=', 1)]</field>
             <field name="perm_read" eval="True"/>
             <field name="perm_write" eval="True"/>
@@ -799,9 +812,9 @@
         </record>
 
         <record id="rule_radiology_result_operations" model="ir.rule">
-            <field name="name">Radiology Result: all (imaging bench / manager / system administrator)</field>
+            <field name="name">Radiology Result: all (radiology technician / radiologist / manager / system administrator)</field>
             <field name="model_id" ref="hospital_radiology.model_hospital_radiology_result"/>
-            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="groups" eval="[(6, 0, [ref('hospital_radiology.group_hospital_radiology_technician'), ref('hospital_radiology.group_hospital_radiologist'), ref('hospital_management.group_hospital_manager'), ref('hospital_management.group_hospital_system_administrator')])]"/>
             <field name="domain_force">[(1, '=', 1)]</field>
             <field name="perm_read" eval="True"/>
             <field name="perm_write" eval="True"/>
@@ -810,9 +823,9 @@
         </record>
 
         <record id="rule_radiology_result_line_operations" model="ir.rule">
-            <field name="name">Radiology Result Line: all (imaging bench / manager / system administrator)</field>
+            <field name="name">Radiology Result Line: all (radiology technician / radiologist / manager / system administrator)</field>
             <field name="model_id" ref="hospital_radiology.model_hospital_radiology_result_line"/>
-            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="groups" eval="[(6, 0, [ref('hospital_radiology.group_hospital_radiology_technician'), ref('hospital_radiology.group_hospital_radiologist'), ref('hospital_management.group_hospital_manager'), ref('hospital_management.group_hospital_system_administrator')])]"/>
             <field name="domain_force">[(1, '=', 1)]</field>
             <field name="perm_read" eval="True"/>
             <field name="perm_write" eval="True"/>
@@ -870,9 +883,9 @@
         -->
 
         <record id="rule_radiology_image_operations" model="ir.rule">
-            <field name="name">Radiology Image: all (imaging bench / manager / system administrator)</field>
+            <field name="name">Radiology Image: all (radiology technician / radiologist / manager / system administrator)</field>
             <field name="model_id" ref="hospital_radiology.model_hospital_radiology_image"/>
-            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_lab_technician')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="groups" eval="[(6, 0, [ref('hospital_radiology.group_hospital_radiology_technician'), ref('hospital_radiology.group_hospital_radiologist'), ref('hospital_management.group_hospital_manager'), ref('hospital_management.group_hospital_system_administrator')])]"/>
             <field name="domain_force">[(1, '=', 1)]</field>
             <field name="perm_read" eval="True"/>
             <field name="perm_write" eval="True"/>

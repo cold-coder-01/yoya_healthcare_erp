@@ -34,8 +34,10 @@ class TestRadiologyImageBackingAttachment(TransactionCase):
     def setUpClass(cls):
         super().setUpClass()
         tag = uuid.uuid4().hex[:6]
+        # The imaging bench is the Radiology Technician (Radiology Slice 0A),
+        # which holds write on hospital.radiology.image as the bench did.
         cls.bench = cls._make_user(
-            "radimg_bench", "hospital_management.group_hospital_lab_technician"
+            "radimg_bench", "hospital_radiology.group_hospital_radiology_technician"
         )
         cls.doctor_user = cls._make_user(
             "radimg_doc", "hospital_management.group_hospital_doctor"
