@@ -131,11 +131,102 @@ export function validationConfirmText(
       ? `${patient.name} (${patient.mrn})`
       : patient.name
     : "this patient";
-  const tests = result.lines
+  const tests = resultTestsLabel(result);
+  return `Validate ${result.name} for ${who}${tests ? ` — ${tests}` : ""}?`;
+}
+
+/** The result's own tests, code when the catalogue has one: "CBC, Urinalysis". */
+export function resultTestsLabel(result: {
+  lines: { test: { name: string; code: string | null } }[];
+}) {
+  return result.lines
     .map((line) => line.test.code || line.test.name)
     .filter(Boolean)
     .join(", ");
-  return `Validate ${result.name} for ${who}${tests ? ` — ${tests}` : ""}?`;
+}
+
+/* ------------------------------------------------------------------ *
+ * Release (Slice 3C)
+ * ------------------------------------------------------------------ */
+
+export function releaseResultPath(resultId: number) {
+  return `/api/laboratory/results/${resultId}/release`;
+}
+
+/**
+ * May the panel offer "Release result"?
+ *
+ * THE LAB API'S RELEASE POLICY, mirrored: the request is `in_progress`, it has
+ * one operational result (no conflict), and that result is `validated`. A
+ * completed or cancelled request, an entered or released result, and any
+ * conflict all offer nothing. Re-checked by the Lab API under lock.
+ */
+export function canReleaseResult(detail: ResultEntryContext | null | undefined) {
+  if (!detail || detail.status !== "in_progress") return false;
+  if (detail.result_conflict) return false;
+  return detail.result?.state === "validated";
+}
+
+/** The review step's instruction, shown above Cancel / Release result…. */
+export const RELEASE_REVIEW_TEXT =
+  "Review the validated result before release. " +
+  "Releasing makes the result visible to the ordering clinician immediately. " +
+  "Released results cannot be edited, cancelled or returned to draft.";
+
+export const RELEASE_VISIBILITY_TEXT =
+  "The result becomes visible on the Doctor Desk immediately.";
+
+/** "Release LABRES0096 to Dr. Hana Bekele?" -- naming who will see it. */
+export function releaseConfirmTitle(
+  request: { ordering_physician: { name: string } | null },
+  result: { name: string },
+) {
+  const clinician = request.ordering_physician?.name || "the ordering clinician";
+  return `Release ${result.name} to ${clinician}?`;
+}
+
+/** "Selam Tesfaye (HMS11834) · CBC" -- whose result, and which tests. */
+export function releaseConfirmIdentity(
+  request: { patient: { name: string; mrn: string | null } | null },
+  result: { lines: { test: { name: string; code: string | null } }[] },
+) {
+  const patient = request.patient;
+  const who = patient
+    ? patient.mrn
+      ? `${patient.name} (${patient.mrn})`
+      : patient.name
+    : "Unknown patient";
+  const tests = resultTestsLabel(result);
+  return tests ? `${who} · ${tests}` : who;
+}
+
+/** "LABREQ0215 will be completed once all ordered tests are released." */
+export function releaseCompletionText(request: { request_code: string }) {
+  return `${request.request_code} will be completed once all ordered tests are released.`;
+}
+
+export type LabReleaseOutcome = {
+  completed: boolean;
+  request_state: string;
+  blockers: string[];
+};
+
+/**
+ * The panel's one-line account of a release, from the SERVER'S completion
+ * outcome and nothing else:
+ *
+ *   "Released · Request completed"
+ *   "Released · Request still in progress: 'CBC' result … is validated, not released"
+ *
+ * Blocker sentences are the model's own and name tests and result codes only.
+ */
+export function releaseOutcomeText(outcome: LabReleaseOutcome | null | undefined) {
+  if (!outcome) return null;
+  if (outcome.completed) return "Released · Request completed";
+  const reasons = outcome.blockers.filter((reason) => reason.trim()).join("; ");
+  return reasons
+    ? `Released · Request still in progress: ${reasons}`
+    : "Released · Request still in progress";
 }
 
 /* ------------------------------------------------------------------ *
@@ -303,11 +394,12 @@ export function resultModalSubtitle(request: {
  */
 export function draftStatusText(state: {
   readOnly: boolean;
-  busy: "save" | "enter" | "validate" | null;
+  busy: "save" | "enter" | "validate" | "release" | null;
   changed: boolean;
   savedSinceOpen: boolean;
 }): string {
   if (state.busy === "validate") return "Validating…";
+  if (state.busy === "release") return "Releasing…";
   if (state.readOnly) return "Read only";
   if (state.busy === "save") return "Saving draft…";
   if (state.busy === "enter") return "Marking entered…";
@@ -342,6 +434,8 @@ const RESULT_RECONCILE_CODES = new Set([
   "lab_result_cancelled",
   "lab_result_not_editable",
   "lab_result_not_validatable",
+  "lab_result_not_releasable",
+  "lab_result_release_not_available",
   "lab_result_not_found",
   "lab_request_not_found",
   "invalid_workflow_state",

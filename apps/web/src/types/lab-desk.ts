@@ -201,6 +201,15 @@ export type LabResultResponse = {
   result: LabResult;
   request: LabRequestDetail;
   created?: boolean;
+  /**
+   * Release only: whether the request completed, read from the model AFTER the
+   * release. `blockers` are the model's own sentences (tests and result codes).
+   */
+  completion?: {
+    completed: boolean;
+    request_state: string;
+    blockers: string[];
+  };
   capabilities: LabDeskCapabilities;
 };
 

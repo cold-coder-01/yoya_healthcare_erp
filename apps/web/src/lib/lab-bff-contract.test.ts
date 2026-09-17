@@ -63,6 +63,7 @@ const LAB_ROUTES = [
   "results/[resultId]/save/route.ts",
   "results/[resultId]/enter/route.ts",
   "results/[resultId]/validate/route.ts",
+  "results/[resultId]/release/route.ts",
 ].map((name) => [name, read(`app/api/laboratory/${name}`)] as const);
 
 function route(suffix: string): string {
@@ -220,6 +221,7 @@ test("only the known write routes exist in the laboratory BFF", () => {
     "requests/[requestId]/result/route.ts",
     "requests/[requestId]/start-processing/route.ts",
     "results/[resultId]/enter/route.ts",
+    "results/[resultId]/release/route.ts",
     "results/[resultId]/save/route.ts",
     "results/[resultId]/validate/route.ts",
   ]);
@@ -332,9 +334,53 @@ test("the validate route restates no billing or workflow rule", () => {
   }
 });
 
-test("no release route exists in the laboratory BFF", () => {
+/* ------------------------------------------------------------------ *
+ * 6. Release route (Slice 3C)
+ * ------------------------------------------------------------------ */
+
+test("the release route forwards to its own upstream path with an empty body", () => {
+  const release = route("results/[resultId]/release/route.ts");
+  const emitted = code(release);
+  assert.ok(release.includes("${LAB_API}/results/${parsed.value}/release"));
+  assert.ok(emitted.includes("parseResultId(resultId)"));
+  assert.ok(emitted.includes('"POST",'));
+  assert.ok(emitted.includes("{},"));
+  assert.ok(!emitted.includes("readJsonObject"), "the browser's body is never read");
+  assert.ok(!emitted.includes("body.body"));
+  for (const other of ["/save", "/enter", "/validate", "/result`"]) {
+    assert.ok(!emitted.includes(other), `release must not post to ${other}`);
+  }
+});
+
+test("the release route uses the shared helpers and its own fallback code", () => {
+  const release = route("results/[resultId]/release/route.ts");
+  for (const required of [
+    "requireOdooSession",
+    "callOdooApi",
+    "forwardOdooResult",
+    "handleRouteError",
+    "export async function POST",
+    "context: { params: Promise<{ resultId: string }> }",
+    "await context.params",
+    'from "../../../_utils"',
+    "lab_result_release_failed",
+  ]) {
+    assert.ok(release.includes(required), `release must use ${required}`);
+  }
+});
+
+test("the release route restates no completion, visibility or billing rule", () => {
+  const emitted = code(route("results/[resultId]/release/route.ts")).toLowerCase();
+  for (const banned of ["charge", "billing", "invoice", "amount", "validated", "in_progress", "completed", "doctor"]) {
+    assert.ok(!emitted.includes(banned), `the BFF must not know about ${banned}`);
+  }
+});
+
+test("no cancel, reset, retract or amend route exists in the laboratory BFF", () => {
   for (const [name] of LAB_ROUTES) {
-    assert.ok(!name.includes("release"), name);
+    for (const verb of ["cancel", "reset", "retract", "amend"]) {
+      assert.ok(!name.includes(verb), name);
+    }
   }
 });
 

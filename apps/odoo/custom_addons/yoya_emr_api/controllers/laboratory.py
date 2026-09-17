@@ -13,10 +13,12 @@ NOTHING ABOUT WORKFLOW. The mutations:
                                         action_mark_entered(), atomically
     .../results/<id>/validate           action_validate(), atomically, with
                                         its billing refusals sanitized
+    .../results/<id>/release            action_release(), atomically, with the
+                                        request's completion outcome
 
 No state is ever written here, no state machine is restated, and nothing calls
-sudo(). Release, cancellation and reset-to-draft are further model methods that
-this API deliberately does NOT expose.
+sudo(). Cancellation and reset-to-draft are further model methods that this API
+deliberately does NOT expose.
 
 RESULT ENTRY ADDS DESK POLICY, NOT BUSINESS RULES. The model accepts a result
 against a request that is sample_collected OR in_progress, and allows several
@@ -433,6 +435,26 @@ RESULT_NOT_VALIDATABLE_MESSAGE = (
 VALIDATION_BLOCKED_MESSAGE = (
     "The laboratory result could not be validated. Nothing was changed. Ask a "
     "laboratory manager to review this request."
+)
+
+# Release (Slice 3C).
+RESULT_RELEASE_CLOSED_MESSAGE = (
+    "Results are released on the Laboratory Desk only while the request is In "
+    "progress. Request %s is %s. Nothing has been changed."
+)
+RESULT_NOT_RELEASABLE_MESSAGE = (
+    "Result %s is %s. Only a validated result can be released. Nothing has "
+    "been changed."
+)
+# FIXED, for the reason VALIDATION_BLOCKED_MESSAGE is: a refusal from the
+# request's own transition guard is written for Odoo users ("…their charges
+# have been delivered…") and names internals the bench cannot act on. Release
+# touches no charge, but the sentence is replaced all the same so the desk has
+# one money-free wording whatever the model says.
+COMPLETION_REFUSED_MESSAGE = (
+    "The laboratory result could not be released because its request could not "
+    "be completed. Nothing was changed. Ask a laboratory manager to review this "
+    "request."
 )
 
 
@@ -876,6 +898,154 @@ def _run_validation(env, result):
                 ) from error
     except ValidationError as error:
         # Gate A: the model's completeness refusal. Tests and request only.
+        raise ApiError("lab_result_incomplete", str(error), 422) from error
+
+
+def _releasable_result(env, result):
+    """Lock, then apply the Laboratory Desk's release policy. Writes nothing.
+
+    LOCK ORDER: REQUEST, THEN RESULT -- the order _evaluate_completion takes the
+    request in, and the order validation already uses, so no two desk actions
+    can ever wait on each other in opposite orders.
+
+    RE-CHECKED UNDER THE LOCK, all before anything is written:
+
+      1. the request is in_progress   -- B2: releasing on sample_collected fails
+                                         inside completion; completed and
+                                         cancelled requests are finished
+      2. the request has exactly ONE  -- B3 and the cancelled-sibling gap: with a
+         result, and it is THIS one      second result, release would succeed and
+                                         the request would silently never
+                                         complete. Refused BEFORE release, never
+                                         released into a blocked state.
+      3. this result is validated     -- the model's own source state
+
+    Deliberately NOT loosened for historical data: legacy results on
+    sample_collected or with a second result stay refused here.
+    """
+    request_record = result.request_id
+    _lock_row(env, "hospital_laboratory_request", request_record.id)
+    _lock_row(env, "hospital_laboratory_result", result.id)
+    request_record.invalidate_recordset()
+    result.invalidate_recordset()
+
+    if request_record.state != RESULT_ENTRY_REQUEST_STATE:
+        raise ApiError(
+            "lab_result_release_not_available",
+            RESULT_RELEASE_CLOSED_MESSAGE
+            % (request_record.name, _state_label(request_record)),
+            422,
+        )
+    results = lab_desk_results(request_record)
+    _assert_single_result(request_record, results)
+    if results != result:
+        raise ApiError(
+            "lab_result_ambiguous",
+            RESULT_AMBIGUOUS_MESSAGE % (request_record.name, len(results)),
+            409,
+        )
+    if result.state != "validated":
+        raise ApiError(
+            "lab_result_not_releasable",
+            RESULT_NOT_RELEASABLE_MESSAGE % (result.name, _state_label(result)),
+            409,
+        )
+    return request_record
+
+
+def _completion_outcome(request_record):
+    """Did the request complete, and if not, why -- as the MODEL sees it.
+
+    `blockers` is hospital.laboratory.request._completion_blockers(), read
+    AFTER the release, never restated. Its sentences name ordered tests,
+    result codes and states only ("'CBC' result LABRES0096 is validated, not
+    released"), which is exactly what a bench can act on and nothing else.
+    """
+    request_record.invalidate_recordset()
+    completed = request_record.state == "completed"
+    return {
+        "completed": completed,
+        "request_state": request_record.state,
+        "blockers": [] if completed else list(request_record._completion_blockers()),
+    }
+
+
+def _run_release(env, result, request_record):
+    """Release ONE result and build its response inside ONE savepoint.
+
+    WHAT action_release() DOES, FROM SOURCE. It writes `released` (the state
+    constraint re-checks completeness and linkage on that write), logs the
+    state change, then calls request._evaluate_completion(), which takes the
+    request row FOR UPDATE and -- when every ordered line is covered exactly
+    once by an active released result -- writes the request `completed` and
+    logs that too. No charge is touched: delivery happened at validation.
+
+    THE SAVEPOINT IS WHAT MAKES IT ATOMIC. action_release() writes the result
+    state BEFORE completion is attempted and has no rollback of its own. So a
+    completion refusal, a constraint failure at flush, or a failure while
+    building the response all roll back the result to validated, the request to
+    in_progress, and both audit rows. There is never a result the Doctor Desk
+    can see behind an error the bench was shown.
+
+    GATES:
+
+      A. The model's _check_lines_consistent(require_linkage=True,
+         require_complete=True), run before release. Its refusal names tests
+         only and is forwarded as `lab_result_incomplete` -- the same check the
+         state constraint would apply on write, surfaced before anything moves.
+      B. action_release() and an explicit flush.
+           ValidationError -> `lab_result_incomplete`, the model's own words
+           any other UserError (the request's transition guard, an access
+           refusal on the request) -> `lab_request_completion_refused`, FIXED
+      C. The completion outcome and the response, re-read after release.
+
+    Concurrency failures are re-raised untouched so Odoo can replay the request.
+    """
+    try:
+        with env.cr.savepoint():
+            result._check_lines_consistent(require_linkage=True, require_complete=True)
+
+            try:
+                result.action_release()
+                env.flush_all()
+            except PG_CONCURRENCY_EXCEPTIONS_TO_RETRY:
+                raise
+            except ValidationError:
+                raise
+            except UserError as error:
+                _logger.warning(
+                    "Laboratory release refused on completion for result=%s "
+                    "request=%s uid=%s: %s",
+                    result.id, request_record.id, env.uid, error,
+                )
+                raise ApiError(
+                    "lab_request_completion_refused", COMPLETION_REFUSED_MESSAGE, 422
+                ) from error
+
+            try:
+                env.invalidate_all()
+                completion = _completion_outcome(request_record)
+                return {
+                    "result": serialize_operational_result(result),
+                    "request": serialize_request_detail(request_record),
+                    "completion": completion,
+                }
+            except PG_CONCURRENCY_EXCEPTIONS_TO_RETRY:
+                raise
+            except Exception as error:
+                _logger.exception(
+                    "Laboratory release response failed for result=%s uid=%s; "
+                    "rolling the release and completion back",
+                    result.id,
+                    env.uid,
+                )
+                raise TransitionResponseError(
+                    "lab_result_release_response_failed",
+                    "The result was not released because the confirmation could "
+                    "not be produced. Nothing was changed. Please retry.",
+                ) from error
+    except ValidationError as error:
+        # Gate A, or the state constraint during release. Tests only.
         raise ApiError("lab_result_incomplete", str(error), 422) from error
 
 
@@ -1634,6 +1804,67 @@ class YoyaEmrLaboratoryController(http.Controller):
         result = _load_result(env, result_id)
         _validatable_result(env, result)
         payload = _run_validation(env, result)
+
+        payload["capabilities"] = lab_desk_capability_flags(env)
+        return success_response(payload)
+
+    # ------------------------------------------------------------------
+    # 10. Result release (Slice 3C)
+    # ------------------------------------------------------------------
+    @http.route(
+        "%s/results/<int:result_id>/release" % LAB_API,
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @lab_endpoint
+    def release_result(self, result_id, **params):
+        """validated -> released, and the request's completion. DECIDES NOTHING.
+
+        It resolves the result through the caller's own record rules, applies
+        the Laboratory Desk's release policy under lock (_releasable_result:
+        request row first, then result row), and calls ONE authoritative model
+        method:
+
+            hospital.laboratory.result.action_release()
+
+        which writes `released` and runs request._evaluate_completion(). From
+        that moment the result is visible on the Doctor Desk
+        (result_serializers.released_results is released + active), and a
+        request whose ordered tests are all released becomes `completed`. No
+        charge is touched -- delivery happened at validation -- and no charge
+        state is serialized.
+
+        THE BODY IS IGNORED. Release changes no value.
+
+        RESPONSE: `result`, `request`, and `completion`:
+            {"completed": bool, "request_state": str, "blockers": [str, ...]}
+        read from the model after release. Under this desk's policy a single
+        complete result on an in_progress request completes it; `completed:
+        false` with the model's own blocker sentences is reported rather than
+        hidden if that ever does not hold.
+
+        REFUSALS:
+
+          lab_result_not_found              404  unknown or unreadable result
+          lab_result_release_not_available  422  request is not in_progress
+          lab_result_ambiguous              409  another result on the request
+          lab_result_not_releasable         409  the result is not validated
+          lab_result_incomplete             422  the model's completeness check
+          lab_request_completion_refused    422  the request's transition guard;
+                                                 FIXED text
+          lab_result_release_response_failed
+                                            500  rolled back; nothing changed
+
+        IDEMPOTENCY. The rows are locked and the state re-read, so a second
+        click finds the result released -- and, with the request completed, is
+        refused by the in_progress policy first. A concurrent replay is retried
+        by Odoo after the first commits and gets the same answer.
+        """
+        env = request.env
+        _require_lab_desk(env)
+
+        result = _load_result(env, result_id)
+        request_record = _releasable_result(env, result)
+        payload = _run_release(env, result, request_record)
 
         payload["capabilities"] = lab_desk_capability_flags(env)
         return success_response(payload)

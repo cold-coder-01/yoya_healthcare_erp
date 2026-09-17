@@ -30,10 +30,13 @@ import type { LabResult } from "@/types/lab-desk";
 
 import {
   DEFAULT_ABNORMAL_FLAG,
+  RELEASE_REVIEW_TEXT,
+  RELEASE_VISIBILITY_TEXT,
   VALIDATION_IRREVERSIBLE_TEXT,
   VALIDATION_REVIEW_TEXT,
   abnormalFlagHint,
   canEnterResults,
+  canReleaseResult,
   canValidateResult,
   canViewResult,
   draftFromResult,
@@ -41,6 +44,11 @@ import {
   enterResultPath,
   openResultPath,
   patchDraftLine,
+  releaseCompletionText,
+  releaseConfirmIdentity,
+  releaseConfirmTitle,
+  releaseOutcomeText,
+  releaseResultPath,
   resultDraftChanged,
   resultErrorMessage,
   resultModalSubtitle,
@@ -207,15 +215,178 @@ test("every result route is the BFF's, never Odoo's", () => {
   }
 });
 
-test("there is no release, cancel or reset route helper", async () => {
-  // Validation shipped in Slice 3B; the rest of the result workflow has not.
+test("there is no cancel, reset, retract or amend helper", async () => {
+  // Validation (3B) and release (3C) shipped; correction workflows have not.
   const exported = await import("./lab-result-format.ts");
   for (const name of Object.keys(exported)) {
     assert.ok(
-      !/release|cancel|reset|returnToDraft/i.test(name),
+      !/cancel|reset|returnToDraft|retract|amend/i.test(name),
       `${name} suggests a workflow the Laboratory Desk does not ship`,
     );
   }
+});
+
+/* ------------------------------------------------------------------ *
+ * Release (Slice 3C)
+ * ------------------------------------------------------------------ */
+
+test("Release result is offered only for a validated result on an in_progress request", () => {
+  assert.equal(
+    canReleaseResult({ status: "in_progress", result: { state: "validated" }, result_conflict: false }),
+    true,
+  );
+  for (const state of ["draft", "entered", "released", "cancelled"]) {
+    assert.equal(
+      canReleaseResult({ status: "in_progress", result: { state } }),
+      false,
+      `a ${state} result must not offer Release`,
+    );
+  }
+  assert.equal(canReleaseResult({ status: "in_progress", result: null }), false);
+});
+
+test("Release result is not offered for a completed request or any other status", () => {
+  for (const status of ALL_STATUSES) {
+    if (status === "in_progress") continue;
+    for (const state of ["validated", "released"]) {
+      assert.equal(
+        canReleaseResult({ status, result: { state } }),
+        false,
+        `${status}/${state} must not offer Release`,
+      );
+    }
+  }
+});
+
+test("Release result is withheld on a result conflict", () => {
+  assert.equal(
+    canReleaseResult({ status: "in_progress", result: { state: "validated" }, result_conflict: true }),
+    false,
+  );
+  assert.equal(canReleaseResult(null), false);
+  assert.equal(canReleaseResult(undefined), false);
+});
+
+test("each result state offers exactly one next act, and released offers none", () => {
+  const offers = (state: string) => {
+    const detail = { status: "in_progress", result: { state } };
+    return [
+      canEnterResults(detail) && "enter",
+      canValidateResult(detail) && "validate",
+      canReleaseResult(detail) && "release",
+    ].filter(Boolean);
+  };
+  assert.deepEqual(offers("draft"), ["enter"]);
+  assert.deepEqual(offers("entered"), ["validate"]);
+  assert.deepEqual(offers("validated"), ["release"]);
+  assert.deepEqual(offers("released"), []);
+  assert.deepEqual(offers("cancelled"), []);
+  // A released result can still be viewed.
+  assert.equal(canViewResult({ status: "completed", result: { state: "released" } }), true);
+});
+
+test("the release route is the BFF's", () => {
+  assert.equal(releaseResultPath(96), "/api/laboratory/results/96/release");
+  assert.ok(!releaseResultPath(96).includes("yoya-emr"));
+  assert.ok(!releaseResultPath(96).includes("http"));
+});
+
+test("the release confirmation names the result, the ordering clinician, the patient and tests", () => {
+  const source = result({ name: "LABRES0096" });
+  assert.equal(
+    releaseConfirmTitle({ ordering_physician: { name: "Dr. Hana Bekele" } }, source),
+    "Release LABRES0096 to Dr. Hana Bekele?",
+  );
+  assert.equal(
+    releaseConfirmIdentity({ patient: { name: "Selam Tesfaye", mrn: "HMS11834" } }, source),
+    "Selam Tesfaye (HMS11834) · CBC",
+  );
+  assert.equal(
+    releaseCompletionText({ request_code: "LABREQ0215" }),
+    "LABREQ0215 will be completed once all ordered tests are released.",
+  );
+});
+
+test("the release confirmation degrades honestly when identity is missing", () => {
+  const source = result({ name: "LABRES0100" });
+  assert.equal(
+    releaseConfirmTitle({ ordering_physician: null }, source),
+    "Release LABRES0100 to the ordering clinician?",
+  );
+  assert.equal(
+    releaseConfirmIdentity({ patient: { name: "Abebe", mrn: null } }, source),
+    "Abebe · CBC",
+  );
+});
+
+test("the release review and visibility wording is exactly the agreed copy", () => {
+  assert.equal(
+    RELEASE_REVIEW_TEXT,
+    "Review the validated result before release. " +
+      "Releasing makes the result visible to the ordering clinician immediately. " +
+      "Released results cannot be edited, cancelled or returned to draft.",
+  );
+  assert.equal(
+    RELEASE_VISIBILITY_TEXT,
+    "The result becomes visible on the Doctor Desk immediately.",
+  );
+});
+
+test("the release outcome is stated from the server's completion, never guessed", () => {
+  assert.equal(
+    releaseOutcomeText({ completed: true, request_state: "completed", blockers: [] }),
+    "Released · Request completed",
+  );
+  assert.equal(
+    releaseOutcomeText({ completed: false, request_state: "in_progress", blockers: [] }),
+    "Released · Request still in progress",
+  );
+  assert.equal(
+    releaseOutcomeText({
+      completed: false,
+      request_state: "in_progress",
+      blockers: ["'CBC' result LABRES0101 is validated, not released", "  "],
+    }),
+    "Released · Request still in progress: 'CBC' result LABRES0101 is validated, not released",
+  );
+  assert.equal(releaseOutcomeText(null), null);
+  assert.equal(releaseOutcomeText(undefined), null);
+});
+
+test("release wording carries no financial vocabulary", () => {
+  const texts = [
+    RELEASE_REVIEW_TEXT,
+    RELEASE_VISIBILITY_TEXT,
+    releaseConfirmTitle({ ordering_physician: { name: "Dr. Hana Bekele" } }, result()),
+    releaseConfirmIdentity({ patient: { name: "Selam Tesfaye", mrn: "HMS11834" } }, result()),
+    releaseCompletionText({ request_code: "LABREQ0215" }),
+    releaseOutcomeText({ completed: true, request_state: "completed", blockers: [] }) ?? "",
+    draftStatusText({ readOnly: true, busy: "release", changed: false, savedSinceOpen: false }),
+  ];
+  for (const text of texts) {
+    for (const banned of [
+      "ETB", "amount", "balance", "outstanding", "payer", "invoice",
+      "receipt", "birr", "charge", "billing", "paid", "delivered",
+    ]) {
+      assert.ok(!text.toLowerCase().includes(banned.toLowerCase()), `${banned} in "${text}"`);
+    }
+  }
+});
+
+test("the busy status says Releasing while the request is in flight", () => {
+  assert.equal(
+    draftStatusText({ readOnly: true, busy: "release", changed: false, savedSinceOpen: false }),
+    "Releasing…",
+  );
+});
+
+test("a stale release screen reconciles; a completeness or completion refusal does not", () => {
+  assert.ok(shouldReconcileAfterResult("lab_result_not_releasable"));
+  assert.ok(shouldReconcileAfterResult("lab_result_release_not_available"));
+  assert.ok(shouldReconcileAfterResult("lab_result_ambiguous"));
+  assert.ok(!shouldReconcileAfterResult("lab_request_completion_refused"));
+  assert.ok(!shouldReconcileAfterResult("lab_result_release_response_failed"));
+  assert.ok(!shouldReconcileAfterResult("lab_result_release_failed"));
 });
 
 /* ------------------------------------------------------------------ *

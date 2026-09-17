@@ -172,7 +172,7 @@ test("Ctrl/Cmd+Enter marks entered, and bare Enter is left alone", () => {
  * ------------------------------------------------------------------ */
 
 const SAVE_DRAFT = block(MODAL, "const saveDraft = useCallback(", "const markEntered = useCallback(");
-const MARK_ENTERED = block(MODAL, "const markEntered = useCallback(", "/* ---------------- validation (Slice 3B)");
+const MARK_ENTERED = block(MODAL, "const markEntered = useCallback(", "/* ---------------- validate / release (Slices 3B, 3C)");
 
 test("Save draft stays open and confirms only what the server accepted", () => {
   assert.ok(!SAVE_DRAFT.includes("onClose("), "Save draft must never close the sheet");
@@ -232,11 +232,11 @@ test("the abnormal flag offers the model's options and names the default honestl
 });
 
 test("a read-only sheet offers no save and no entry", () => {
-  // Save draft / Mark entered render only when neither validating nor read-only.
+  // Save draft / Mark entered render only when neither confirming nor read-only.
   assert.ok(MODAL.includes(") : readOnly ? null : ("));
   // A plain read-only sheet says Close; the validation sheet says Cancel
   // because it still has an act to cancel.
-  assert.ok(MODAL.includes('{readOnly && !validating ? "Close" : "Cancel"}'));
+  assert.ok(MODAL.includes('{readOnly && !confirming ? "Close" : "Cancel"}'));
   assert.ok(MODAL.includes("Read only"));
 });
 
@@ -309,20 +309,21 @@ test("the panel never renders entry as a disabled control for the wrong status",
  * 6. Slice 3 stops at entered
  * ------------------------------------------------------------------ */
 
-test("no release, cancel or reset control exists in the laboratory tree", () => {
-  // Validate arrived with Slice 3B and is held by the validation tests below.
+test("no cancel, reset, retract or amend control exists in the laboratory tree", () => {
+  // Validate (3B) and Release (3C) are held by their own tests below.
   for (const [name, source] of LAB_TREE) {
     const emitted = code(source);
     for (const pattern of [
-      />\s*Release\b/,
-      />\s*Release result\b/,
       />\s*Reset to draft\b/,
       />\s*Return to draft\b/,
-      /"Release"/,
-      /\/release\b/,
+      />\s*Cancel result\b/,
+      />\s*Retract\b/,
+      />\s*Amend\b/,
       /\/cancel\b/,
       /\/reset/,
-      /onRelease|onReset|onCancelResult|onReturnToDraft/,
+      /\/retract/,
+      /\/amend/,
+      /onReset|onCancelResult|onReturnToDraft|onRetract|onAmend/,
     ]) {
       assert.ok(!pattern.test(emitted), `${name} matches ${pattern}`);
     }
@@ -371,13 +372,13 @@ test("no financial vocabulary is rendered by the result sheet or its status", ()
  * a confirmed success that no later refresh can take off the screen.
  * ------------------------------------------------------------------ */
 
-const ASK = block(MODAL, "const askToConfirmValidation = useCallback(", "const confirmValidation = useCallback(");
-const CONFIRM = block(MODAL, "const confirmValidation = useCallback(", "Focus follows the step.");
+const ASK = block(MODAL, "const askToConfirm = useCallback(", "const confirmAct = useCallback(");
+const CONFIRM = block(MODAL, "const confirmAct = useCallback(", "Focus follows the step.");
 const KEYBOARD = block(MODAL, "function onKeyDown(event: KeyboardEvent)", "document.addEventListener");
 
 test("validation is a mode of the SAME lab-owned sheet, not another dialog", () => {
   assert.equal(count(MODAL, /role="dialog"/g), 1, "one dialog element, one shell");
-  assert.ok(MODAL.includes("const validating = onValidate !== undefined;"));
+  assert.ok(MODAL.includes("const confirming = confirmAction !== null;"));
   assert.ok(MODAL.includes('"Validate laboratory result"'));
   assert.ok(WORKSTATION.includes("<LabResultModal"));
   assert.equal(count(WORKSTATION, /<LabResultModal/g), 1, "the workstation renders one sheet");
@@ -396,48 +397,48 @@ test("the validation sheet is read-only", () => {
   assert.ok(MODAL.includes("disabled={readOnly || fieldsDisabled}"));
   // Save and Mark entered are not rendered in validation mode.
   const footer = MODAL.slice(MODAL.indexOf("{/* ---- Footer ---- */}"));
-  assert.ok(footer.indexOf("{validating ? (") < footer.indexOf('"Save draft"'));
+  assert.ok(footer.indexOf("{confirming ? (") < footer.indexOf('"Save draft"'));
   assert.ok(footer.includes(") : readOnly ? null : ("));
 });
 
 test("step one moves to confirmation and never validates", () => {
-  assert.ok(ASK.includes('setValidationStep("confirm")'));
+  assert.ok(ASK.includes('setConfirmStep("confirm")'));
   assert.ok(!ASK.includes("onValidate("), "Validate result… must not send anything");
-  assert.ok(MODAL.includes("onClick={askToConfirmValidation}"));
+  assert.ok(MODAL.includes("onClick={askToConfirm}"));
   assert.ok(MODAL.includes("Validate result…"));
 });
 
 test("only Confirm validation sends the request, and only from the confirmation step", () => {
-  assert.ok(CONFIRM.includes('validationStep !== "confirm"'));
-  assert.ok(CONFIRM.includes("await onValidate()"));
-  assert.equal(count(MODAL, /onValidate\(\)/g), 1, "exactly one call site for the validation");
-  assert.ok(MODAL.includes("onClick={() => void confirmValidation()}"));
-  assert.equal(count(MODAL, /confirmValidation\(\)/g), 1, "no keyboard or effect path calls it");
+  assert.ok(CONFIRM.includes('confirmStep !== "confirm"'));
+  assert.ok(CONFIRM.includes("await onConfirm()"));
+  assert.equal(count(MODAL, /onConfirm\(\)/g), 1, "exactly one call site for the validation");
+  assert.ok(MODAL.includes("onClick={() => void confirmAct()}"));
+  assert.equal(count(MODAL, /confirmAct\(\)/g), 1, "no keyboard or effect path calls it");
   assert.ok(MODAL.includes(">\n                  {busy === \"validate\" ? \"Validating…\" : \"Confirm validation\"}") ||
     MODAL.includes('"Confirm validation"'));
 });
 
 test("Ctrl/Cmd+Enter can reach the confirmation step but never performs validation", () => {
-  const validatingBranch = KEYBOARD.slice(KEYBOARD.indexOf("if (validating) {"));
-  assert.ok(validatingBranch.includes("askToConfirmValidation()"));
-  assert.ok(!KEYBOARD.includes("confirmValidation()"), "no key performs the final act");
-  // The validating branch returns before the Mark entered shortcut.
+  const validatingBranch = KEYBOARD.slice(KEYBOARD.indexOf("if (confirming) {"));
+  assert.ok(validatingBranch.includes("askToConfirm()"));
+  assert.ok(!KEYBOARD.includes("confirmAct()"), "no key performs the final act");
+  // The confirming branch returns before the Mark entered shortcut.
   const branchEnd = validatingBranch.indexOf("return;");
   assert.ok(branchEnd > 0);
   assert.ok(validatingBranch.indexOf("void markEntered()") > branchEnd);
 });
 
 test("Escape in the confirmation step goes back instead of closing", () => {
-  assert.ok(KEYBOARD.includes('if (validating && validationStep === "confirm") {'));
-  assert.ok(KEYBOARD.includes('if (!isBusy) setValidationStep("review")'));
+  assert.ok(KEYBOARD.includes('if (confirming && confirmStep === "confirm") {'));
+  assert.ok(KEYBOARD.includes('if (!isBusy) setConfirmStep("review")'));
 });
 
 test("focus lands on Go back, never on the final button", () => {
-  assert.ok(MODAL.includes('if (validationStep === "confirm") goBackRef.current?.focus();'));
+  assert.ok(MODAL.includes('if (confirmStep === "confirm") goBackRef.current?.focus();'));
   assert.ok(MODAL.includes("ref={goBackRef}"));
   const confirmButton = MODAL.slice(
-    MODAL.indexOf("onClick={() => void confirmValidation()}") - 200,
-    MODAL.indexOf("onClick={() => void confirmValidation()}"),
+    MODAL.indexOf("onClick={() => void confirmAct()}") - 200,
+    MODAL.indexOf("onClick={() => void confirmAct()}"),
   );
   assert.ok(!confirmButton.includes("ref="), "the final button must not take focus");
   assert.ok(!code(MODAL).includes("autoFocus"));
@@ -446,13 +447,13 @@ test("focus lands on Go back, never on the final button", () => {
 test("the final confirmation names the result, patient and tests, and says it is irreversible", () => {
   assert.ok(MODAL.includes("{validationConfirmText(request, result)}"));
   assert.ok(MODAL.includes("VALIDATION_IRREVERSIBLE_TEXT"));
-  assert.ok(MODAL.includes("{VALIDATION_REVIEW_TEXT}"));
+  assert.ok(MODAL.includes("RELEASE_REVIEW_TEXT : VALIDATION_REVIEW_TEXT}"));
   assert.ok(MODAL.includes("Go back"));
 });
 
 test("a refusal stays in the sheet, returns to review, and always clears busy", () => {
   assert.ok(CONFIRM.includes("setError(outcome.message)"));
-  assert.ok(CONFIRM.includes('setValidationStep("review")'));
+  assert.ok(CONFIRM.includes('setConfirmStep("review")'));
   assert.ok(CONFIRM.includes("finally {"));
   assert.ok(CONFIRM.includes("setBusy(null)"));
   assert.ok(CONFIRM.includes("if (shouldCloseAfterSave(ok)) onClose();"));
@@ -461,18 +462,18 @@ test("a refusal stays in the sheet, returns to review, and always clears busy", 
 });
 
 test("busy disables every way out and both confirmation buttons", () => {
-  assert.ok(CONFIRM.includes('setBusy("validate")'));
+  assert.ok(CONFIRM.includes("setBusy(confirmAction)"));
   assert.ok(CONFIRM.includes("busy !== null"));
   const confirmStep = MODAL.slice(
-    MODAL.indexOf('validating && validationStep === "confirm" ? ('),
-    MODAL.indexOf("{validating ? (", MODAL.indexOf('validating && validationStep === "confirm" ? (')),
+    MODAL.indexOf('confirming && confirmStep === "confirm" ? ('),
+    MODAL.indexOf("{confirming ? (", MODAL.indexOf('confirming && confirmStep === "confirm" ? (')),
   );
   assert.equal(count(confirmStep, /disabled=\{isBusy\}/g), 2, "Go back and Confirm validation");
   assert.ok(MODAL.includes("closeIntent({ readOnly, changed, busy: isBusy })"), "X, Cancel, backdrop blocked while busy");
 });
 
 test("the workstation sends ONE bodiless validation POST to the BFF", () => {
-  const validator = block(WORKSTATION, "const validateResult = useCallback(", "WHICH REQUEST THE PANEL MAY SHOW.");
+  const validator = block(WORKSTATION, "const validateResult = useCallback(", "/* ---------------- release (Slice 3C)");
   assert.ok(validator.includes("postLab<LabResultResponse>("));
   assert.ok(validator.includes("validateResultPath(resultId),\n          {},") || validator.includes("validateResultPath(resultId)"));
   assert.equal(count(validator, /postLab</g), 1);
@@ -481,7 +482,7 @@ test("the workstation sends ONE bodiless validation POST to the BFF", () => {
 });
 
 test("success shows the authoritative VALIDATED request and pins it", () => {
-  const validator = block(WORKSTATION, "const validateResult = useCallback(", "WHICH REQUEST THE PANEL MAY SHOW.");
+  const validator = block(WORKSTATION, "const validateResult = useCallback(", "/* ---------------- release (Slice 3C)");
   assert.ok(validator.includes("setDetail(payload.data.request)"));
   assert.ok(validator.includes("setJustActedId(payload.data.request.id)"));
   assert.ok(validator.includes("return { ok: true, result: payload.data.result }"));
@@ -505,7 +506,7 @@ test("a failed re-read keeps the confirmed state on screen instead of erasing it
 });
 
 test("a lost validation response is not reported as 'not validated'", () => {
-  const validator = block(WORKSTATION, "const validateResult = useCallback(", "WHICH REQUEST THE PANEL MAY SHOW.");
+  const validator = block(WORKSTATION, "const validateResult = useCallback(", "/* ---------------- release (Slice 3C)");
   const transport = validator.slice(validator.indexOf("} catch {"));
   assert.ok(transport.includes("refresh()"), "re-read so the true state is shown");
   assert.ok(!transport.toLowerCase().includes("was not validated"));
@@ -517,7 +518,7 @@ test("the panel offers View and Validate for entered, and View alone once valida
   assert.ok(PANEL.includes("onValidateResult(event.currentTarget)"));
   assert.ok(PANEL.includes(">\n            Validate result\n") || PANEL.includes("Validate result"));
   assert.ok(!PANEL.includes("disabled={!canValidateResult"));
-  assert.ok(PANEL.includes("Release is\n        not available yet.") || PANEL.includes("Release is"));
+  assert.ok(PANEL.includes("Sample collection, processing, result entry, validation and release."));
 });
 
 test("the validation opener sends nothing; only confirmation does", () => {
@@ -531,4 +532,141 @@ test("the modal still performs no fetch for validation", () => {
   assert.ok(!emitted.includes("fetch("));
   assert.ok(!emitted.includes("/validate"));
   assert.ok(!emitted.includes("yoya-emr"));
+});
+
+/* ------------------------------------------------------------------ *
+ * 8. Release (Slice 3C)
+ *
+ * Release publishes a result to the ordering clinician and completes the
+ * request; neither can be undone from the desk. It reuses the validation
+ * mechanism EXACTLY -- one two-step flow, one keyboard rule, one focus rule --
+ * and these tests hold both that the mechanism is shared and that release's
+ * own words and reconciliation are right.
+ * ------------------------------------------------------------------ */
+
+const RELEASER = block(WORKSTATION, "const releaseResult = useCallback(", "WHICH REQUEST THE PANEL MAY SHOW.");
+const RELEASE_OPENER = block(WORKSTATION, "const openRelease = useCallback(", "const releaseResult = useCallback(");
+
+test("release is a mode of the SAME sheet, sharing the one confirmation mechanism", () => {
+  assert.equal(count(MODAL, /role="dialog"/g), 1);
+  assert.equal(count(WORKSTATION, /<LabResultModal/g), 1);
+  assert.ok(MODAL.includes('onRelease?: () => Promise<LabResultOutcome>;'));
+  assert.ok(MODAL.includes("const onConfirm = onValidate ?? onRelease;"));
+  assert.ok(MODAL.includes('"Release laboratory result"'));
+  // ONE confirm path for both acts: no release-specific copy of the logic.
+  assert.equal(count(MODAL, /useCallback\(async \(\) => \{\n    if \(!onConfirm/g), 1);
+  assert.ok(!MODAL.includes("confirmRelease"), "no second confirm handler");
+  assert.ok(!MODAL.includes("askToConfirmRelease"), "no second step-one handler");
+  assert.ok(WORKSTATION.includes("resultEditor.releasing"));
+});
+
+test("the release sheet is read-only", () => {
+  assert.ok(RELEASE_OPENER.includes("readOnly: true"));
+  assert.ok(RELEASE_OPENER.includes("releasing: true"));
+  assert.ok(RELEASE_OPENER.includes("canReleaseResult(current)"));
+  assert.ok(!RELEASE_OPENER.includes("postLab("), "opening sends nothing");
+  assert.ok(!RELEASE_OPENER.includes("validating: true"), "never both acts at once");
+});
+
+test("step one moves to confirmation; only Confirm release sends", () => {
+  assert.ok(MODAL.includes('{confirmAction === "release" ? "Release result…" : "Validate result…"}'));
+  assert.ok(MODAL.includes('"Confirm release"'));
+  assert.equal(count(MODAL, /onConfirm\(\)/g), 1, "exactly one call site sends the act");
+  assert.equal(count(MODAL, /confirmAct\(\)/g), 1, "only the Confirm button calls it");
+});
+
+test("Ctrl/Cmd+Enter cannot perform the final release, and Escape goes back", () => {
+  const keyboard = block(MODAL, "function onKeyDown(event: KeyboardEvent)", "document.addEventListener");
+  assert.ok(!keyboard.includes("confirmAct()"), "no key performs the final act");
+  assert.ok(!keyboard.includes("onRelease"), "the keyboard never reaches release directly");
+  assert.ok(keyboard.includes("askToConfirm()"));
+  assert.ok(keyboard.includes('if (confirming && confirmStep === "confirm") {'));
+});
+
+test("focus lands on Go back for release too, never on Confirm release", () => {
+  assert.ok(MODAL.includes('if (confirmStep === "confirm") goBackRef.current?.focus();'));
+  const finalButton = MODAL.slice(
+    MODAL.indexOf("onClick={() => void confirmAct()}") - 200,
+    MODAL.indexOf("onClick={() => void confirmAct()}"),
+  );
+  assert.ok(!finalButton.includes("ref="));
+  assert.ok(!code(MODAL).includes("autoFocus"));
+});
+
+test("the release confirmation names result, clinician, patient, tests and the request", () => {
+  assert.ok(MODAL.includes("{releaseConfirmTitle(request, result)}"));
+  assert.ok(MODAL.includes("{releaseConfirmIdentity(request, result)}"));
+  assert.ok(MODAL.includes("RELEASE_VISIBILITY_TEXT"));
+  assert.ok(MODAL.includes("{releaseCompletionText(request)}"));
+  // The ordering clinician is also stated in the header while reviewing.
+  assert.ok(MODAL.includes("request.ordering_physician?.name"));
+});
+
+test("busy, failure and success are the shared rules for release too", () => {
+  const confirm = block(MODAL, "const confirmAct = useCallback(", "Focus follows the step.");
+  assert.ok(confirm.includes("setBusy(confirmAction)"));
+  assert.ok(confirm.includes('setConfirmStep("review")'), "a refusal returns to review");
+  assert.ok(confirm.includes("setError(outcome.message)"), "and shows the reason in the sheet");
+  assert.ok(confirm.includes("if (shouldCloseAfterSave(ok)) onClose();"), "closes only on success");
+  assert.ok(confirm.includes("finally {"));
+  assert.ok(MODAL.includes('busy === "release" ? "Releasing…"'));
+});
+
+test("the workstation sends ONE bodiless release POST to the BFF", () => {
+  assert.equal(count(RELEASER, /postLab</g), 1);
+  assert.ok(RELEASER.includes("releaseResultPath(resultId)"));
+  assert.ok(!RELEASER.includes("validateResultPath(") && !RELEASER.includes("enterResultPath("));
+  assert.equal(count(WORKSTATION, /method: "POST"/g), 1, "still one POST site");
+});
+
+test("a successful release pins the request and shows the server's outcome", () => {
+  assert.ok(RELEASER.includes("setDetail(released)"));
+  assert.ok(RELEASER.includes("setJustActedId(released.id)"), "the completed request stays on screen");
+  assert.ok(RELEASER.includes("setDetailStaleFor(null)"));
+  assert.ok(RELEASER.includes("releaseOutcomeText(payload.data.completion)"));
+  assert.ok(RELEASER.includes("refresh();"), "queue and lane counts are re-read");
+  assert.ok(WORKSTATION.includes("releaseOutcomeFor.requestId === detailForSelection.id"));
+  assert.ok(WORKSTATION.includes("setReleaseOutcomeFor(null);"), "a new selection clears it");
+});
+
+test("a lost release response is not reported as 'not released'", () => {
+  const transport = RELEASER.slice(RELEASER.indexOf("} catch {"));
+  assert.ok(transport.includes("refresh()"));
+  assert.ok(!transport.toLowerCase().includes("was not released"));
+});
+
+test("the infinite-loading defect cannot return after release", () => {
+  // The panel still consumes the derived loading value, and the nothing-
+  // selected branch still writes no state -- the two halves of that fix.
+  assert.ok(WORKSTATION.includes("loading={panelIsLoading}"));
+  assert.ok(!WORKSTATION.includes("loading={detailLoading}"));
+  assert.ok(WORKSTATION.includes("visibleDetail(detail, activeId, justActedId)"));
+});
+
+test("a failed re-read after release keeps the confirmed RELEASED state", () => {
+  const loader = block(WORKSTATION, "async function loadRequest(requestId: number)", "void loadRequest(activeId);");
+  assert.equal(count(loader, /setDetailStaleFor\(requestId\)/g), 2);
+  assert.ok(PANEL.includes("Could not refresh this request. Showing the last confirmed state."));
+});
+
+test("the panel offers Release only for validated, and nothing after release", () => {
+  assert.ok(PANEL.includes("canReleaseResult(detail) ? ("));
+  assert.ok(PANEL.includes("onReleaseResult(event.currentTarget)"));
+  assert.ok(PANEL.includes("Release result"));
+  assert.ok(!PANEL.includes("disabled={!canReleaseResult"));
+  // The outcome line is announced.
+  assert.ok(PANEL.includes("{releaseOutcome.text}"));
+  assert.ok(PANEL.includes('role="status"'));
+});
+
+test("nothing financial is rendered for release", () => {
+  const rendered = [
+    code(MODAL),
+    code(block(PANEL, "function ResultStatus(", "export default function LabRequestPanel(")),
+  ]
+    .join("\n")
+    .toLowerCase();
+  for (const banned of ["amount", "balance", "invoice", "receipt", "payer", "charge", "delivered", "birr", "etb"]) {
+    assert.ok(!new RegExp(`\\b${banned}\\b`).test(rendered), banned);
+  }
 });

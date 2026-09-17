@@ -265,6 +265,29 @@ export function resolveSelection(
   return rows[0]?.id ?? null;
 }
 
+/**
+ * The request the desk is working on, WITH the post-action pin honoured.
+ *
+ * THE DEFECT THIS FIXES, FOUND IN THE RELEASE SMOKE TEST. A release completes
+ * the request, so the queue refetch drops it from the Active bench. When other
+ * requests remained in the lane, resolveSelection fell to the TOP ROW, the
+ * detail loader fetched that other request, and the released request -- with
+ * its "Released · Request completed" confirmation -- was replaced on screen by
+ * an unrelated one. The pin only held when the lane happened to empty.
+ *
+ * So while a request is pinned it IS the active request: it stays on screen and
+ * its own re-read keeps it current (COMPLETED, RELEASED) until the technician
+ * selects something or changes lane, which clears the pin.
+ */
+export function activeSelection(
+  rows: LabQueueRow[],
+  selectedId: number | null,
+  justActedId: number | null,
+): number | null {
+  if (justActedId !== null) return justActedId;
+  return resolveSelection(rows, selectedId);
+}
+
 /* ------------------------------------------------------------------ *
  * Routes
  * ------------------------------------------------------------------ */

@@ -11,6 +11,7 @@ import {
 } from "@/lib/lab-desk-format";
 import {
   canEnterResults,
+  canReleaseResult,
   canValidateResult,
   canViewResult,
 } from "@/lib/lab-result-format";
@@ -103,10 +104,14 @@ function ResultStatus({
   detail,
   onViewResult,
   onValidateResult,
+  onReleaseResult,
+  releaseOutcome,
 }: {
   detail: LabRequestDetail;
   onViewResult: (trigger: HTMLElement) => void;
   onValidateResult: (trigger: HTMLElement) => void;
+  onReleaseResult: (trigger: HTMLElement) => void;
+  releaseOutcome: { text: string; completed: boolean } | null;
 }) {
   if (detail.result_conflict) {
     return (
@@ -172,7 +177,36 @@ function ResultStatus({
             Validate result
           </button>
         ) : null}
+        {/*
+          RELEASE RESULT (Slice 3C). Offered only for a validated result on an
+          in_progress request with no conflict. It opens the sheet read-only;
+          nothing is sent until Confirm release, two steps later. A released
+          result, a completed request and any conflict offer nothing.
+        */}
+        {canReleaseResult(detail) ? (
+          <button
+            type="button"
+            onClick={(event) => onReleaseResult(event.currentTarget)}
+            className="inline-flex h-8 items-center rounded-md bg-indigo-700 px-3 cl-secondary font-semibold text-white shadow-sm hover:bg-indigo-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-700"
+          >
+            Release result
+          </button>
+        ) : null}
       </div>
+      {/*
+        THE RELEASE OUTCOME, in the server's own terms: completed, or still in
+        progress with the model's blocker sentence. Announced, not only drawn.
+      */}
+      {releaseOutcome ? (
+        <p
+          role="status"
+          className={`basis-full cl-secondary font-semibold ${
+            releaseOutcome.completed ? "text-indigo-900" : "text-amber-900"
+          }`}
+        >
+          {releaseOutcome.text}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -187,6 +221,8 @@ export default function LabRequestPanel({
   onEnterResults,
   onViewResult,
   onValidateResult,
+  onReleaseResult,
+  releaseOutcome,
   stale,
   pending,
   actionError,
@@ -206,6 +242,10 @@ export default function LabRequestPanel({
   onViewResult: (trigger: HTMLElement) => void;
   /** Opens the entered result read-only, in validation mode. */
   onValidateResult: (trigger: HTMLElement) => void;
+  /** Opens the validated result read-only, in release mode. */
+  onReleaseResult: (trigger: HTMLElement) => void;
+  /** The server-reported outcome of a release just performed on THIS request. */
+  releaseOutcome: { text: string; completed: boolean } | null;
   /**
    * The last re-read of THIS request failed; what is shown is the last state
    * the server confirmed. Stated, never hidden, and never replaced with an
@@ -399,6 +439,8 @@ export default function LabRequestPanel({
           detail={detail}
           onViewResult={onViewResult}
           onValidateResult={onValidateResult}
+          onReleaseResult={onReleaseResult}
+          releaseOutcome={releaseOutcome}
         />
 
         {/*
@@ -537,8 +579,7 @@ export default function LabRequestPanel({
         buttons for workflow that has not shipped.
       */}
       <footer className="flex h-7 shrink-0 items-center gap-2 border-t border-slate-200 bg-slate-50 px-3 cl-meta text-slate-500">
-        Sample collection, processing, result entry and validation. Release is
-        not available yet.
+        Sample collection, processing, result entry, validation and release.
       </footer>
     </section>
   );

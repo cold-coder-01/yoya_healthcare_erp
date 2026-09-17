@@ -4,12 +4,17 @@ import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 import {
+  RELEASE_REVIEW_TEXT,
+  RELEASE_VISIBILITY_TEXT,
   VALIDATION_IRREVERSIBLE_TEXT,
   VALIDATION_REVIEW_TEXT,
   abnormalFlagHint,
   draftFromResult,
   draftStatusText,
   patchDraftLine,
+  releaseCompletionText,
+  releaseConfirmIdentity,
+  releaseConfirmTitle,
   resultDraftChanged,
   resultModalSubtitle,
   resultPayload,
@@ -64,7 +69,14 @@ import type {
  * so no single key performs it: Ctrl/Cmd+Enter may reach the confirmation step
  * and no further, and focus lands on "Go back", never on the final button.
  *
- * NO RELEASE, NO CANCEL, NO RESET.
+ * RELEASE (Slice 3C) IS THE SAME MECHANISM. Given `onRelease` instead, the
+ * read-only sheet confirms a release: step two names the result, the ordering
+ * clinician who will see it, the patient and tests, and says the request will
+ * complete. The two-step logic, keyboard rule and focus rule are written ONCE
+ * for both acts -- `confirmAction` only chooses the words -- so validation and
+ * release cannot drift apart in how safely they ask.
+ *
+ * NO CANCEL, NO RESET.
  */
 
 const FIELD_CLASS =
@@ -93,6 +105,11 @@ export type LabResultModalProps = {
    * presence is what puts the sheet in validation mode. Sends no values.
    */
   onValidate?: () => Promise<LabResultOutcome>;
+  /**
+   * POST /release. Present ONLY when the sheet was opened to release. Never
+   * passed together with onValidate. Sends no values.
+   */
+  onRelease?: () => Promise<LabResultOutcome>;
   onClose: () => void;
 };
 
@@ -104,9 +121,20 @@ export default function LabResultModal({
   onSaveDraft,
   onMarkEntered,
   onValidate,
+  onRelease,
   onClose,
 }: LabResultModalProps) {
-  const validating = onValidate !== undefined;
+  /*
+    WHICH IRREVERSIBLE ACT, IF ANY, THIS SHEET CONFIRMS. Validation takes
+    precedence only as a guard; the workstation never passes both.
+  */
+  const confirmAction: "validate" | "release" | null = onValidate
+    ? "validate"
+    : onRelease
+      ? "release"
+      : null;
+  const onConfirm = onValidate ?? onRelease;
+  const confirming = confirmAction !== null;
   /*
     `baseline` is the last state the SERVER confirmed; `draft` is what is on
     screen. Both start from the result the modal was opened with, captured by
@@ -118,12 +146,14 @@ export default function LabResultModal({
   const [draft, setDraft] = useState<LabResultDraft>(() =>
     draftFromResult(result),
   );
-  const [busy, setBusy] = useState<"save" | "enter" | "validate" | null>(null);
+  const [busy, setBusy] = useState<
+    "save" | "enter" | "validate" | "release" | null
+  >(null);
   const [error, setError] = useState<string | null>(null);
   const [savedSinceOpen, setSavedSinceOpen] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
-  /* Validation mode only: "review" the values, then "confirm" the act. */
-  const [validationStep, setValidationStep] = useState<"review" | "confirm">(
+  /* Validate / release only: "review" the values, then "confirm" the act. */
+  const [confirmStep, setConfirmStep] = useState<"review" | "confirm">(
     "review",
   );
 
@@ -197,45 +227,48 @@ export default function LabResultModal({
     if (shouldCloseAfterSave(ok)) onClose();
   }, [busy, draft, onClose, onMarkEntered, readOnly]);
 
-  /* ---------------- validation (Slice 3B) ---------------- */
-  /** Step one's button. Moves to confirmation; NEVER validates. */
-  const askToConfirmValidation = useCallback(() => {
-    if (!validating || busy !== null) return;
+  /* ---------------- validate / release (Slices 3B, 3C) ---------------- */
+  /** Step one's button. Moves to confirmation; NEVER performs the act. */
+  const askToConfirm = useCallback(() => {
+    if (!confirming || busy !== null) return;
     setError(null);
-    setValidationStep("confirm");
-  }, [busy, validating]);
+    setConfirmStep("confirm");
+  }, [busy, confirming]);
 
-  /** Step two's button, and the ONLY path that sends the validation. */
-  const confirmValidation = useCallback(async () => {
-    if (!onValidate || busy !== null || validationStep !== "confirm") return;
-    setBusy("validate");
+  /** Step two's button, and the ONLY path that sends validate or release. */
+  const confirmAct = useCallback(async () => {
+    if (!onConfirm || !confirmAction || busy !== null || confirmStep !== "confirm") {
+      return;
+    }
+    setBusy(confirmAction);
     setError(null);
     let ok = false;
     try {
-      const outcome = await onValidate();
+      const outcome = await onConfirm();
       ok = outcome.ok;
       if (!outcome.ok) {
         // Back to review, with the server's reason above the buttons. The
-        // result is still entered; nothing on screen claims otherwise.
+        // result is unchanged; nothing on screen claims otherwise.
         setError(outcome.message);
-        setValidationStep("review");
+        setConfirmStep("review");
       }
     } finally {
       setBusy(null);
     }
     if (shouldCloseAfterSave(ok)) onClose();
-  }, [busy, onClose, onValidate, validationStep]);
+  }, [busy, confirmAction, confirmStep, onClose, onConfirm]);
 
   /*
     Focus follows the step. On confirmation it lands on "Go back" -- never on
-    "Confirm validation", so no stray Enter or Space performs the act. After a
-    refusal it returns to the review button beside the error.
+    "Confirm validation" or "Confirm release", so no stray Enter or Space
+    performs the act. After a refusal it returns to the review button beside
+    the error.
   */
   useEffect(() => {
-    if (!validating) return;
-    if (validationStep === "confirm") goBackRef.current?.focus();
+    if (!confirming) return;
+    if (confirmStep === "confirm") goBackRef.current?.focus();
     else if (error) reviewActionRef.current?.focus();
-  }, [error, validating, validationStep]);
+  }, [error, confirming, confirmStep]);
 
   /* ---------------- keyboard ---------------- */
   useEffect(() => {
@@ -246,8 +279,8 @@ export default function LabResultModal({
         event.preventDefault();
         event.stopPropagation();
         // In confirmation, Escape is "Go back", not "close".
-        if (validating && validationStep === "confirm") {
-          if (!isBusy) setValidationStep("review");
+        if (confirming && confirmStep === "confirm") {
+          if (!isBusy) setConfirmStep("review");
           return;
         }
         const intent = escapeIntent({
@@ -260,12 +293,13 @@ export default function LabResultModal({
         else requestClose();
         return;
       }
-      if (validating) {
+      if (confirming) {
         // Ctrl/Cmd+Enter may reach the confirmation step and NO further: the
-        // final, irreversible act is a deliberate click on Confirm validation.
+        // final, irreversible act is a deliberate click on Confirm validation
+        // or Confirm release.
         if (isSaveShortcut(event, { readOnly: false, confirmingDiscard: confirmDiscard })) {
           event.preventDefault();
-          askToConfirmValidation();
+          askToConfirm();
         }
         return;
       }
@@ -279,15 +313,15 @@ export default function LabResultModal({
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
   }, [
-    askToConfirmValidation,
+    askToConfirm,
     changed,
     confirmDiscard,
     isBusy,
     markEntered,
     readOnly,
     requestClose,
-    validating,
-    validationStep,
+    confirming,
+    confirmStep,
   ]);
 
   const trapFocus = useCallback((event: ReactKeyboardEvent) => {
@@ -336,11 +370,13 @@ export default function LabResultModal({
                 id={titleId}
                 className="min-w-0 truncate cl-head font-semibold text-slate-900"
               >
-                {validating
+                {confirmAction === "validate"
                   ? "Validate laboratory result"
-                  : readOnly
-                    ? "Laboratory result"
-                    : "Enter laboratory results"}
+                  : confirmAction === "release"
+                    ? "Release laboratory result"
+                    : readOnly
+                      ? "Laboratory result"
+                      : "Enter laboratory results"}
               </h2>
               <span className="inline-flex shrink-0 items-center rounded border border-slate-300 bg-white px-1.5 py-px font-mono cl-micro font-bold uppercase tracking-wide text-slate-700">
                 {result.name} · {result.state_label ?? result.state}
@@ -362,6 +398,15 @@ export default function LabResultModal({
             >
               {resultModalSubtitle(request)}
             </p>
+            {confirmAction === "release" ? (
+              /* Who will see this result the moment it is released. */
+              <p className="mt-0.5 truncate cl-secondary text-slate-600">
+                Ordered by{" "}
+                <span className="font-semibold text-slate-800">
+                  {request.ordering_physician?.name ?? "—"}
+                </span>
+              </p>
+            ) : null}
           </div>
           <button
             ref={closeRef}
@@ -595,26 +640,45 @@ export default function LabResultModal({
                 </button>
               </div>
             </div>
-          ) : validating && validationStep === "confirm" ? (
+          ) : confirming && confirmStep === "confirm" ? (
             /*
-              STEP TWO. The only place Confirm validation exists, and the only
-              button that sends it. It names the exact result, patient and tests,
-              and states that it cannot be undone. Focus starts on Go back.
+              STEP TWO. The only place Confirm validation / Confirm release
+              exists, and the only button that sends it. It names the exact
+              result, patient and tests -- and for release, the clinician who
+              will see it and the request that will complete. Focus starts on
+              Go back.
             */
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="min-w-0 flex-1" aria-live="polite">
-                <p className="cl-body font-semibold text-slate-900">
-                  {validationConfirmText(request, result)}
-                </p>
-                <p className="cl-secondary text-amber-900">
-                  {busy === "validate" ? "Validating…" : VALIDATION_IRREVERSIBLE_TEXT}
-                </p>
-              </div>
+              {confirmAction === "release" ? (
+                <div className="min-w-0 flex-1" aria-live="polite">
+                  <p className="cl-body font-semibold text-slate-900">
+                    {releaseConfirmTitle(request, result)}
+                  </p>
+                  <p className="cl-secondary font-semibold text-slate-800">
+                    {releaseConfirmIdentity(request, result)}
+                  </p>
+                  <p className="cl-secondary text-amber-900">
+                    {busy === "release" ? "Releasing…" : RELEASE_VISIBILITY_TEXT}
+                  </p>
+                  <p className="cl-secondary text-slate-700">
+                    {releaseCompletionText(request)}
+                  </p>
+                </div>
+              ) : (
+                <div className="min-w-0 flex-1" aria-live="polite">
+                  <p className="cl-body font-semibold text-slate-900">
+                    {validationConfirmText(request, result)}
+                  </p>
+                  <p className="cl-secondary text-amber-900">
+                    {busy === "validate" ? "Validating…" : VALIDATION_IRREVERSIBLE_TEXT}
+                  </p>
+                </div>
+              )}
               <div className="flex shrink-0 items-center gap-2">
                 <button
                   ref={goBackRef}
                   type="button"
-                  onClick={() => setValidationStep("review")}
+                  onClick={() => setConfirmStep("review")}
                   disabled={isBusy}
                   className="rounded-md border border-slate-300 bg-white px-3 py-1.5 cl-body font-semibold text-slate-700 outline-none hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-indigo-600 disabled:opacity-50"
                 >
@@ -622,21 +686,27 @@ export default function LabResultModal({
                 </button>
                 <button
                   type="button"
-                  onClick={() => void confirmValidation()}
+                  onClick={() => void confirmAct()}
                   disabled={isBusy}
-                  aria-busy={busy === "validate"}
+                  aria-busy={busy === confirmAction}
                   className="rounded-md bg-indigo-700 px-4 py-1.5 cl-body font-semibold text-white shadow-sm outline-none hover:bg-indigo-800 focus-visible:ring-2 focus-visible:ring-indigo-700 disabled:bg-slate-300 disabled:text-slate-600 disabled:shadow-none"
                 >
-                  {busy === "validate" ? "Validating…" : "Confirm validation"}
+                  {confirmAction === "release"
+                    ? busy === "release"
+                      ? "Releasing…"
+                      : "Confirm release"
+                    : busy === "validate"
+                      ? "Validating…"
+                      : "Confirm validation"}
                 </button>
               </div>
             </div>
           ) : (
             <div className="flex flex-wrap items-center justify-end gap-2">
-              {validating ? (
+              {confirming ? (
                 /* STEP ONE: review. The values above are read-only. */
                 <p className="mr-auto min-w-0 flex-1 basis-full cl-secondary text-slate-700 sm:basis-auto">
-                  {VALIDATION_REVIEW_TEXT}
+                  {confirmAction === "release" ? RELEASE_REVIEW_TEXT : VALIDATION_REVIEW_TEXT}
                 </p>
               ) : (
                 <span
@@ -652,17 +722,17 @@ export default function LabResultModal({
                 disabled={isBusy}
                 className="rounded-md border border-slate-300 bg-white px-3.5 py-1.5 cl-body font-semibold text-slate-700 outline-none hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-indigo-600 disabled:opacity-50"
               >
-                {readOnly && !validating ? "Close" : "Cancel"}
+                {readOnly && !confirming ? "Close" : "Cancel"}
               </button>
-              {validating ? (
+              {confirming ? (
                 <button
                   ref={reviewActionRef}
                   type="button"
-                  onClick={askToConfirmValidation}
+                  onClick={askToConfirm}
                   disabled={isBusy}
                   className="rounded-md bg-indigo-700 px-4 py-1.5 cl-body font-semibold text-white shadow-sm outline-none hover:bg-indigo-800 focus-visible:ring-2 focus-visible:ring-indigo-700 disabled:bg-slate-300 disabled:text-slate-600 disabled:shadow-none"
                 >
-                  Validate result…
+                  {confirmAction === "release" ? "Release result…" : "Validate result…"}
                 </button>
               ) : readOnly ? null : (
                 <>

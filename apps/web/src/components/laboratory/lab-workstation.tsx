@@ -11,15 +11,18 @@ import {
   startProcessingPath,
   matchesSearch,
   requestPath,
-  resolveSelection,
+  activeSelection,
   shouldReconcileAfter,
   visibleDetail,
   worklistPath,
 } from "@/lib/lab-desk-format";
 import {
+  canReleaseResult,
   canValidateResult,
   enterResultPath,
   openResultPath,
+  releaseOutcomeText,
+  releaseResultPath,
   resultErrorMessage,
   saveResultPath,
   shouldReconcileAfterResult,
@@ -72,6 +75,8 @@ type ResultEditor = {
   readOnly: boolean;
   /** Opened by "Validate result": read-only, with the two-step confirmation. */
   validating?: boolean;
+  /** Opened by "Release result": read-only, with the two-step confirmation. */
+  releasing?: boolean;
   returnFocus: HTMLElement | null;
 };
 
@@ -96,9 +101,10 @@ type ResultEditor = {
  * draft, mark it entered. The result sheet is a modal that owns its own typed
  * draft; this component only carries its requests to the BFF.
  *
- * VALIDATION (Slice 3B) -- the same sheet, read-only, with a two-step
- * confirmation; one POST with no body. Release is not offered anywhere on this
- * desk.
+ * VALIDATION (Slice 3B) and RELEASE (Slice 3C) -- the same sheet, read-only,
+ * with a two-step confirmation; one POST each with no body. Release completes
+ * the request and moves it out of In progress, so the released request is
+ * pinned on screen with its server-reported outcome.
  *
  * Every POST in this file goes through `postLab`.
  *
@@ -262,10 +268,16 @@ export default function LabWorkstation() {
    * render -- an effect that wrote selectedId back would render one frame
    * showing a request that is no longer in the queue, and would trip
    * react-hooks/set-state-in-effect for exactly that reason.
+   *
+   * A PINNED REQUEST WINS (activeSelection). After a release or a collection
+   * moves a request out of the lane, falling to the top row would load an
+   * unrelated request over the confirmation the technician is reading. The pin
+   * is cleared by a real selection or a lane change.
    */
+  const [justActedId, setJustActedId] = useState<number | null>(null);
   const activeId = useMemo(
-    () => resolveSelection(visibleRows, selectedId),
-    [visibleRows, selectedId],
+    () => activeSelection(visibleRows, selectedId, justActedId),
+    [visibleRows, selectedId, justActedId],
   );
 
   /* ---------------- selected request ---------------- */
@@ -355,10 +367,10 @@ export default function LabWorkstation() {
   */
   const [pendingId, setPendingId] = useState<number | null>(null);
   /*
-    The request the technician just acted on, kept on screen after it leaves
-    the lane. See detailForSelection. Cleared by any fresh selection.
+    `justActedId` -- the request the technician just acted on, kept on screen
+    after it leaves the lane -- is declared with activeId above, because it now
+    decides the active request. Cleared by any fresh selection or lane change.
   */
-  const [justActedId, setJustActedId] = useState<number | null>(null);
   const [actionErrorFor, setActionErrorFor] = useState<{
     requestId: number;
     message: string;
@@ -650,6 +662,101 @@ export default function LabWorkstation() {
     [refresh],
   );
 
+  /* ---------------- release (Slice 3C) ---------------- */
+
+  /*
+    THE LAST RELEASE'S OUTCOME, as the server reported it, keyed on the
+    request so it can never be shown against another. Cleared by any fresh
+    selection, like the justActedId pin it travels with.
+  */
+  const [releaseOutcomeFor, setReleaseOutcomeFor] = useState<{
+    requestId: number;
+    text: string;
+    completed: boolean;
+  } | null>(null);
+
+  /**
+   * "Release result": open the validated result ON SCREEN in release mode. No
+   * request is made to open it; the Lab API re-checks everything on Confirm
+   * release.
+   */
+  const openRelease = useCallback(
+    (returnFocus: HTMLElement | null) => {
+      const current = visibleDetail(detail, activeId, justActedId);
+      if (!current?.result || resultEditor !== null) return;
+      if (!canReleaseResult(current)) return;
+      setResultEditor({
+        request: current,
+        result: current.result,
+        readOnly: true,
+        releasing: true,
+        returnFocus,
+      });
+    },
+    [activeId, detail, justActedId, resultEditor],
+  );
+
+  /**
+   * Confirm release: ONE POST, no body, reported back to the modal.
+   *
+   * RELEASE MOVES THE REQUEST OUT OF THE LANE. A completed request leaves In
+   * progress the instant the server answers, so the queue refetch drops it and
+   * `activeId` moves on. The request is therefore PINNED with justActedId --
+   * the same mechanism collection uses -- so the panel keeps answering the
+   * question the click asked: RELEASED, request COMPLETED. The server's own
+   * re-serialized request is shown, never a status guessed from the click, and
+   * detailStaleFor keeps it on screen if the background re-read fails.
+   *
+   * A LOST RESPONSE IS NOT REPORTED AS "NOT RELEASED": the server may have
+   * released before the connection dropped. The request is re-read instead; a
+   * retry against a released result gets a clean refusal, never a second
+   * release.
+   */
+  const releaseResult = useCallback(
+    async (resultId: number): Promise<LabResultOutcome> => {
+      try {
+        const { response, payload } = await postLab<LabResultResponse>(
+          releaseResultPath(resultId),
+          {},
+        );
+        if (!response.ok || !payload.success) {
+          if (shouldReconcileAfterResult(codeFromPayload(payload))) refresh();
+          return {
+            ok: false,
+            message: resultErrorMessage(
+              messageFromPayload(payload, ""),
+              "The laboratory result could not be released.",
+            ),
+          };
+        }
+        const released = payload.data.request;
+        setDetail(released);
+        setDetailStaleFor(null);
+        setJustActedId(released.id);
+        const text = releaseOutcomeText(payload.data.completion);
+        setReleaseOutcomeFor(
+          text
+            ? {
+                requestId: released.id,
+                text,
+                completed: Boolean(payload.data.completion?.completed),
+              }
+            : null,
+        );
+        refresh();
+        return { ok: true, result: payload.data.result };
+      } catch {
+        refresh();
+        return {
+          ok: false,
+          message:
+            "Unable to confirm the release with the laboratory service. The request is being re-read; check its result state before trying again.",
+        };
+      }
+    },
+    [refresh],
+  );
+
   /*
     WHICH REQUEST THE PANEL MAY SHOW.
 
@@ -707,7 +814,12 @@ export default function LabWorkstation() {
         search={search}
         loading={queueLoading}
         summary={summary}
-        onLaneChange={setLane}
+        onLaneChange={(nextLane) => {
+          setLane(nextLane);
+          // Choosing a lane is choosing new work: release the post-action pin.
+          setJustActedId(null);
+          setReleaseOutcomeFor(null);
+        }}
         onDateChange={setDate}
         onSearchChange={setSearch}
         onRefresh={refresh}
@@ -724,6 +836,7 @@ export default function LabWorkstation() {
             setSelectedId(requestId);
             // A real selection always wins over the post-collection pin.
             setJustActedId(null);
+            setReleaseOutcomeFor(null);
           }}
         />
         <LabRequestPanel
@@ -742,6 +855,14 @@ export default function LabWorkstation() {
           }}
           onViewResult={(trigger) => viewResult(trigger)}
           onValidateResult={(trigger) => openValidation(trigger)}
+          onReleaseResult={(trigger) => openRelease(trigger)}
+          releaseOutcome={
+            releaseOutcomeFor &&
+            detailForSelection !== null &&
+            releaseOutcomeFor.requestId === detailForSelection.id
+              ? releaseOutcomeFor
+              : null
+          }
           stale={
             detailForSelection !== null &&
             detailStaleFor === detailForSelection.id
@@ -779,6 +900,11 @@ export default function LabWorkstation() {
           onValidate={
             resultEditor.validating
               ? () => validateResult(resultEditor.result.id)
+              : undefined
+          }
+          onRelease={
+            resultEditor.releasing
+              ? () => releaseResult(resultEditor.result.id)
               : undefined
           }
           onClose={() => setResultEditor(null)}

@@ -115,6 +115,27 @@ test("a fresh selection clears the pin", () => {
   );
 });
 
+test("the pinned request IS the active request until the technician moves on", () => {
+  // Slice 3C defect: falling to the top row replaced a just-released request
+  // whenever its lane still had other rows.
+  assert.ok(
+    WORKSTATION.includes("activeSelection(visibleRows, selectedId, justActedId)"),
+    "activeId must honour the pin, not only resolveSelection",
+  );
+  assert.ok(!WORKSTATION.includes("() => resolveSelection(visibleRows, selectedId)"));
+  // Both ways of choosing new work release the pin.
+  const laneChange = WORKSTATION.slice(
+    WORKSTATION.indexOf("onLaneChange={(nextLane) => {"),
+    WORKSTATION.indexOf("onDateChange={setDate}"),
+  );
+  assert.ok(laneChange.includes("setJustActedId(null)"));
+  const select = WORKSTATION.slice(
+    WORKSTATION.indexOf("onSelect={(requestId) => {"),
+    WORKSTATION.indexOf("<LabRequestPanel"),
+  );
+  assert.ok(select.includes("setJustActedId(null)"));
+});
+
 test("the transitioned detail is taken from the authoritative response", () => {
   // Not patched locally: the server re-serializes after the transition, so the
   // status shown is the derived one rather than a value guessed from the click.

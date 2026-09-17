@@ -61,6 +61,7 @@ import {
   matchesSearch,
   orDash,
   requestPath,
+  activeSelection,
   resolveSelection,
   shouldReconcileAfter,
   startProcessingErrorMessage,
@@ -906,4 +907,41 @@ test("the bench vocabulary is unchanged by the new action", () => {
   assert.equal(labStatusCode("in_progress"), "PROC");
   assert.equal(LAB_DESK_STATUS_ORDER.length, 7);
   assert.equal(clearanceNotice("in_progress"), null);
+});
+
+/* ------------------------------------------------------------------ *
+ * 11. The post-action pin (Slice 3C release defect)
+ * ------------------------------------------------------------------ */
+
+test("a pinned request stays active after it leaves a lane that still has other rows", () => {
+  // THE DEFECT: released LABREQ0120 left the Active bench; LABREQ0118 and 0117
+  // remained. resolveSelection alone fell to the top row and replaced it.
+  const remaining = [row({ id: 118 }), row({ id: 117 })];
+  assert.equal(resolveSelection(remaining, 120), 118, "the old rule falls to the top row");
+  assert.equal(activeSelection(remaining, 120, 120), 120, "the pin keeps the released request");
+});
+
+test("a pinned request stays active when the lane empties", () => {
+  assert.equal(activeSelection([], 120, 120), 120);
+});
+
+test("without a pin, selection behaves exactly as before", () => {
+  const rows = [row({ id: 1 }), row({ id: 2 })];
+  assert.equal(activeSelection(rows, 2, null), 2);
+  assert.equal(activeSelection(rows, 99, null), 1);
+  assert.equal(activeSelection([], 5, null), null);
+});
+
+test("the pin wins over a stale selection, but a real selection clears the pin first", () => {
+  // The workstation clears justActedId on select; after that the selection rules.
+  const rows = [row({ id: 1 }), row({ id: 2 })];
+  assert.equal(activeSelection(rows, 2, 120), 120);
+  assert.equal(activeSelection(rows, 2, null), 2);
+});
+
+test("a pinned request is still shown and never reads as loading", () => {
+  const released = detail({ id: 120, status: "completed" });
+  const active = activeSelection([row({ id: 118 })], 118, 120);
+  assert.equal(visibleDetail(released, active, 120), released);
+  assert.equal(detailIsLoading(active, true, released), false);
 });
