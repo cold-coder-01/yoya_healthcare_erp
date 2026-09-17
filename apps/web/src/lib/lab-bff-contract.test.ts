@@ -62,6 +62,7 @@ const LAB_ROUTES = [
   "requests/[requestId]/result/route.ts",
   "results/[resultId]/save/route.ts",
   "results/[resultId]/enter/route.ts",
+  "results/[resultId]/validate/route.ts",
 ].map((name) => [name, read(`app/api/laboratory/${name}`)] as const);
 
 function route(suffix: string): string {
@@ -220,6 +221,7 @@ test("only the known write routes exist in the laboratory BFF", () => {
     "requests/[requestId]/start-processing/route.ts",
     "results/[resultId]/enter/route.ts",
     "results/[resultId]/save/route.ts",
+    "results/[resultId]/validate/route.ts",
   ]);
   for (const [name, source] of LAB_ROUTES) {
     for (const verb of ["export async function PATCH", "export async function DELETE", "export async function PUT"]) {
@@ -285,6 +287,55 @@ test("each result route has its own transport fallback code", () => {
   assert.ok(route("requests/[requestId]/result/route.ts").includes("lab_result_open_failed"));
   assert.ok(route("results/[resultId]/save/route.ts").includes("lab_result_save_failed"));
   assert.ok(route("results/[resultId]/enter/route.ts").includes("lab_result_enter_failed"));
+  assert.ok(route("results/[resultId]/validate/route.ts").includes("lab_result_validate_failed"));
+});
+
+/* ------------------------------------------------------------------ *
+ * 5. Validation route (Slice 3B)
+ * ------------------------------------------------------------------ */
+
+test("the validate route forwards to its own upstream path with an empty body", () => {
+  const validate = route("results/[resultId]/validate/route.ts");
+  const emitted = code(validate);
+  assert.ok(validate.includes("${LAB_API}/results/${parsed.value}/validate"));
+  assert.ok(emitted.includes("parseResultId(resultId)"));
+  assert.ok(emitted.includes('"POST",'));
+  assert.ok(emitted.includes("{},"));
+  // The browser's body is not read, so nothing it sends can reach Odoo.
+  assert.ok(!emitted.includes("readJsonObject"));
+  assert.ok(!emitted.includes("body.body"));
+  for (const other of ["/save", "/enter", "/release", "/result`"]) {
+    assert.ok(!emitted.includes(other), `validate must not post to ${other}`);
+  }
+});
+
+test("the validate route uses the shared session, forwarding and error helpers", () => {
+  const validate = route("results/[resultId]/validate/route.ts");
+  for (const required of [
+    "requireOdooSession",
+    "callOdooApi",
+    "forwardOdooResult",
+    "handleRouteError",
+    "export async function POST",
+    "context: { params: Promise<{ resultId: string }> }",
+    "await context.params",
+    'from "../../../_utils"',
+  ]) {
+    assert.ok(validate.includes(required), `validate must use ${required}`);
+  }
+});
+
+test("the validate route restates no billing or workflow rule", () => {
+  const emitted = code(route("results/[resultId]/validate/route.ts")).toLowerCase();
+  for (const banned of ["charge", "billing", "invoice", "amount", "entered", "in_progress", "delivery"]) {
+    assert.ok(!emitted.includes(banned), `the BFF must not know about ${banned}`);
+  }
+});
+
+test("no release route exists in the laboratory BFF", () => {
+  for (const [name] of LAB_ROUTES) {
+    assert.ok(!name.includes("release"), name);
+  }
 });
 
 test("the laboratory utils add the body reader and the result-id parser, and still no binary helper", () => {

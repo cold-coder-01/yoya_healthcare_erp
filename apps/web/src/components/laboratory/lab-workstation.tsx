@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { codeFromPayload, messageFromPayload } from "@/lib/api-error";
 import {
@@ -17,11 +17,13 @@ import {
   worklistPath,
 } from "@/lib/lab-desk-format";
 import {
+  canValidateResult,
   enterResultPath,
   openResultPath,
   resultErrorMessage,
   saveResultPath,
   shouldReconcileAfterResult,
+  validateResultPath,
 } from "@/lib/lab-result-format";
 import type { LabResultOutcome } from "@/lib/lab-result-format";
 import type {
@@ -68,6 +70,8 @@ type ResultEditor = {
   request: LabRequestDetail;
   result: LabResult;
   readOnly: boolean;
+  /** Opened by "Validate result": read-only, with the two-step confirmation. */
+  validating?: boolean;
   returnFocus: HTMLElement | null;
 };
 
@@ -90,8 +94,11 @@ type ResultEditor = {
  *
  * RESULT ENTRY (Slice 3) -- open the request's one operational result, save a
  * draft, mark it entered. The result sheet is a modal that owns its own typed
- * draft; this component only carries its requests to the BFF. Validation and
- * release are not offered anywhere on this desk.
+ * draft; this component only carries its requests to the BFF.
+ *
+ * VALIDATION (Slice 3B) -- the same sheet, read-only, with a two-step
+ * confirmation; one POST with no body. Release is not offered anywhere on this
+ * desk.
  *
  * Every POST in this file goes through `postLab`.
  *
@@ -122,6 +129,22 @@ export default function LabWorkstation() {
   const [truncated, setTruncated] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [detail, setDetail] = useState<LabRequestDetail | null>(null);
+  /*
+    A REFRESH THAT FAILS MUST NOT ERASE A CONFIRMED STATE.
+
+    After Validate succeeds the panel shows the server's own re-serialized
+    request (VALIDATED) and a background re-read follows. If that re-read
+    fails, blanking the panel into an error would hide an irreversible success
+    the server already confirmed. So a failed re-read of the request ALREADY on
+    screen keeps it, marked stale; only a failed FIRST load of a request shows
+    the error. The ref lets the async loader ask "is this the request on
+    screen?" without re-running the effect on every detail change.
+  */
+  const [detailStaleFor, setDetailStaleFor] = useState<number | null>(null);
+  const detailRef = useRef<LabRequestDetail | null>(null);
+  useEffect(() => {
+    detailRef.current = detail;
+  }, [detail]);
 
   const [deskAllowed, setDeskAllowed] = useState<boolean | null>(null);
   const [queueLoading, setQueueLoading] = useState(true);
@@ -282,6 +305,11 @@ export default function LabWorkstation() {
         if (controller.signal.aborted) return;
 
         if (!response.ok || !payload.success) {
+          if (detailRef.current?.id === requestId) {
+            // A RE-READ failed: keep the last confirmed state, marked stale.
+            setDetailStaleFor(requestId);
+            return;
+          }
           setDetail(null);
           setDetailError(
             messageFromPayload(payload, "Unable to load the selected request."),
@@ -289,8 +317,13 @@ export default function LabWorkstation() {
           return;
         }
         setDetail(payload.data.request);
+        setDetailStaleFor(null);
       } catch {
         if (!controller.signal.aborted) {
+          if (detailRef.current?.id === requestId) {
+            setDetailStaleFor(requestId);
+            return;
+          }
           setDetail(null);
           setDetailError("Unable to reach the laboratory service.");
         }
@@ -546,6 +579,77 @@ export default function LabWorkstation() {
     [refresh, writeResult],
   );
 
+  /* ---------------- validation (Slice 3B) ---------------- */
+
+  /**
+   * "Validate result": open the result ON SCREEN in validation mode. No request
+   * is made to open it -- the values are read-only and the Lab API re-checks
+   * every condition when Confirm validation is actually pressed.
+   */
+  const openValidation = useCallback(
+    (returnFocus: HTMLElement | null) => {
+      const current = visibleDetail(detail, activeId, justActedId);
+      if (!current?.result || resultEditor !== null) return;
+      if (!canValidateResult(current)) return;
+      setResultEditor({
+        request: current,
+        result: current.result,
+        readOnly: true,
+        validating: true,
+        returnFocus,
+      });
+    },
+    [activeId, detail, justActedId, resultEditor],
+  );
+
+  /**
+   * Confirm validation: ONE POST, no body, reported back to the modal.
+   *
+   * THE AUTHORITATIVE PAYLOAD WINS, AND IT IS PINNED. On success the panel shows
+   * the server's own re-serialized request (VALIDATED, still In progress) and
+   * the request is pinned with justActedId, so neither a queue refresh that
+   * returns nothing nor a detail re-read that fails can take the confirmed state
+   * off screen -- see detailStaleFor.
+   *
+   * A LOST RESPONSE IS NOT REPORTED AS "NOT VALIDATED". The server may have
+   * validated before the connection dropped, so the message says the outcome
+   * could not be confirmed and the request is re-read; a retry against a
+   * validated result gets a clean 409, never a second delivery.
+   */
+  const validateResult = useCallback(
+    async (resultId: number): Promise<LabResultOutcome> => {
+      try {
+        const { response, payload } = await postLab<LabResultResponse>(
+          validateResultPath(resultId),
+          {},
+        );
+        if (!response.ok || !payload.success) {
+          if (shouldReconcileAfterResult(codeFromPayload(payload))) refresh();
+          return {
+            ok: false,
+            message: resultErrorMessage(
+              messageFromPayload(payload, ""),
+              "The laboratory result could not be validated.",
+            ),
+          };
+        }
+        setDetail(payload.data.request);
+        setDetailStaleFor(null);
+        setJustActedId(payload.data.request.id);
+        refresh();
+        return { ok: true, result: payload.data.result };
+      } catch {
+        refresh();
+        return {
+          ok: false,
+          message:
+            "Unable to confirm the validation with the laboratory service. The request is being re-read; check its result state before trying again.",
+        };
+      }
+    },
+    [refresh],
+  );
+
   /*
     WHICH REQUEST THE PANEL MAY SHOW.
 
@@ -637,6 +741,11 @@ export default function LabWorkstation() {
             if (activeId !== null) void openResultEntry(activeId, trigger);
           }}
           onViewResult={(trigger) => viewResult(trigger)}
+          onValidateResult={(trigger) => openValidation(trigger)}
+          stale={
+            detailForSelection !== null &&
+            detailStaleFor === detailForSelection.id
+          }
           /*
             Both keyed on the ACTIVE request, so a pending collection or a
             refusal belonging to one request can never be shown against
@@ -667,6 +776,11 @@ export default function LabWorkstation() {
           returnFocus={resultEditor.returnFocus}
           onSaveDraft={(body) => saveResultDraft(resultEditor.result.id, body)}
           onMarkEntered={(body) => markResultEntered(resultEditor.result.id, body)}
+          onValidate={
+            resultEditor.validating
+              ? () => validateResult(resultEditor.result.id)
+              : undefined
+          }
           onClose={() => setResultEditor(null)}
         />
       ) : null}

@@ -77,6 +77,67 @@ export function enterResultPath(resultId: number) {
   return `/api/laboratory/results/${resultId}/enter`;
 }
 
+export function validateResultPath(resultId: number) {
+  return `/api/laboratory/results/${resultId}/validate`;
+}
+
+/* ------------------------------------------------------------------ *
+ * Validation (Slice 3B)
+ * ------------------------------------------------------------------ */
+
+/**
+ * May the panel offer "Validate result"?
+ *
+ * THE LAB API'S VALIDATION POLICY, mirrored rather than invented: the request
+ * is `in_progress`, the request has one operational result (no conflict), and
+ * that result is `entered`. Every condition is re-checked by the Lab API under
+ * lock, so a button drawn from stale data still gets a clean refusal.
+ *
+ * `sample_collected` is refused on purpose even though the model would accept
+ * it: validating there delivers the test for a result that can then never be
+ * released.
+ */
+export function canValidateResult(detail: ResultEntryContext | null | undefined) {
+  if (!detail || detail.status !== "in_progress") return false;
+  if (detail.result_conflict) return false;
+  return detail.result?.state === "entered";
+}
+
+/** The review step's instruction, shown above Cancel / Validate result…. */
+export const VALIDATION_REVIEW_TEXT =
+  "Check each value, unit and reference range against the analyser output. " +
+  "Validation confirms the result and records the test as performed. " +
+  "Values cannot be changed afterwards.";
+
+/** Stated beside the final confirmation, every time. */
+export const VALIDATION_IRREVERSIBLE_TEXT =
+  "This cannot be undone from the Laboratory Desk.";
+
+/**
+ * The final confirmation's question, naming exactly what is being validated:
+ * "Validate LABRES0096 for Selam Tesfaye (HMS11834) — CBC?"
+ *
+ * The tests are the RESULT's own lines -- code when the catalogue has one,
+ * name otherwise -- so the question describes the record that will change,
+ * not the order it came from.
+ */
+export function validationConfirmText(
+  request: { patient: { name: string; mrn: string | null } | null },
+  result: { name: string; lines: { test: { name: string; code: string | null } }[] },
+) {
+  const patient = request.patient;
+  const who = patient
+    ? patient.mrn
+      ? `${patient.name} (${patient.mrn})`
+      : patient.name
+    : "this patient";
+  const tests = result.lines
+    .map((line) => line.test.code || line.test.name)
+    .filter(Boolean)
+    .join(", ");
+  return `Validate ${result.name} for ${who}${tests ? ` — ${tests}` : ""}?`;
+}
+
 /* ------------------------------------------------------------------ *
  * The modal's draft
  * ------------------------------------------------------------------ */
@@ -242,10 +303,11 @@ export function resultModalSubtitle(request: {
  */
 export function draftStatusText(state: {
   readOnly: boolean;
-  busy: "save" | "enter" | null;
+  busy: "save" | "enter" | "validate" | null;
   changed: boolean;
   savedSinceOpen: boolean;
 }): string {
+  if (state.busy === "validate") return "Validating…";
   if (state.readOnly) return "Read only";
   if (state.busy === "save") return "Saving draft…";
   if (state.busy === "enter") return "Marking entered…";
@@ -279,6 +341,7 @@ const RESULT_RECONCILE_CODES = new Set([
   "lab_result_already_final",
   "lab_result_cancelled",
   "lab_result_not_editable",
+  "lab_result_not_validatable",
   "lab_result_not_found",
   "lab_request_not_found",
   "invalid_workflow_state",

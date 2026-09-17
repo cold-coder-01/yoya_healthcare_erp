@@ -30,8 +30,11 @@ import type { LabResult } from "@/types/lab-desk";
 
 import {
   DEFAULT_ABNORMAL_FLAG,
+  VALIDATION_IRREVERSIBLE_TEXT,
+  VALIDATION_REVIEW_TEXT,
   abnormalFlagHint,
   canEnterResults,
+  canValidateResult,
   canViewResult,
   draftFromResult,
   draftStatusText,
@@ -45,6 +48,8 @@ import {
   sampleTypeLabel,
   saveResultPath,
   shouldReconcileAfterResult,
+  validateResultPath,
+  validationConfirmText,
 } from "./lab-result-format.ts";
 
 /* ------------------------------------------------------------------ *
@@ -202,14 +207,150 @@ test("every result route is the BFF's, never Odoo's", () => {
   }
 });
 
-test("there is no validate, release, cancel or reset route helper", async () => {
+test("there is no release, cancel or reset route helper", async () => {
+  // Validation shipped in Slice 3B; the rest of the result workflow has not.
   const exported = await import("./lab-result-format.ts");
   for (const name of Object.keys(exported)) {
     assert.ok(
-      !/validate|release|cancel|reset/i.test(name),
-      `${name} suggests a workflow Slice 3 does not ship`,
+      !/release|cancel|reset|returnToDraft/i.test(name),
+      `${name} suggests a workflow the Laboratory Desk does not ship`,
     );
   }
+});
+
+/* ------------------------------------------------------------------ *
+ * Validation (Slice 3B)
+ * ------------------------------------------------------------------ */
+
+test("Validate result is offered only for an entered result on an in_progress request", () => {
+  assert.equal(
+    canValidateResult({ status: "in_progress", result: { state: "entered" }, result_conflict: false }),
+    true,
+  );
+  for (const state of ["draft", "validated", "released", "cancelled"]) {
+    assert.equal(
+      canValidateResult({ status: "in_progress", result: { state } }),
+      false,
+      `a ${state} result must not offer Validate`,
+    );
+  }
+  assert.equal(canValidateResult({ status: "in_progress", result: null }), false);
+});
+
+test("Validate result is not offered outside in_progress, even for an entered result", () => {
+  // B2 through the desk: the model would validate on sample_collected.
+  for (const status of ALL_STATUSES) {
+    if (status === "in_progress") continue;
+    assert.equal(
+      canValidateResult({ status, result: { state: "entered" } }),
+      false,
+      `${status} must not offer Validate`,
+    );
+  }
+});
+
+test("Validate result is withheld when the request has more than one result", () => {
+  assert.equal(
+    canValidateResult({ status: "in_progress", result: { state: "entered" }, result_conflict: true }),
+    false,
+  );
+  assert.equal(canValidateResult(null), false);
+  assert.equal(canValidateResult(undefined), false);
+});
+
+test("an entered result offers View and Validate, never Enter results", () => {
+  const detail = { status: "in_progress", result: { state: "entered" } };
+  assert.equal(canViewResult(detail), true);
+  assert.equal(canValidateResult(detail), true);
+  assert.equal(canEnterResults(detail), false);
+});
+
+test("a validated result offers View only", () => {
+  const detail = { status: "in_progress", result: { state: "validated" } };
+  assert.equal(canViewResult(detail), true);
+  assert.equal(canValidateResult(detail), false);
+  assert.equal(canEnterResults(detail), false);
+});
+
+test("the validate route is the BFF's", () => {
+  assert.equal(validateResultPath(96), "/api/laboratory/results/96/validate");
+  assert.ok(!validateResultPath(96).includes("yoya-emr"));
+  assert.ok(!validateResultPath(96).includes("http"));
+});
+
+test("the final confirmation names the result, patient, chart number and test", () => {
+  const source = result({ name: "LABRES0096" });
+  assert.equal(
+    validationConfirmText(
+      { patient: { name: "Selam Tesfaye", mrn: "HMS11834" } },
+      source,
+    ),
+    "Validate LABRES0096 for Selam Tesfaye (HMS11834) — CBC?",
+  );
+});
+
+test("the confirmation falls back to the test name and lists every test", () => {
+  const source = result({ name: "LABRES0100" });
+  source.lines.push({
+    ...source.lines[0],
+    id: 502,
+    test: { id: 9, name: "Urinalysis", code: null },
+  });
+  assert.equal(
+    validationConfirmText({ patient: { name: "Abebe", mrn: null } }, source),
+    "Validate LABRES0100 for Abebe — CBC, Urinalysis?",
+  );
+  assert.equal(
+    validationConfirmText({ patient: null }, source),
+    "Validate LABRES0100 for this patient — CBC, Urinalysis?",
+  );
+});
+
+test("the review and irreversibility wording is exactly the agreed copy", () => {
+  assert.equal(
+    VALIDATION_REVIEW_TEXT,
+    "Check each value, unit and reference range against the analyser output. " +
+      "Validation confirms the result and records the test as performed. " +
+      "Values cannot be changed afterwards.",
+  );
+  assert.equal(
+    VALIDATION_IRREVERSIBLE_TEXT,
+    "This cannot be undone from the Laboratory Desk.",
+  );
+});
+
+test("validation wording carries no financial vocabulary", () => {
+  const texts = [
+    VALIDATION_REVIEW_TEXT,
+    VALIDATION_IRREVERSIBLE_TEXT,
+    validationConfirmText({ patient: { name: "Selam Tesfaye", mrn: "HMS11834" } }, result()),
+    draftStatusText({ readOnly: true, busy: "validate", changed: false, savedSinceOpen: false }),
+  ];
+  for (const text of texts) {
+    for (const banned of [
+      "ETB", "amount", "balance", "outstanding", "payer", "invoice",
+      "receipt", "birr", "charge", "billing", "paid", "delivered",
+    ]) {
+      assert.ok(!text.toLowerCase().includes(banned.toLowerCase()), `${banned} in "${text}"`);
+    }
+  }
+});
+
+test("the busy status says Validating while the request is in flight", () => {
+  assert.equal(
+    draftStatusText({ readOnly: true, busy: "validate", changed: false, savedSinceOpen: false }),
+    "Validating…",
+  );
+});
+
+test("a stale validation screen reconciles; a billing or completeness refusal does not", () => {
+  assert.ok(shouldReconcileAfterResult("lab_result_not_validatable"));
+  assert.ok(shouldReconcileAfterResult("lab_result_entry_not_available"));
+  assert.ok(shouldReconcileAfterResult("lab_result_ambiguous"));
+  assert.ok(!shouldReconcileAfterResult("lab_result_validation_blocked"));
+  assert.ok(!shouldReconcileAfterResult("lab_result_incomplete"));
+  assert.ok(!shouldReconcileAfterResult("lab_result_validate_response_failed"));
+  assert.ok(!shouldReconcileAfterResult("lab_result_validate_failed"));
 });
 
 /* ------------------------------------------------------------------ *

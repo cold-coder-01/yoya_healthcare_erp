@@ -9,7 +9,11 @@ import {
   orDash,
   testCountLabel,
 } from "@/lib/lab-desk-format";
-import { canEnterResults, canViewResult } from "@/lib/lab-result-format";
+import {
+  canEnterResults,
+  canValidateResult,
+  canViewResult,
+} from "@/lib/lab-result-format";
 import type { LabRequestDetail } from "@/types/lab-desk";
 
 import { LabPriorityPill, LabStatusPill } from "./lab-status-pill";
@@ -98,9 +102,11 @@ function ClearanceBanner({ status }: { status: string }) {
 function ResultStatus({
   detail,
   onViewResult,
+  onValidateResult,
 }: {
   detail: LabRequestDetail;
   onViewResult: (trigger: HTMLElement) => void;
+  onValidateResult: (trigger: HTMLElement) => void;
 }) {
   if (detail.result_conflict) {
     return (
@@ -141,15 +147,32 @@ function ResultStatus({
           A replacement result is not started from the Laboratory Desk.
         </span>
       ) : null}
-      {canViewResult(detail) ? (
-        <button
-          type="button"
-          onClick={(event) => onViewResult(event.currentTarget)}
-          className="ml-auto inline-flex h-8 items-center rounded-md border border-slate-300 bg-white px-3 cl-secondary font-semibold text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-700"
-        >
-          View result
-        </button>
-      ) : null}
+      <div className="ml-auto flex items-center gap-2">
+        {canViewResult(detail) ? (
+          <button
+            type="button"
+            onClick={(event) => onViewResult(event.currentTarget)}
+            className="inline-flex h-8 items-center rounded-md border border-slate-300 bg-white px-3 cl-secondary font-semibold text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-700"
+          >
+            View result
+          </button>
+        ) : null}
+        {/*
+          VALIDATE RESULT (Slice 3B). Offered only for an entered result on an
+          in_progress request with no conflict -- the Lab API's policy, which it
+          re-checks under lock. It opens the sheet read-only; nothing is sent
+          until Confirm validation, two steps later.
+        */}
+        {canValidateResult(detail) ? (
+          <button
+            type="button"
+            onClick={(event) => onValidateResult(event.currentTarget)}
+            className="inline-flex h-8 items-center rounded-md bg-indigo-700 px-3 cl-secondary font-semibold text-white shadow-sm hover:bg-indigo-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-700"
+          >
+            Validate result
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -163,6 +186,8 @@ export default function LabRequestPanel({
   onStartProcessing,
   onEnterResults,
   onViewResult,
+  onValidateResult,
+  stale,
   pending,
   actionError,
 }: {
@@ -179,6 +204,14 @@ export default function LabRequestPanel({
   onEnterResults: (trigger: HTMLElement) => void;
   /** Opens the existing result read-only. */
   onViewResult: (trigger: HTMLElement) => void;
+  /** Opens the entered result read-only, in validation mode. */
+  onValidateResult: (trigger: HTMLElement) => void;
+  /**
+   * The last re-read of THIS request failed; what is shown is the last state
+   * the server confirmed. Stated, never hidden, and never replaced with an
+   * error that would erase a confirmed validation.
+   */
+  stale: boolean;
   /** A transition is in flight for THIS request. */
   pending: boolean;
   /** The server's own refusal sentence, already sanitised by the Lab API. */
@@ -252,6 +285,11 @@ export default function LabRequestPanel({
         </div>
         {loading ? (
           <p className="mt-1 cl-meta text-slate-500">Updating…</p>
+        ) : null}
+        {stale ? (
+          <p role="status" className="mt-1 cl-meta font-semibold text-amber-800">
+            Could not refresh this request. Showing the last confirmed state.
+          </p>
         ) : null}
       </header>
 
@@ -357,7 +395,11 @@ export default function LabRequestPanel({
           </div>
         ) : null}
 
-        <ResultStatus detail={detail} onViewResult={onViewResult} />
+        <ResultStatus
+          detail={detail}
+          onViewResult={onViewResult}
+          onValidateResult={onValidateResult}
+        />
 
         {/*
           The refusal. The server's own sentence is shown because it is the only
@@ -495,8 +537,8 @@ export default function LabRequestPanel({
         buttons for workflow that has not shipped.
       */}
       <footer className="flex h-7 shrink-0 items-center gap-2 border-t border-slate-200 bg-slate-50 px-3 cl-meta text-slate-500">
-        Sample collection, processing and result entry. Validation and release
-        are not available yet.
+        Sample collection, processing, result entry and validation. Release is
+        not available yet.
       </footer>
     </section>
   );

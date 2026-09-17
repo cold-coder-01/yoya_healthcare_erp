@@ -172,7 +172,7 @@ test("Ctrl/Cmd+Enter marks entered, and bare Enter is left alone", () => {
  * ------------------------------------------------------------------ */
 
 const SAVE_DRAFT = block(MODAL, "const saveDraft = useCallback(", "const markEntered = useCallback(");
-const MARK_ENTERED = block(MODAL, "const markEntered = useCallback(", "/* ---------------- keyboard");
+const MARK_ENTERED = block(MODAL, "const markEntered = useCallback(", "/* ---------------- validation (Slice 3B)");
 
 test("Save draft stays open and confirms only what the server accepted", () => {
   assert.ok(!SAVE_DRAFT.includes("onClose("), "Save draft must never close the sheet");
@@ -232,8 +232,11 @@ test("the abnormal flag offers the model's options and names the default honestl
 });
 
 test("a read-only sheet offers no save and no entry", () => {
-  assert.ok(MODAL.includes("{readOnly ? null : ("));
-  assert.ok(MODAL.includes('{readOnly ? "Close" : "Cancel"}'));
+  // Save draft / Mark entered render only when neither validating nor read-only.
+  assert.ok(MODAL.includes(") : readOnly ? null : ("));
+  // A plain read-only sheet says Close; the validation sheet says Cancel
+  // because it still has an act to cancel.
+  assert.ok(MODAL.includes('{readOnly && !validating ? "Close" : "Cancel"}'));
   assert.ok(MODAL.includes("Read only"));
 });
 
@@ -306,20 +309,20 @@ test("the panel never renders entry as a disabled control for the wrong status",
  * 6. Slice 3 stops at entered
  * ------------------------------------------------------------------ */
 
-test("no validate, release, cancel or reset control exists in the laboratory tree", () => {
+test("no release, cancel or reset control exists in the laboratory tree", () => {
+  // Validate arrived with Slice 3B and is held by the validation tests below.
   for (const [name, source] of LAB_TREE) {
     const emitted = code(source);
     for (const pattern of [
-      />\s*Validate\b/,
       />\s*Release\b/,
+      />\s*Release result\b/,
       />\s*Reset to draft\b/,
-      /"Validate"/,
+      />\s*Return to draft\b/,
       /"Release"/,
-      /\/validate\b/,
       /\/release\b/,
       /\/cancel\b/,
       /\/reset/,
-      /onValidate|onRelease|onReset|onCancelResult/,
+      /onRelease|onReset|onCancelResult|onReturnToDraft/,
     ]) {
       assert.ok(!pattern.test(emitted), `${name} matches ${pattern}`);
     }
@@ -356,4 +359,176 @@ test("no financial vocabulary is rendered by the result sheet or its status", ()
   for (const banned of ["amount", "balance", "outstanding", "invoice", "receipt", "payer", "birr", "etb", "cashier"]) {
     assert.ok(!new RegExp(`\\b${banned}\\b`).test(rendered), banned);
   }
+});
+
+/* ------------------------------------------------------------------ *
+ * 7. Validation (Slice 3B)
+ *
+ * Validation delivers the test to billing and cannot be undone from the desk.
+ * These hold the properties that make it safe to put one button away from a
+ * technician: the same lab-owned sheet, read-only; two deliberate steps; no key
+ * that performs the final act; the server's refusal kept inside the sheet; and
+ * a confirmed success that no later refresh can take off the screen.
+ * ------------------------------------------------------------------ */
+
+const ASK = block(MODAL, "const askToConfirmValidation = useCallback(", "const confirmValidation = useCallback(");
+const CONFIRM = block(MODAL, "const confirmValidation = useCallback(", "Focus follows the step.");
+const KEYBOARD = block(MODAL, "function onKeyDown(event: KeyboardEvent)", "document.addEventListener");
+
+test("validation is a mode of the SAME lab-owned sheet, not another dialog", () => {
+  assert.equal(count(MODAL, /role="dialog"/g), 1, "one dialog element, one shell");
+  assert.ok(MODAL.includes("const validating = onValidate !== undefined;"));
+  assert.ok(MODAL.includes('"Validate laboratory result"'));
+  assert.ok(WORKSTATION.includes("<LabResultModal"));
+  assert.equal(count(WORKSTATION, /<LabResultModal/g), 1, "the workstation renders one sheet");
+  for (const [name, source] of LAB_TREE) {
+    assert.ok(!code(source).includes("window.confirm"), `${name} must not use a browser confirm`);
+  }
+});
+
+test("the validation sheet is read-only", () => {
+  const opener = block(WORKSTATION, "const openValidation = useCallback(", "const validateResult = useCallback(");
+  assert.ok(opener.includes("readOnly: true"));
+  assert.ok(opener.includes("validating: true"));
+  assert.ok(opener.includes("canValidateResult(current)"));
+  // Every value field is bound to readOnly; the flag select to disabled.
+  assert.ok(count(MODAL, /readOnly=\{readOnly\}/g) >= 6);
+  assert.ok(MODAL.includes("disabled={readOnly || fieldsDisabled}"));
+  // Save and Mark entered are not rendered in validation mode.
+  const footer = MODAL.slice(MODAL.indexOf("{/* ---- Footer ---- */}"));
+  assert.ok(footer.indexOf("{validating ? (") < footer.indexOf('"Save draft"'));
+  assert.ok(footer.includes(") : readOnly ? null : ("));
+});
+
+test("step one moves to confirmation and never validates", () => {
+  assert.ok(ASK.includes('setValidationStep("confirm")'));
+  assert.ok(!ASK.includes("onValidate("), "Validate result… must not send anything");
+  assert.ok(MODAL.includes("onClick={askToConfirmValidation}"));
+  assert.ok(MODAL.includes("Validate result…"));
+});
+
+test("only Confirm validation sends the request, and only from the confirmation step", () => {
+  assert.ok(CONFIRM.includes('validationStep !== "confirm"'));
+  assert.ok(CONFIRM.includes("await onValidate()"));
+  assert.equal(count(MODAL, /onValidate\(\)/g), 1, "exactly one call site for the validation");
+  assert.ok(MODAL.includes("onClick={() => void confirmValidation()}"));
+  assert.equal(count(MODAL, /confirmValidation\(\)/g), 1, "no keyboard or effect path calls it");
+  assert.ok(MODAL.includes(">\n                  {busy === \"validate\" ? \"Validating…\" : \"Confirm validation\"}") ||
+    MODAL.includes('"Confirm validation"'));
+});
+
+test("Ctrl/Cmd+Enter can reach the confirmation step but never performs validation", () => {
+  const validatingBranch = KEYBOARD.slice(KEYBOARD.indexOf("if (validating) {"));
+  assert.ok(validatingBranch.includes("askToConfirmValidation()"));
+  assert.ok(!KEYBOARD.includes("confirmValidation()"), "no key performs the final act");
+  // The validating branch returns before the Mark entered shortcut.
+  const branchEnd = validatingBranch.indexOf("return;");
+  assert.ok(branchEnd > 0);
+  assert.ok(validatingBranch.indexOf("void markEntered()") > branchEnd);
+});
+
+test("Escape in the confirmation step goes back instead of closing", () => {
+  assert.ok(KEYBOARD.includes('if (validating && validationStep === "confirm") {'));
+  assert.ok(KEYBOARD.includes('if (!isBusy) setValidationStep("review")'));
+});
+
+test("focus lands on Go back, never on the final button", () => {
+  assert.ok(MODAL.includes('if (validationStep === "confirm") goBackRef.current?.focus();'));
+  assert.ok(MODAL.includes("ref={goBackRef}"));
+  const confirmButton = MODAL.slice(
+    MODAL.indexOf("onClick={() => void confirmValidation()}") - 200,
+    MODAL.indexOf("onClick={() => void confirmValidation()}"),
+  );
+  assert.ok(!confirmButton.includes("ref="), "the final button must not take focus");
+  assert.ok(!code(MODAL).includes("autoFocus"));
+});
+
+test("the final confirmation names the result, patient and tests, and says it is irreversible", () => {
+  assert.ok(MODAL.includes("{validationConfirmText(request, result)}"));
+  assert.ok(MODAL.includes("VALIDATION_IRREVERSIBLE_TEXT"));
+  assert.ok(MODAL.includes("{VALIDATION_REVIEW_TEXT}"));
+  assert.ok(MODAL.includes("Go back"));
+});
+
+test("a refusal stays in the sheet, returns to review, and always clears busy", () => {
+  assert.ok(CONFIRM.includes("setError(outcome.message)"));
+  assert.ok(CONFIRM.includes('setValidationStep("review")'));
+  assert.ok(CONFIRM.includes("finally {"));
+  assert.ok(CONFIRM.includes("setBusy(null)"));
+  assert.ok(CONFIRM.includes("if (shouldCloseAfterSave(ok)) onClose();"));
+  assert.equal(count(CONFIRM, /onClose\(/g), 1, "the sheet closes only on success");
+  assert.ok(MODAL.includes("else if (error) reviewActionRef.current?.focus();"));
+});
+
+test("busy disables every way out and both confirmation buttons", () => {
+  assert.ok(CONFIRM.includes('setBusy("validate")'));
+  assert.ok(CONFIRM.includes("busy !== null"));
+  const confirmStep = MODAL.slice(
+    MODAL.indexOf('validating && validationStep === "confirm" ? ('),
+    MODAL.indexOf("{validating ? (", MODAL.indexOf('validating && validationStep === "confirm" ? (')),
+  );
+  assert.equal(count(confirmStep, /disabled=\{isBusy\}/g), 2, "Go back and Confirm validation");
+  assert.ok(MODAL.includes("closeIntent({ readOnly, changed, busy: isBusy })"), "X, Cancel, backdrop blocked while busy");
+});
+
+test("the workstation sends ONE bodiless validation POST to the BFF", () => {
+  const validator = block(WORKSTATION, "const validateResult = useCallback(", "WHICH REQUEST THE PANEL MAY SHOW.");
+  assert.ok(validator.includes("postLab<LabResultResponse>("));
+  assert.ok(validator.includes("validateResultPath(resultId),\n          {},") || validator.includes("validateResultPath(resultId)"));
+  assert.equal(count(validator, /postLab</g), 1);
+  assert.ok(!validator.includes("saveResultPath(") && !validator.includes("enterResultPath("));
+  assert.ok(WORKSTATION.includes("resultEditor.validating"));
+});
+
+test("success shows the authoritative VALIDATED request and pins it", () => {
+  const validator = block(WORKSTATION, "const validateResult = useCallback(", "WHICH REQUEST THE PANEL MAY SHOW.");
+  assert.ok(validator.includes("setDetail(payload.data.request)"));
+  assert.ok(validator.includes("setJustActedId(payload.data.request.id)"));
+  assert.ok(validator.includes("return { ok: true, result: payload.data.result }"));
+});
+
+test("a failed re-read keeps the confirmed state on screen instead of erasing it", () => {
+  const loader = block(WORKSTATION, "async function loadRequest(requestId: number)", "void loadRequest(activeId);");
+  assert.equal(
+    count(loader, /if \(detailRef\.current\?\.id === requestId\) \{/g), 2,
+    "both the refused and the unreachable re-read must keep the request",
+  );
+  assert.equal(count(loader, /setDetailStaleFor\(requestId\)/g), 2);
+  // The keep-branch returns before anything is cleared.
+  for (const branch of loader.split("if (detailRef.current?.id === requestId) {").slice(1)) {
+    const keep = branch.slice(0, branch.indexOf("}"));
+    assert.ok(keep.includes("return;"));
+    assert.ok(!keep.includes("setDetail(null)"));
+  }
+  assert.ok(WORKSTATION.includes("detailStaleFor === detailForSelection.id"));
+  assert.ok(PANEL.includes("Could not refresh this request. Showing the last confirmed state."));
+});
+
+test("a lost validation response is not reported as 'not validated'", () => {
+  const validator = block(WORKSTATION, "const validateResult = useCallback(", "WHICH REQUEST THE PANEL MAY SHOW.");
+  const transport = validator.slice(validator.indexOf("} catch {"));
+  assert.ok(transport.includes("refresh()"), "re-read so the true state is shown");
+  assert.ok(!transport.toLowerCase().includes("was not validated"));
+});
+
+test("the panel offers View and Validate for entered, and View alone once validated", () => {
+  assert.ok(PANEL.includes("canValidateResult(detail) ? ("));
+  assert.ok(PANEL.includes("canViewResult(detail) ? ("));
+  assert.ok(PANEL.includes("onValidateResult(event.currentTarget)"));
+  assert.ok(PANEL.includes(">\n            Validate result\n") || PANEL.includes("Validate result"));
+  assert.ok(!PANEL.includes("disabled={!canValidateResult"));
+  assert.ok(PANEL.includes("Release is\n        not available yet.") || PANEL.includes("Release is"));
+});
+
+test("the validation opener sends nothing; only confirmation does", () => {
+  const opener = block(WORKSTATION, "const openValidation = useCallback(", "const validateResult = useCallback(");
+  assert.ok(!opener.includes("postLab("));
+  assert.ok(!opener.includes("fetch("));
+});
+
+test("the modal still performs no fetch for validation", () => {
+  const emitted = code(MODAL);
+  assert.ok(!emitted.includes("fetch("));
+  assert.ok(!emitted.includes("/validate"));
+  assert.ok(!emitted.includes("yoya-emr"));
 });

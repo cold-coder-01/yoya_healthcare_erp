@@ -11,10 +11,12 @@ NOTHING ABOUT WORKFLOW. The mutations:
     .../results/<id>/save               allow-listed entry fields, draft only
     .../results/<id>/enter              the same fields, then
                                         action_mark_entered(), atomically
+    .../results/<id>/validate           action_validate(), atomically, with
+                                        its billing refusals sanitized
 
 No state is ever written here, no state machine is restated, and nothing calls
-sudo(). Validation, release, cancellation and reset-to-draft are further model
-methods that this API deliberately does NOT expose.
+sudo(). Release, cancellation and reset-to-draft are further model methods that
+this API deliberately does NOT expose.
 
 RESULT ENTRY ADDS DESK POLICY, NOT BUSINESS RULES. The model accepts a result
 against a request that is sample_collected OR in_progress, and allows several
@@ -403,6 +405,36 @@ RESULT_NOT_EDITABLE_MESSAGE = (
     "Nothing has been changed."
 )
 
+# Validation (Slice 3B). Same desk policy as entry, worded for the act.
+RESULT_VALIDATION_CLOSED_MESSAGE = (
+    "Results are validated on the Laboratory Desk only while the request is In "
+    "progress. Request %s is %s. Nothing has been changed."
+)
+RESULT_NOT_VALIDATABLE_MESSAGE = (
+    "Result %s is %s. Only an entered result can be validated. Nothing has "
+    "been changed."
+)
+
+# THE ONE SENTENCE A VALIDATION REFUSAL FROM BEYOND THE COMPLETENESS GATE GETS.
+#
+# WHY NOTHING PAST THAT GATE IS FORWARDED. action_validate() is overridden by
+# hospital_billing: after the clinical transition it resolves each result line
+# to its ordered request line and delivers that line's charge through
+# hospital.billing.engine. Every refusal on that path is written for billing
+# staff -- "It cannot be validated against a charge", "Charge CHRG... is
+# invoiced", engine and charge-line constraint text -- and the charge model
+# carries constraints whose messages name sums. None of it is safe to show a
+# bench, and none of it is something a technician can act on.
+#
+# FIXED AND ROLE-INDEPENDENT, for the reason CLEARANCE_REFUSED_MESSAGE gives: a
+# manager and a system administrator are Lab Desk roles too, and must not
+# receive richer financial text than the technician beside them. The original
+# is logged server-side and never reaches the response.
+VALIDATION_BLOCKED_MESSAGE = (
+    "The laboratory result could not be validated. Nothing was changed. Ask a "
+    "laboratory manager to review this request."
+)
+
 
 def _lock_row(env, table, record_id):
     """Take the row lock for one record, AFTER flushing pending ORM writes.
@@ -705,6 +737,146 @@ def _run_result_action(env, result, action, failure_code, failure_message):
                 env.uid,
             )
             raise TransitionResponseError(failure_code, failure_message) from error
+
+
+def _validatable_result(env, result):
+    """Lock, then apply the Laboratory Desk's validation policy. Writes nothing.
+
+    LOCK ORDER: REQUEST, THEN RESULT. The request row is the one completion
+    (and, later, release) serializes on -- _evaluate_completion takes it FOR
+    UPDATE -- so every desk action that holds both takes the request first and
+    two of them can never wait on each other in opposite orders.
+
+    WHAT IS RE-CHECKED UNDER THE LOCK, all four before anything is written:
+
+      1. the request is in_progress   -- B2: validating on sample_collected
+                                         delivers the charge of a result that
+                                         can then never be released
+      2. the request has exactly ONE  -- B3 and the cancelled-sibling gap: a
+         result                          second result (cancelled or not) makes
+                                         completion impossible later
+      3. that result is THIS result   -- the id in the URL is the operational one
+      4. this result is entered       -- the model's own source state
+
+    The first two are desk policy, deliberately narrower than the model, and
+    they are what make B2 and B3 unreachable through the Laboratory Desk.
+    """
+    request_record = result.request_id
+    _lock_row(env, "hospital_laboratory_request", request_record.id)
+    _lock_row(env, "hospital_laboratory_result", result.id)
+    request_record.invalidate_recordset()
+    result.invalidate_recordset()
+
+    if request_record.state != RESULT_ENTRY_REQUEST_STATE:
+        raise ApiError(
+            "lab_result_entry_not_available",
+            RESULT_VALIDATION_CLOSED_MESSAGE
+            % (request_record.name, _state_label(request_record)),
+            422,
+        )
+    results = lab_desk_results(request_record)
+    _assert_single_result(request_record, results)
+    if results != result:
+        raise ApiError(
+            "lab_result_ambiguous",
+            RESULT_AMBIGUOUS_MESSAGE % (request_record.name, len(results)),
+            409,
+        )
+    if result.state != "entered":
+        raise ApiError(
+            "lab_result_not_validatable",
+            RESULT_NOT_VALIDATABLE_MESSAGE % (result.name, _state_label(result)),
+            409,
+        )
+    return request_record
+
+
+def _run_validation(env, result):
+    """Validate ONE result and build its response inside ONE savepoint.
+
+    THREE GATES, EACH WITH ITS OWN ANSWER, all inside the same savepoint:
+
+      A. COMPLETENESS, with linkage tolerated -- the model's own
+         _check_lines_consistent(require_linkage=False, require_complete=True).
+         Its refusal names tests and the request only, so it is forwarded as
+         `lab_result_incomplete`: "no result value entered for: CBC" is
+         something the technician can act on. Nothing is restated here.
+
+      B. LINKAGE -- the same method with require_linkage=True. Having passed A,
+         a refusal here can only be a result line that is not tied to its
+         ordered request line: the condition hospital_billing then turns into
+         "cannot be validated against a charge". Fixed message.
+
+      C. action_validate() and an explicit flush. The base method writes
+         `validated`; hospital_billing's override delivers the charge through
+         the engine under sudo. ANY refusal from here on -- billing engine,
+         charge constraint, line resolution, even an access error on a billing
+         record -- is replaced with VALIDATION_BLOCKED_MESSAGE. The flush is
+         what makes a stored-field or constraint failure surface HERE, inside
+         the mapping, rather than at savepoint exit where it would escape as
+         an unclassified error.
+
+    ROLLBACK IS THE SAVEPOINT'S. hospital.laboratory.result.action_validate()
+    writes the result state BEFORE it delivers, and has no rollback of its own.
+    A failure in delivery, or in building the response, therefore rolls back
+    the result state, the charge's qty_delivered / delivery_state /
+    delivered_at, and every audit row written on the way -- there is never a
+    validated result or a delivered charge behind an error.
+
+    Concurrency failures are re-raised untouched so Odoo can replay the request.
+    """
+    try:
+        with env.cr.savepoint():
+            result._check_lines_consistent(require_linkage=False, require_complete=True)
+            try:
+                result._check_lines_consistent(require_linkage=True, require_complete=True)
+            except ValidationError as error:
+                _logger.warning(
+                    "Laboratory validation refused on linkage for result=%s uid=%s: %s",
+                    result.id, env.uid, error,
+                )
+                raise ApiError(
+                    "lab_result_validation_blocked", VALIDATION_BLOCKED_MESSAGE, 422
+                ) from error
+
+            try:
+                result.action_validate()
+                env.flush_all()
+            except PG_CONCURRENCY_EXCEPTIONS_TO_RETRY:
+                raise
+            except UserError as error:
+                # UserError covers ValidationError and AccessError too.
+                _logger.warning(
+                    "Laboratory validation blocked for result=%s uid=%s: %s",
+                    result.id, env.uid, error,
+                )
+                raise ApiError(
+                    "lab_result_validation_blocked", VALIDATION_BLOCKED_MESSAGE, 422
+                ) from error
+
+            try:
+                env.invalidate_all()
+                return {
+                    "result": serialize_operational_result(result),
+                    "request": serialize_request_detail(result.request_id),
+                }
+            except PG_CONCURRENCY_EXCEPTIONS_TO_RETRY:
+                raise
+            except Exception as error:
+                _logger.exception(
+                    "Laboratory validation response failed for result=%s uid=%s; "
+                    "rolling the validation back",
+                    result.id,
+                    env.uid,
+                )
+                raise TransitionResponseError(
+                    "lab_result_validate_response_failed",
+                    "The result was not validated because the confirmation could "
+                    "not be produced. Nothing was changed. Please retry.",
+                ) from error
+    except ValidationError as error:
+        # Gate A: the model's completeness refusal. Tests and request only.
+        raise ApiError("lab_result_incomplete", str(error), 422) from error
 
 
 def _limit_param(raw):
@@ -1404,6 +1576,64 @@ class YoyaEmrLaboratoryController(http.Controller):
             raise ApiError("lab_result_incomplete", str(error), 422) from error
         except UserError as error:
             raise ApiError("invalid_workflow_state", str(error), 422) from error
+
+        payload["capabilities"] = lab_desk_capability_flags(env)
+        return success_response(payload)
+
+    # ------------------------------------------------------------------
+    # 9. Result validation (Slice 3B)
+    # ------------------------------------------------------------------
+    @http.route(
+        "%s/results/<int:result_id>/validate" % LAB_API,
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @lab_endpoint
+    def validate_result(self, result_id, **params):
+        """entered -> validated. THE CONTROLLER DECIDES NOTHING ABOUT BILLING.
+
+        It resolves the result through the caller's own record rules, applies
+        the Laboratory Desk's validation policy under lock
+        (_validatable_result), and calls ONE authoritative model method:
+
+            hospital.laboratory.result.action_validate()
+
+        WHAT THAT METHOD DOES, VERIFIED FROM SOURCE. The base method re-runs the
+        full completeness check and writes `validated`; hospital_billing's
+        override then delivers each ordered test's charge through
+        hospital.billing.engine -- qty_delivered 0 -> 1, delivery_state
+        delivered, delivered_at set. It creates no invoice and no accounting
+        entry, does not release the result, does not complete the request, and
+        does not make anything visible to the Doctor Desk. No charge method is
+        called from here, and no billing rule is restated.
+
+        THE BODY IS IGNORED. Validation changes no value: an entered result is
+        read-only on the desk, and correcting it is not this route's business.
+
+        REFUSALS:
+
+          lab_result_not_found            404  unknown or unreadable result
+          lab_result_entry_not_available  422  request is not in_progress
+          lab_result_ambiguous            409  the request has another result
+          lab_result_not_validatable      409  the result is not entered
+          lab_result_incomplete           422  the model's completeness check
+          lab_result_validation_blocked   422  linkage, billing or charge refusal;
+                                               FIXED text, see
+                                               VALIDATION_BLOCKED_MESSAGE
+          lab_result_validate_response_failed
+                                          500  rolled back; nothing changed
+
+        IDEMPOTENCY. The request and result rows are locked and the state
+        re-read, so a double-click finds the result already validated (409) --
+        a concurrent one is replayed by Odoo after the first commits and gets
+        the same answer. The engine's delivery is idempotent as well, so a
+        replay can never deliver twice.
+        """
+        env = request.env
+        _require_lab_desk(env)
+
+        result = _load_result(env, result_id)
+        _validatable_result(env, result)
+        payload = _run_validation(env, result)
 
         payload["capabilities"] = lab_desk_capability_flags(env)
         return success_response(payload)
