@@ -1,26 +1,48 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
+
 import { formatHospitalDate, formatHospitalDateTime } from "@/lib/clinical-format";
 import {
+  SCHEDULE_SUPPORT_TEXT,
+  START_SUPPORT_TEXT,
   ageSexLabel,
+  canScheduleStudy,
+  canStartExam,
   clearanceNotice,
   examLabel,
   fileSizeLabel,
   orDash,
   reviewMessage,
+  scheduleConfirmText,
+  startConfirmText,
   studyCountLabel,
 } from "@/lib/rad-desk-format";
-import type { RadOperationalResult, RadRequestDetail } from "@/types/rad-desk";
+import type {
+  RadDeskCapabilities,
+  RadOperationalResult,
+  RadRequestDetail,
+  RadTransitionKind,
+} from "@/types/rad-desk";
 
 import { RadLanePill, RadPriorityPill, RadReportStatePill } from "./rad-status-pill";
 
 /**
- * The Radiology Desk request panel. READ ONLY, and it renders no control.
+ * The Radiology Desk request panel.
  *
- * NOT EVEN A DISABLED BUTTON. Scheduling, starting a study, reporting,
- * validation, release and image upload are later slices; a greyed-out button
- * is a promise about workflow that has not shipped, and the first thing anyone
- * does with one is click it.
+ * TWO ACTIONS, EACH FOR EXACTLY ONE LANE (Slice 2): Schedule study for a clear
+ * request in To schedule, Start exam for a clear request in Ready to start. No
+ * lane offers both, and every other lane offers nothing -- not even a disabled
+ * button. Reporting, validation, release and image upload are later slices, and
+ * a greyed-out button is a promise about workflow that has not shipped.
+ *
+ * THE BUTTON IS AN AFFORDANCE, NOT A PERMISSION. It renders from the server's
+ * own lane and flags; the endpoint re-checks the same policy under a row lock.
+ *
+ * EACH ACTION NEEDS AN EXPLICIT SECOND CLICK. The first opens a compact
+ * confirmation naming the request, the patient and the study; only "Confirm"
+ * sends anything. Escape cancels, focus lands on Cancel, and no keyboard
+ * shortcut performs the final step.
  *
  * NOTHING PRICED APPEARS HERE. A request awaiting clearance says so in one
  * amount-free sentence; `billing_blocked` is the only billing value in the
@@ -94,6 +116,97 @@ function Banner({ tone, children }: { tone: "amber" | "red"; children: React.Rea
         !
       </span>
       <p className="font-semibold">{children}</p>
+    </div>
+  );
+}
+
+/**
+ * One transition: its button, then its confirmation.
+ *
+ * KEYED BY REQUEST AND KIND at the call site, so selecting another request
+ * remounts it closed rather than carrying an open confirmation across.
+ */
+function TransitionAction({
+  kind,
+  detail,
+  pending,
+  onConfirm,
+}: {
+  kind: RadTransitionKind;
+  detail: RadRequestDetail;
+  pending: boolean;
+  onConfirm: (requestId: number) => Promise<boolean>;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+
+  const label = kind === "schedule" ? "Schedule study" : "Start exam";
+  const confirmLabel = kind === "schedule" ? "Confirm schedule" : "Confirm start";
+  const question = kind === "schedule" ? scheduleConfirmText(detail) : startConfirmText(detail);
+  const support = kind === "schedule" ? SCHEDULE_SUPPORT_TEXT : START_SUPPORT_TEXT;
+
+  // Focus lands on CANCEL, never on the step that changes the record.
+  useEffect(() => {
+    if (confirming) cancelRef.current?.focus();
+  }, [confirming]);
+
+  if (!confirming) {
+    return (
+      <button
+        type="button"
+        onClick={() => setConfirming(true)}
+        disabled={pending}
+        className="rounded border border-teal-700 bg-teal-700 px-3 py-1.5 cl-secondary font-bold text-white hover:bg-teal-800 disabled:opacity-50"
+      >
+        {label}
+      </button>
+    );
+  }
+
+  return (
+    <div
+      role="alertdialog"
+      aria-label={label}
+      aria-describedby={`rad-confirm-${kind}-${detail.id}`}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && !pending) {
+          event.preventDefault();
+          setConfirming(false);
+        }
+        // No shortcut performs the final step: it takes a deliberate click.
+        if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+          event.preventDefault();
+        }
+      }}
+      className="flex flex-col gap-2 rounded border border-teal-300 bg-teal-50 px-3 py-2"
+    >
+      <p id={`rad-confirm-${kind}-${detail.id}`} className="cl-body font-semibold text-slate-900">
+        {question}
+      </p>
+      <p className="cl-secondary text-slate-600">{support}</p>
+      <div className="flex items-center gap-2">
+        <button
+          ref={cancelRef}
+          type="button"
+          onClick={() => setConfirming(false)}
+          disabled={pending}
+          className="rounded border border-slate-300 bg-white px-3 py-1.5 cl-secondary font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={async () => {
+            if (pending) return;
+            const done = await onConfirm(detail.id);
+            if (done) setConfirming(false);
+          }}
+          disabled={pending}
+          className="rounded border border-teal-700 bg-teal-700 px-3 py-1.5 cl-secondary font-bold text-white hover:bg-teal-800 disabled:opacity-50"
+        >
+          {pending ? "Working…" : confirmLabel}
+        </button>
+      </div>
     </div>
   );
 }
@@ -189,12 +302,30 @@ export default function RadRequestPanel({
   error,
   empty,
   stale,
+  capabilities,
+  pending,
+  actionError,
+  outcome,
+  refreshWarning,
+  onSchedule,
+  onStart,
 }: {
   detail: RadRequestDetail | null;
   loading: boolean;
   error: string | null;
   empty: boolean;
   stale: boolean;
+  /** From the session: which acts this ROLE may attempt. */
+  capabilities: RadDeskCapabilities | null;
+  /** A transition for THIS request is in flight. */
+  pending: boolean;
+  actionError: string | null;
+  /** The server-confirmed outcome for the request just acted on. */
+  outcome: string | null;
+  /** The queue could not be refreshed after a confirmed action. */
+  refreshWarning: boolean;
+  onSchedule: (requestId: number) => Promise<boolean>;
+  onStart: (requestId: number) => Promise<boolean>;
 }) {
   if (error) {
     return (
@@ -236,6 +367,8 @@ export default function RadRequestPanel({
 
   const clearance = clearanceNotice(detail.lane);
   const review = reviewMessage(detail);
+  const offerSchedule = capabilities?.schedule_study === true && canScheduleStudy(detail);
+  const offerStart = capabilities?.start_exam === true && canStartExam(detail);
 
   return (
     <section className="flex min-h-[340px] min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm min-[1100px]:min-h-0">
@@ -264,6 +397,42 @@ export default function RadRequestPanel({
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-3 py-3">
         {review ? <Banner tone="red">{review}</Banner> : null}
         {clearance ? <Banner tone="amber">{clearance}</Banner> : null}
+
+        {outcome ? (
+          <div role="status" className="rounded border border-emerald-300 bg-emerald-50 px-3 py-2 cl-secondary font-semibold text-emerald-900">
+            {outcome}
+          </div>
+        ) : null}
+        {refreshWarning ? (
+          <Banner tone="amber">
+            The action was confirmed, but the queue could not be refreshed. This
+            request is shown as the server confirmed it. Use Refresh to reload the
+            queue.
+          </Banner>
+        ) : null}
+        {actionError ? (
+          <p role="alert" className="rounded border border-red-300 bg-red-50 px-3 py-2 cl-secondary font-semibold text-red-900">
+            {actionError}
+          </p>
+        ) : null}
+        {offerSchedule ? (
+          <TransitionAction
+            key={`schedule-${detail.id}`}
+            kind="schedule"
+            detail={detail}
+            pending={pending}
+            onConfirm={onSchedule}
+          />
+        ) : null}
+        {offerStart ? (
+          <TransitionAction
+            key={`start-${detail.id}`}
+            kind="start"
+            detail={detail}
+            pending={pending}
+            onConfirm={onStart}
+          />
+        ) : null}
 
         <dl className="grid grid-cols-2 gap-x-4 gap-y-2 min-[700px]:grid-cols-4">
           <Field label="Ordering doctor" value={orDash(detail.ordering_physician?.name)} />
@@ -341,7 +510,7 @@ export default function RadRequestPanel({
       </div>
 
       <footer className="flex h-7 shrink-0 items-center border-t border-slate-200 bg-slate-50 px-3 cl-meta text-slate-500">
-        Read-only view. Workflow actions are not available on this desk yet.
+        Schedule and start only. Reporting, images, validation and release are not available on this desk yet.
       </footer>
     </section>
   );

@@ -21,7 +21,12 @@ import {
   RAD_DESK_ACTIVE_LANE_ORDER,
   RAD_DESK_LANE_ORDER,
   RAD_SESSION_PATH,
+  SCHEDULE_SUPPORT_TEXT,
+  START_SUPPORT_TEXT,
+  activeSelection,
   ageSexLabel,
+  canScheduleStudy,
+  canStartExam,
   clearanceNotice,
   deskRoleLabel,
   detailIsLoading,
@@ -43,7 +48,16 @@ import {
   requestPath,
   resolveSelection,
   reviewMessage,
+  scheduleConfirmText,
+  schedulePath,
+  shouldReconcileAfterTransition,
+  startConfirmText,
+  startPath,
   studyCountLabel,
+  studyPhrase,
+  transitionErrorMessage,
+  transitionOutcomeText,
+  transitionPath,
   visibleDetail,
   worklistPath,
 } from "./rad-desk-format.ts";
@@ -353,6 +367,26 @@ test("a detail payload only renders against its own request", () => {
   assert.equal(visibleDetail(loaded, null), null);
 });
 
+test("a request just acted on stays the active request while pinned", () => {
+  const rows = [row({ id: 5 }), row({ id: 9 })];
+  // Scheduling moved 411 out of the lane on screen: the pin still holds it.
+  assert.equal(activeSelection(rows, 411, 411), 411);
+  assert.equal(activeSelection(rows, 9, 411), 411);
+  assert.equal(activeSelection([], null, 411), 411);
+  // Without a pin it is ordinary selection.
+  assert.equal(activeSelection(rows, 9, null), 9);
+  assert.equal(activeSelection(rows, 411, null), 5);
+});
+
+test("the confirmed detail renders for the pinned request, and only for it", () => {
+  const confirmed = detail({ id: 411, state: "scheduled", lane: "ready_to_start" });
+  assert.equal(visibleDetail(confirmed, 5, 411), confirmed);
+  assert.equal(visibleDetail(confirmed, 411, null), confirmed);
+  assert.equal(visibleDetail(confirmed, 5, 9), null);
+  assert.equal(visibleDetail(confirmed, null, null), null);
+  assert.equal(visibleDetail(null, 411, 411), null);
+});
+
 test("the panel loading state is derived and cannot hang", () => {
   assert.equal(detailIsLoading(null, true, null), false);
   assert.equal(detailIsLoading(9, true, detail({ id: 9 })), false);
@@ -368,6 +402,174 @@ test("every path is a BFF path", () => {
   assert.equal(RAD_SESSION_PATH, "/api/radiology/session");
   assert.equal(requestPath(411), "/api/radiology/requests/411");
   assert.equal(worklistPath({}), "/api/radiology/worklist");
+  assert.equal(schedulePath(411), "/api/radiology/requests/411/schedule");
+  assert.equal(startPath(411), "/api/radiology/requests/411/start");
+});
+
+test("the two transition paths are the only POST targets, by kind", () => {
+  assert.equal(transitionPath("schedule", 411), "/api/radiology/requests/411/schedule");
+  assert.equal(transitionPath("start", 411), "/api/radiology/requests/411/start");
+  for (const kind of ["schedule", "start"] as const) {
+    const path = transitionPath(kind, 7);
+    assert.ok(path.startsWith("/api/radiology/requests/7/"), path);
+    assert.doesNotMatch(path, /odoo|yoya-emr|\?/);
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * Actions (Slice 2)
+ * ------------------------------------------------------------------ */
+
+const SCHEDULABLE = { state: "requested", lane: "to_schedule" } as const;
+const STARTABLE = { state: "scheduled", lane: "ready_to_start" } as const;
+
+test("Schedule study is offered for a clear requested study in To schedule", () => {
+  assert.equal(canScheduleStudy(detail(SCHEDULABLE)), true);
+});
+
+test("Schedule study is hidden for every other combination", () => {
+  const hidden: Array<[string, Partial<RadRequestDetail>]> = [
+    ["awaiting clearance", { ...SCHEDULABLE, lane: "awaiting_clearance", billing_blocked: true }],
+    ["blocked even if the lane says otherwise", { ...SCHEDULABLE, billing_blocked: true }],
+    ["draft", { state: "draft", lane: "to_schedule" }],
+    ["already scheduled", STARTABLE],
+    ["in progress", { state: "in_progress", lane: "awaiting_report" }],
+    ["completed", { state: "completed", lane: "completed" }],
+    ["cancelled", { state: "cancelled", lane: "cancelled" }],
+    ["requested but in another lane", { state: "requested", lane: "ready_to_start" }],
+    ["anomaly lane", { ...SCHEDULABLE, lane: "anomaly" }],
+    ["anomaly reason", { ...SCHEDULABLE, anomaly_reason: "unknown_state" }],
+    ["result conflict", { ...SCHEDULABLE, result_conflict: true }],
+    ["no active studies", { ...SCHEDULABLE, exam_count: 0, first_exam: null }],
+  ];
+  for (const [name, overrides] of hidden) {
+    assert.equal(canScheduleStudy(detail(overrides)), false, name);
+  }
+  assert.equal(canScheduleStudy(null), false);
+  assert.equal(canScheduleStudy(undefined), false);
+});
+
+test("Start exam is offered for a clear scheduled study in Ready to start", () => {
+  assert.equal(canStartExam(detail(STARTABLE)), true);
+});
+
+test("Start exam is hidden for every other combination", () => {
+  const hidden: Array<[string, Partial<RadRequestDetail>]> = [
+    ["still requested", SCHEDULABLE],
+    ["blocked", { ...STARTABLE, billing_blocked: true }],
+    ["awaiting clearance lane", { ...STARTABLE, lane: "awaiting_clearance", billing_blocked: true }],
+    ["in progress", { state: "in_progress", lane: "awaiting_report" }],
+    ["completed", { state: "completed", lane: "completed" }],
+    ["cancelled", { state: "cancelled", lane: "cancelled" }],
+    ["scheduled but in another lane", { state: "scheduled", lane: "to_schedule" }],
+    ["anomaly lane", { ...STARTABLE, lane: "anomaly" }],
+    ["anomaly reason", { ...STARTABLE, anomaly_reason: "unknown_state" }],
+    ["result conflict", { ...STARTABLE, result_conflict: true }],
+    ["no active studies", { ...STARTABLE, exam_count: 0, first_exam: null }],
+  ];
+  for (const [name, overrides] of hidden) {
+    assert.equal(canStartExam(detail(overrides)), false, name);
+  }
+  assert.equal(canStartExam(null), false);
+});
+
+test("no request is ever offered both actions", () => {
+  const states = ["draft", "requested", "scheduled", "in_progress", "completed", "cancelled"] as const;
+  const lanes = RAD_DESK_LANE_ORDER;
+  for (const state of states) {
+    for (const lane of lanes) {
+      const candidate = detail({ state, lane });
+      assert.ok(!(canScheduleStudy(candidate) && canStartExam(candidate)), `${state}/${lane}`);
+    }
+  }
+});
+
+test("the schedule confirmation names the request, patient and study exactly", () => {
+  assert.equal(
+    scheduleConfirmText(detail(SCHEDULABLE)),
+    "Schedule RADREQ0411 for Bezabeh Ketema (HMS11832) — Brain CT Scan?",
+  );
+  assert.equal(
+    SCHEDULE_SUPPORT_TEXT,
+    "This moves the study to the Radiology ready-to-start queue. No appointment time or imaging slot is created.",
+  );
+});
+
+test("the start confirmation names the study and patient exactly", () => {
+  assert.equal(
+    startConfirmText(detail(STARTABLE)),
+    "Start Brain CT Scan for Bezabeh Ketema (HMS11832)?",
+  );
+  assert.equal(
+    START_SUPPORT_TEXT,
+    "This confirms the study is beginning now and moves it into active imaging work.",
+  );
+});
+
+test("confirmation copy handles several studies, no study and no MRN", () => {
+  assert.equal(studyPhrase(detail({ exam_count: 3 })), "Brain CT Scan +2 more");
+  assert.equal(studyPhrase(detail({ exam_count: 0, first_exam: null })), "the ordered study");
+  const noMrn = detail({ patient: { id: 7, name: "Bezabeh Ketema", mrn: null, age: null, gender: null } });
+  assert.equal(startConfirmText(noMrn), "Start Brain CT Scan for Bezabeh Ketema?");
+});
+
+test("no confirmation claims a date, time, slot, room or performer", () => {
+  const texts = [
+    scheduleConfirmText(detail(SCHEDULABLE)),
+    startConfirmText(detail(STARTABLE)),
+    START_SUPPORT_TEXT,
+    transitionOutcomeText("schedule", detail({ lane_label: "Ready to start" })),
+    transitionOutcomeText("start", detail({ lane_label: "Awaiting report" })),
+  ];
+  for (const text of texts) {
+    assert.doesNotMatch(text, /\b(at \d|\d{1,2}:\d{2}|slot|room|appointment|booked|performed by|technologist)\b/i, text);
+  }
+  // The schedule support text mentions slot/appointment ONLY to deny creating one.
+  assert.match(SCHEDULE_SUPPORT_TEXT, /No appointment time or imaging slot is created\.$/);
+});
+
+test("the outcome sentence reads the server's lane label", () => {
+  assert.equal(
+    transitionOutcomeText("schedule", detail({ lane_label: "Ready to start" })),
+    "Scheduled. The request is now in Ready to start.",
+  );
+  assert.equal(
+    transitionOutcomeText("start", detail({ lane_label: "Awaiting report" })),
+    "Exam started. The request is now in Awaiting report.",
+  );
+});
+
+test("a refusal prefers the server's sentence and falls back without figures", () => {
+  const server = "The radiology study is awaiting financial clearance and cannot be scheduled from the Radiology Desk.";
+  assert.equal(transitionErrorMessage(`  ${server} `, "schedule"), server);
+  const fallbacks = [
+    transitionErrorMessage(null, "schedule"),
+    transitionErrorMessage("   ", "start"),
+    transitionErrorMessage(undefined, "start"),
+  ];
+  assert.equal(fallbacks[0], "The study could not be scheduled. Nothing was changed.");
+  assert.equal(fallbacks[1], "The exam could not be started. Nothing was changed.");
+  for (const text of [...fallbacks, server]) {
+    assert.doesNotMatch(text, /\d+\.\d{2}|ETB|Birr|payable|invoice|receipt|amount|price|balance/i, text);
+  }
+});
+
+test("the desk re-reads after any refusal that means the screen is stale", () => {
+  for (const code of [
+    "radiology_request_not_found",
+    "radiology_request_not_schedulable",
+    "radiology_request_not_startable",
+    "radiology_request_state_conflict",
+    "radiology_request_awaiting_clearance",
+    "radiology_request_start_blocked",
+    "radiology_request_needs_review",
+    "radiology_request_no_active_study",
+  ]) {
+    assert.equal(shouldReconcileAfterTransition(code), true, code);
+  }
+  for (const code of [null, undefined, "", "odoo_unreachable", "radiology_request_transition_response_failed"]) {
+    assert.equal(shouldReconcileAfterTransition(code), false, String(code));
+  }
 });
 
 test("the worklist path encodes filters and omits empties", () => {

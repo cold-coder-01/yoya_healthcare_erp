@@ -1,14 +1,19 @@
-"""Radiology Desk API: the imaging department's queue and one request, READ ONLY.
+"""Radiology Desk API: the imaging department's queue, one request, and the two
+transitions the desk may perform.
 
-    GET /yoya-emr/api/v1/radiology/session
-    GET /yoya-emr/api/v1/radiology/worklist
-    GET /yoya-emr/api/v1/radiology/requests/<id>
+    GET  /yoya-emr/api/v1/radiology/session
+    GET  /yoya-emr/api/v1/radiology/worklist
+    GET  /yoya-emr/api/v1/radiology/requests/<id>
+    POST /yoya-emr/api/v1/radiology/requests/<id>/schedule  action_schedule()
+    POST /yoya-emr/api/v1/radiology/requests/<id>/start     action_mark_in_progress()
 
-THERE IS NO WRITE HERE, AND THAT IS THE WHOLE SLICE. Scheduling, starting a
-study, creating or editing a report, uploading or removing an image, validating,
-releasing, cancelling and consuming stock are all model methods this module
-does not call and routes it does not register. Nothing below writes a record,
-creates one, or calls sudo().
+EXACTLY TWO WRITES (Slice 2), AND THE CONTROLLER DECIDES NOTHING ABOUT WORKFLOW.
+Each resolves the request through the caller's own record rules, locks its row,
+re-checks the DESK POLICY under the lock, and calls ONE authoritative model
+method inside one savepoint. No state is written here -- the request model now
+refuses a direct state write from every channel -- and nothing calls sudo().
+Reporting, images, validation, release, cancellation and stock consumption are
+model methods this module still does not call and routes it does not register.
 
 THREE INDEPENDENT CONTROLS, IN THIS ORDER
 -----------------------------------------
@@ -93,12 +98,30 @@ WORK_STATES = ("requested", "scheduled", "in_progress")
 SUMMARY_STATES = WORK_STATES + ("completed", "cancelled")
 
 
+class TransitionResponseError(Exception):
+    """A transition ran, but its confirmation could not be built.
+
+    Raised INSIDE the savepoint, so by the time the envelope answers, the
+    transition, its audit rows, its charge moves and its encounter side effect
+    have all been rolled back and the message may honestly say nothing changed.
+    A separate type so a serialization AccessError is never reported as a
+    denial -- the reason laboratory.TransitionResponseError exists.
+    """
+
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
 def rad_endpoint(func):
     """Stable error envelope for the Radiology Desk. Never leaks a traceback.
 
     Ordering mirrors controllers/laboratory.lab_endpoint: in Odoo AccessError and
     ValidationError both subclass UserError, so the broad handler comes last.
-    Concurrency failures are re-raised so Odoo's own retry can replay them.
+    Concurrency failures are re-raised so Odoo's own retry can replay the whole
+    request in a fresh transaction -- the row lock taken by a transition relies
+    on that replay.
     """
 
     @functools.wraps(func)
@@ -113,6 +136,8 @@ def rad_endpoint(func):
             raise
         except ApiError as error:
             return api_error_response(error)
+        except TransitionResponseError as error:
+            return error_response(error.code, error.message, 500)
         except AccessError as error:
             # The role gate admitted the caller and the ORM still refused a row
             # -- a record rule, not the desk gate.
@@ -407,6 +432,147 @@ def _worklist_summary(env, filters, conflicted_ids):
     return summary, exact
 
 
+# ---------------------------------------------------------------------------
+# Transitions (Slice 2)
+# ---------------------------------------------------------------------------
+# FIXED, ROLE-INDEPENDENT SENTENCES. hospital_billing's radiology clearance
+# refusal names the patient-payable amount and currency for EVERY role, and the
+# billing engine's integrity refusals name charges and encounters. None of that
+# text is ever forwarded: a Manager or System Administrator on this desk gets
+# exactly the words a technician gets. The original is logged server-side.
+SCHEDULE_NOT_ALLOWED_MESSAGE = (
+    "Only a requested radiology study can be scheduled. Request %s is %s. "
+    "Nothing has been changed."
+)
+SCHEDULE_BLOCKED_MESSAGE = (
+    "The radiology study is awaiting financial clearance and cannot be "
+    "scheduled from the Radiology Desk."
+)
+START_NOT_ALLOWED_MESSAGE = (
+    "Only a scheduled radiology study can be started. Request %s is %s. "
+    "Nothing has been changed."
+)
+START_BLOCKED_MESSAGE = (
+    "The radiology study cannot be started because financial clearance has "
+    "not been confirmed."
+)
+START_FAILED_MESSAGE = (
+    "The radiology study could not be started. Nothing was changed. Ask a "
+    "hospital manager to review this request."
+)
+NO_ACTIVE_STUDY_MESSAGE = (
+    "Request %s has no active study, so it cannot be %s. Nothing has been "
+    "changed. Ask a hospital manager to review this request."
+)
+NEEDS_REVIEW_MESSAGE = (
+    "Request %s needs review before workflow actions can continue. Nothing has "
+    "been changed."
+)
+STATE_CONFLICT_MESSAGE = (
+    "Request %s changed while this action was being processed and is now %s. "
+    "Nothing has been changed by this action. Refresh and check the request."
+)
+SCHEDULE_RESPONSE_FAILED_MESSAGE = (
+    "The radiology study was not scheduled because the confirmation could not "
+    "be produced. Nothing was changed. Please retry."
+)
+START_RESPONSE_FAILED_MESSAGE = (
+    "The radiology study was not started because the confirmation could not "
+    "be produced. Nothing was changed. Please retry."
+)
+
+
+def _lock_row(env, record):
+    """Flush pending ORM writes, then take this request's row lock.
+
+    The flush comes first so the lock is taken on a row that reflects this
+    transaction's own writes; the table name is a literal, never input.
+    """
+    env.flush_all()
+    env.cr.execute(
+        "SELECT id FROM hospital_radiology_request WHERE id = %s FOR UPDATE",
+        (record.id,),
+    )
+    record.invalidate_recordset()
+
+
+def _state_label(record):
+    labels = dict(record._fields["state"]._description_selection(record.env))
+    return labels.get(record.state, record.state)
+
+
+def _assert_transition_policy(record, seen_state, *, expected_state, expected_lane,
+                              verb, not_allowed_code, not_allowed_message):
+    """THE DESK POLICY, re-checked under the row lock. Decides only whether the
+    desk may ASK; the model method still decides whether the transition happens.
+
+    Order matters, and each refusal names what the user can act on:
+
+      1. the state moved since this request was loaded   -> 409 state conflict
+      2. the request is not in the expected state         -> 409 not allowed
+      3. no active study                                  -> 422
+      4. a report conflict or other anomaly               -> 409 needs review
+      5. financially blocked                              -> 422 (fixed wording)
+
+    The lane comes from rad_desk_lane(), the function the queue already shows,
+    so the button, the badge and this check can never disagree.
+    """
+    if record.state != seen_state:
+        raise ApiError(
+            "radiology_request_state_conflict",
+            STATE_CONFLICT_MESSAGE % (record.name, _state_label(record)),
+            409,
+        )
+    if record.state != expected_state:
+        raise ApiError(
+            not_allowed_code,
+            not_allowed_message % (record.name, _state_label(record)),
+            409,
+        )
+    if not record.line_ids.filtered(lambda line: line.state != "cancelled"):
+        raise ApiError(
+            "radiology_request_no_active_study",
+            NO_ACTIVE_STUDY_MESSAGE % (record.name, verb),
+            422,
+        )
+    lane, _reason = rad_desk_lane(record)
+    if lane == "anomaly":
+        raise ApiError(
+            "radiology_request_needs_review",
+            NEEDS_REVIEW_MESSAGE % record.name,
+            409,
+        )
+    if lane != expected_lane:
+        # The only other lane these two states can be in is awaiting_clearance.
+        return False
+    return True
+
+
+def _run_transition(env, record, action, failure_code, failure_message):
+    """Run ONE authoritative model method and serialize the result. ATOMIC.
+
+    THE SAVEPOINT COVERS EVERYTHING: the state change and its audit row, every
+    charge move and the encounter start hospital_billing performs, the
+    clearance state the gate persists before refusing, AND the serialized
+    response. Any exception -- a refusal from the model, a crash in a side
+    effect, a failure while building the payload -- rolls all of it back.
+    """
+    with env.cr.savepoint():
+        action()
+        try:
+            record.invalidate_recordset()
+            return serialize_request_detail(record)
+        except Exception as error:
+            _logger.exception(
+                "Radiology %s response failed for request=%s uid=%s; rolling the "
+                "transition back",
+                failure_code,
+                record.id,
+                env.uid,
+            )
+            raise TransitionResponseError(failure_code, failure_message) from error
+
+
 class YoyaEmrRadiologyController(http.Controller):
 
     # ------------------------------------------------------------------
@@ -542,4 +708,145 @@ class YoyaEmrRadiologyController(http.Controller):
                 "request": serialize_request_detail(record),
                 "capabilities": rad_desk_capability_flags(env),
             }
+        )
+
+    # ------------------------------------------------------------------
+    # 4. Schedule study (Slice 2)
+    # ------------------------------------------------------------------
+    @http.route(
+        "%s/requests/<int:request_id>/schedule" % RAD_API,
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @rad_endpoint
+    def radiology_schedule(self, request_id, **params):
+        """requested -> scheduled, through hospital.radiology.request.action_schedule().
+
+        DESK POLICY IS STRICTER THAN THE MODEL. action_schedule() itself accepts
+        an unpaid request; the desk does not, because the model has no date or
+        slot, so moving an unpaid study to "scheduled" would say nothing true.
+        A blocked request is refused BEFORE the method is called.
+
+        No money moves on this transition, so a refusal from the model after the
+        policy passed can only be a workflow refusal (a concurrent change): it is
+        reported as a state conflict, never with the model's own text.
+        """
+        env = request.env
+        _require_radiology_desk(env)
+        record = _load_request(env, request_id)
+        seen_state = record.state
+
+        _lock_row(env, record)
+        clear = _assert_transition_policy(
+            record,
+            seen_state,
+            expected_state="requested",
+            expected_lane="to_schedule",
+            verb="scheduled",
+            not_allowed_code="radiology_request_not_schedulable",
+            not_allowed_message=SCHEDULE_NOT_ALLOWED_MESSAGE,
+        )
+        if not clear:
+            raise ApiError(
+                "radiology_request_awaiting_clearance", SCHEDULE_BLOCKED_MESSAGE, 422
+            )
+
+        try:
+            payload = _run_transition(
+                env,
+                record,
+                record.action_schedule,
+                "radiology_request_transition_response_failed",
+                SCHEDULE_RESPONSE_FAILED_MESSAGE,
+            )
+        except (TransitionResponseError, *PG_CONCURRENCY_EXCEPTIONS_TO_RETRY):
+            raise
+        except Exception as error:  # noqa: BLE001 -- mapped to a fixed sentence
+            _logger.warning(
+                "Radiology schedule refused by the model for request=%s uid=%s: %s",
+                record.id, env.uid, type(error).__name__,
+            )
+            record.invalidate_recordset()
+            raise ApiError(
+                "radiology_request_state_conflict",
+                STATE_CONFLICT_MESSAGE % (record.name, _state_label(record)),
+                409,
+            ) from error
+
+        return success_response(
+            {"request": payload, "capabilities": rad_desk_capability_flags(env)}
+        )
+
+    # ------------------------------------------------------------------
+    # 5. Start exam (Slice 2)
+    # ------------------------------------------------------------------
+    @http.route(
+        "%s/requests/<int:request_id>/start" % RAD_API,
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @rad_endpoint
+    def radiology_start(self, request_id, **params):
+        """scheduled -> in_progress, through action_mark_in_progress().
+
+        hospital_billing's override IS the gate and is not reimplemented: it
+        asserts every active study has a live charge, runs the financial
+        clearance check (persisting the clearance state), starts the encounter
+        and moves the charges to in_progress. The desk refuses a request it can
+        already see is blocked, then lets the model decide.
+
+        EVERY MODEL REFUSAL BECOMES A FIXED SENTENCE. The clearance refusal names
+        the patient-payable amount; the integrity refusals name charges; a legacy
+        request with no encounter fails with a bare ValueError inside the
+        billing engine. All of them roll back inside the savepoint and are
+        classified by the authoritative `billing_blocked` boolean re-read after
+        the rollback -- never by reading the message.
+        """
+        env = request.env
+        _require_radiology_desk(env)
+        record = _load_request(env, request_id)
+        seen_state = record.state
+
+        _lock_row(env, record)
+        clear = _assert_transition_policy(
+            record,
+            seen_state,
+            expected_state="scheduled",
+            expected_lane="ready_to_start",
+            verb="started",
+            not_allowed_code="radiology_request_not_startable",
+            not_allowed_message=START_NOT_ALLOWED_MESSAGE,
+        )
+        if not clear:
+            raise ApiError(
+                "radiology_request_start_blocked", START_BLOCKED_MESSAGE, 422
+            )
+
+        try:
+            payload = _run_transition(
+                env,
+                record,
+                record.action_mark_in_progress,
+                "radiology_request_transition_response_failed",
+                START_RESPONSE_FAILED_MESSAGE,
+            )
+        except (TransitionResponseError, *PG_CONCURRENCY_EXCEPTIONS_TO_RETRY):
+            raise
+        except Exception as error:  # noqa: BLE001 -- mapped to a fixed sentence
+            _logger.warning(
+                "Radiology start refused for request=%s uid=%s: %s",
+                record.id, env.uid, type(error).__name__,
+            )
+            record.invalidate_recordset()
+            if record.state != "scheduled":
+                raise ApiError(
+                    "radiology_request_state_conflict",
+                    STATE_CONFLICT_MESSAGE % (record.name, _state_label(record)),
+                    409,
+                ) from error
+            message = (
+                START_BLOCKED_MESSAGE if record.billing_blocked else START_FAILED_MESSAGE
+            )
+            raise ApiError("radiology_request_start_blocked", message, 422) from error
+
+        return success_response(
+            {"request": payload, "capabilities": rad_desk_capability_flags(env)}
         )

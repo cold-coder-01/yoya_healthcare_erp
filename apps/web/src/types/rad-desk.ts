@@ -15,8 +15,9 @@
  * `billing_blocked`, a boolean. No amount, payer, invoice, receipt or charge,
  * and never the cashier-facing clearance message.
  *
- * READ ONLY. Slice 1 carries no capability for any action, and the file
- * describes no request body.
+ * TWO ACTIONS (Slice 2): schedule a study and start an exam. Both are bodiless
+ * POSTs; the server re-checks everything under a row lock and answers with the
+ * request re-serialized AFTER the transition. No other action exists.
  */
 import type { ApiEnvelope, Many2OneValue } from "./clinical";
 
@@ -201,7 +202,20 @@ export type RadRequestDetail = Omit<RadQueueRow, "result"> & {
 
 export type RadDeskCapabilities = {
   radiology_desk: boolean;
+  /** The ROLE may attempt the act. Whether one request may is its own lane. */
+  schedule_study: boolean;
+  start_exam: boolean;
 };
+
+/**
+ * What POST .../schedule and .../start return: the request as it stands after
+ * the transition. The same shape as the detail read, so the panel renders it
+ * directly.
+ */
+export type RadTransitionResponse = RadRequestResponse;
+
+/** The two transitions this desk performs. */
+export type RadTransitionKind = "schedule" | "start";
 
 export type RadDeskRoles = {
   radiology_technician: boolean;

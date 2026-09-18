@@ -13,6 +13,9 @@
  *   * The browser FORMATS a clearance verdict, it never REACHES one. There is
  *     no amount here because there is none in the payload.
  *   * Every URL built here is a BFF path. The browser never addresses Odoo.
+ *   * An action button is an AFFORDANCE, never a permission (Slice 2). It is
+ *     drawn from the server's own lane and flags; the server re-checks the same
+ *     policy under a row lock on every call.
  */
 // TYPE-ONLY, and it has to stay that way: TypeScript erases these imports,
 // which is what lets node:test run rad-desk-format.test.ts with no resolver.
@@ -20,6 +23,7 @@ import type {
   RadDeskRoles,
   RadQueueRow,
   RadRequestDetail,
+  RadTransitionKind,
   RadWorklistSummary,
 } from "@/types/rad-desk";
 
@@ -342,13 +346,37 @@ export function resolveSelection(
   return rows[0]?.id ?? null;
 }
 
-/** A detail payload is only shown against the request it belongs to. */
+/**
+ * The request the desk is working on, WITH the post-action pin honoured.
+ *
+ * Scheduling moves a request out of To schedule and starting moves it out of
+ * Ready to start, so the queue refetch drops it from the lane on screen. While
+ * a request is pinned it IS the active request -- the Laboratory Desk's proven
+ * fix -- so the confirmation stays in front of the user instead of an unrelated
+ * top row. A real selection or a lane change clears the pin.
+ */
+export function activeSelection(
+  rows: RadQueueRow[],
+  selectedId: number | null,
+  justActedId: number | null,
+): number | null {
+  if (justActedId !== null) return justActedId;
+  return resolveSelection(rows, selectedId);
+}
+
+/**
+ * A detail payload is only shown against the request it belongs to: the
+ * active selection, or the request just acted on.
+ */
 export function visibleDetail(
   detail: RadRequestDetail | null,
   activeId: number | null,
+  justActedId: number | null = null,
 ): RadRequestDetail | null {
-  if (!detail || activeId === null) return null;
-  return detail.id === activeId ? detail : null;
+  if (!detail) return null;
+  if (activeId !== null && detail.id === activeId) return detail;
+  if (justActedId !== null && detail.id === justActedId) return detail;
+  return null;
 }
 
 /**
@@ -400,4 +428,139 @@ export function worklistPath(params: {
 
 export function requestPath(requestId: number) {
   return `/api/radiology/requests/${requestId}`;
+}
+
+/** The BFF schedule route. */
+export function schedulePath(requestId: number) {
+  return `/api/radiology/requests/${requestId}/schedule`;
+}
+
+/** The BFF start-exam route. */
+export function startPath(requestId: number) {
+  return `/api/radiology/requests/${requestId}/start`;
+}
+
+/** The only two paths this desk ever POSTs to. */
+export function transitionPath(kind: RadTransitionKind, requestId: number) {
+  return kind === "schedule" ? schedulePath(requestId) : startPath(requestId);
+}
+
+/* ------------------------------------------------------------------ *
+ * Actions (Slice 2)
+ * ------------------------------------------------------------------ */
+
+type ActionFacts = Pick<
+  RadRequestDetail,
+  "state" | "lane" | "billing_blocked" | "result_conflict" | "anomaly_reason" | "exam_count"
+>;
+
+function actionable(detail: ActionFacts | null | undefined): detail is ActionFacts {
+  return (
+    !!detail &&
+    detail.billing_blocked === false &&
+    detail.result_conflict === false &&
+    detail.anomaly_reason === null &&
+    detail.lane !== "anomaly" &&
+    detail.exam_count > 0
+  );
+}
+
+/**
+ * May the desk OFFER Schedule study for this request?
+ *
+ * Every condition, together: requested, in To schedule, not blocked, no report
+ * conflict or other anomaly, at least one active study. It mirrors the server's
+ * policy exactly -- and it is an affordance, never a permission: the endpoint
+ * re-checks all of it under a row lock.
+ */
+export function canScheduleStudy(detail: ActionFacts | null | undefined): boolean {
+  return actionable(detail) && detail.state === "requested" && detail.lane === "to_schedule";
+}
+
+/** May the desk OFFER Start exam? The same shape, for scheduled / Ready to start. */
+export function canStartExam(detail: ActionFacts | null | undefined): boolean {
+  return actionable(detail) && detail.state === "scheduled" && detail.lane === "ready_to_start";
+}
+
+/** "Brain CT Scan", "Brain CT Scan +1 more", or a neutral phrase for none. */
+export function studyPhrase(
+  detail: Pick<RadRequestDetail, "first_exam" | "exam_count">,
+): string {
+  if (!detail.first_exam) return "the ordered study";
+  const more = detail.exam_count > 1 ? ` +${detail.exam_count - 1} more` : "";
+  return `${detail.first_exam.name}${more}`;
+}
+
+function whoLabel(detail: Pick<RadRequestDetail, "patient">): string {
+  const name = detail.patient?.name ?? "this patient";
+  const mrn = detail.patient?.mrn;
+  return mrn ? `${name} (${mrn})` : name;
+}
+
+type ConfirmFacts = Pick<RadRequestDetail, "request_code" | "patient" | "first_exam" | "exam_count">;
+
+/** "Schedule RADREQ0411 for Bezabeh Ketema (HMS11832) — Brain CT Scan?" */
+export function scheduleConfirmText(detail: ConfirmFacts): string {
+  return `Schedule ${detail.request_code} for ${whoLabel(detail)} — ${studyPhrase(detail)}?`;
+}
+
+/**
+ * NO DATE, TIME OR SLOT IS CLAIMED. The model records none, so the support text
+ * says so plainly rather than letting "scheduled" imply a booking.
+ */
+export const SCHEDULE_SUPPORT_TEXT =
+  "This moves the study to the Radiology ready-to-start queue. No appointment time or imaging slot is created.";
+
+/** "Start Brain CT Scan for Bezabeh Ketema (HMS11832)?" */
+export function startConfirmText(detail: ConfirmFacts): string {
+  return `Start ${studyPhrase(detail)} for ${whoLabel(detail)}?`;
+}
+
+/** No performed-at or performed-by is claimed: the model records neither. */
+export const START_SUPPORT_TEXT =
+  "This confirms the study is beginning now and moves it into active imaging work.";
+
+/** The confirmation shown for the request just acted on, from the SERVER's lane. */
+export function transitionOutcomeText(
+  kind: RadTransitionKind,
+  detail: Pick<RadRequestDetail, "lane_label">,
+): string {
+  const verb = kind === "schedule" ? "Scheduled" : "Exam started";
+  return `${verb}. The request is now in ${detail.lane_label}.`;
+}
+
+/**
+ * The message shown when an action is refused. The server's sentence is
+ * preferred: the Radiology API has already replaced every refusal that could
+ * carry billing text with a fixed, amount-free one. The fallback is for a
+ * transport failure, where there is no server sentence at all.
+ */
+export function transitionErrorMessage(
+  serverMessage: string | null | undefined,
+  kind: RadTransitionKind,
+): string {
+  const trimmed = typeof serverMessage === "string" ? serverMessage.trim() : "";
+  if (trimmed) return trimmed;
+  return kind === "schedule"
+    ? "The study could not be scheduled. Nothing was changed."
+    : "The exam could not be started. Nothing was changed.";
+}
+
+/**
+ * Refusals after which the screen no longer matches the database, so the desk
+ * RE-READS instead of leaving a button the server has just refused.
+ */
+const RECONCILE_CODES = new Set([
+  "radiology_request_not_found",
+  "radiology_request_not_schedulable",
+  "radiology_request_not_startable",
+  "radiology_request_state_conflict",
+  "radiology_request_awaiting_clearance",
+  "radiology_request_start_blocked",
+  "radiology_request_needs_review",
+  "radiology_request_no_active_study",
+]);
+
+export function shouldReconcileAfterTransition(code: string | null | undefined): boolean {
+  return typeof code === "string" && RECONCILE_CODES.has(code);
 }

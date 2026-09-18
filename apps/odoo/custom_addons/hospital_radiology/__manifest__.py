@@ -18,7 +18,7 @@ Owns the two Radiology roles, ``group_hospital_radiology_technician`` and
 ``group_hospital_radiologist``. Radiology access is granted to those roles and
 to Hospital Manager and System Administrator; Lab Technician no longer holds it.
 """,
-    "version": "18.0.1.2.0",
+    "version": "18.0.1.3.0",
     "category": "Healthcare",
     "author": "Ethiopian Hospital ERP",
     "license": "LGPL-3",

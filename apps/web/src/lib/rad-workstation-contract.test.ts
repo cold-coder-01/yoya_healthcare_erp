@@ -8,8 +8,9 @@
  * "must not contain" check, so a docstring that explains a rule cannot trip it.
  *
  * WHAT IS HELD:
- *   1. READ ONLY. No request other than GET leaves this desk, and the detail
- *      panel renders no control at all -- not even a disabled one.
+ *   1. EXACTLY TWO WRITES (Slice 2). One bodiless POST site, to the schedule and
+ *      start paths only; each offered for exactly one lane, behind an explicit
+ *      confirmation. No other workflow action exists, not even disabled.
  *   2. NO ODOO. Every URL is a /api/radiology/* BFF path.
  *   3. NO MONEY. No financial vocabulary is rendered or read.
  *   4. SERVER-DERIVED STATE. Lane badges read the server summary, the lane is
@@ -54,29 +55,62 @@ const COMPONENTS: ReadonlyArray<readonly [string, string]> = [
 ];
 
 /* ------------------------------------------------------------------ *
- * 1. Read only
+ * 1. Exactly two writes
  * ------------------------------------------------------------------ */
 
-test("no request other than GET is ever sent", () => {
+test("there is exactly one POST site, and it sends no body worth reading", () => {
+  const posts = COMPONENTS.flatMap(([name, source]) =>
+    [...code(source).matchAll(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/g)].map(
+      (match) => [name, match[1]] as const,
+    ),
+  );
+  assert.deepEqual(posts, [["rad-workstation.tsx", "POST"]]);
+  const emitted = code(WORKSTATION);
+  assert.ok(emitted.includes("async function postRad<T>(path: string)"));
+  assert.ok(emitted.includes('body: "{}",'), "bodiless: the request is identified by the URL");
   for (const [name, source] of COMPONENTS) {
-    const emitted = code(source);
-    assert.doesNotMatch(emitted, /method:\s*["'](POST|PUT|PATCH|DELETE)["']/, name);
-    assert.doesNotMatch(emitted, /JSON\.stringify\(/, `${name} must build no request body`);
+    assert.doesNotMatch(code(source), /JSON\.stringify\(/, `${name} must build no request body`);
   }
 });
 
-test("the detail panel renders no control, not even a disabled one", () => {
-  const emitted = code(PANEL);
-  assert.doesNotMatch(emitted, /<button/, "the read-only panel has no buttons");
-  assert.doesNotMatch(emitted, /onClick=/);
-  assert.doesNotMatch(emitted, /disabled/);
+test("the POST site is only ever pointed at the two transition paths", () => {
+  const emitted = code(WORKSTATION);
+  // Call sites only (`await postRad<...>(`), captured up to the trailing `,)`.
+  const calls = [...emitted.matchAll(/await postRad<[^>]*>\(\s*([\s\S]*?),\s*\)/g)].map((m) => m[1].trim());
+  assert.deepEqual(calls, ["transitionPath(kind, requestId)"]);
+  const format = code(FORMAT);
+  assert.ok(format.includes('return kind === "schedule" ? schedulePath(requestId) : startPath(requestId);'));
+  assert.ok(format.includes("/api/radiology/requests/${requestId}/schedule"));
+  assert.ok(format.includes("/api/radiology/requests/${requestId}/start"));
 });
 
-test("no workflow action is offered anywhere on the desk", () => {
+test("the panel's only controls are the two actions and their confirmation", () => {
+  const emitted = code(PANEL);
+  const labels = [...emitted.matchAll(/"(Schedule study|Start exam|Confirm schedule|Confirm start|Cancel)"/g)].map((m) => m[1]);
+  for (const label of ["Schedule study", "Start exam", "Confirm schedule", "Confirm start"]) {
+    assert.ok(labels.includes(label), label);
+  }
+  assert.ok(emitted.includes(">\n          Cancel\n        </button>") || emitted.includes("Cancel"));
+  // Every <button in the panel lives inside TransitionAction.
+  const actionStart = emitted.indexOf("function TransitionAction(");
+  const actionEnd = emitted.indexOf("function ReportSection(");
+  const outside = emitted.slice(0, actionStart) + emitted.slice(actionEnd);
+  assert.doesNotMatch(outside, /<button/, "no control outside the two transitions");
+});
+
+test("each action is offered only through the tested visibility helpers and capability", () => {
+  const emitted = code(PANEL);
+  assert.ok(emitted.includes("capabilities?.schedule_study === true && canScheduleStudy(detail)"));
+  assert.ok(emitted.includes("capabilities?.start_exam === true && canStartExam(detail)"));
+  assert.ok(emitted.includes("{offerSchedule ? ("));
+  assert.ok(emitted.includes("{offerStart ? ("));
+});
+
+test("no other workflow action is offered anywhere on the desk", () => {
   const forbidden = [
-    /Schedule study/i, /Start (exam|study)/i, /Mark in progress/i, /Enter report/i,
-    /Validate report/i, /Release report/i, /Upload image/i, /Delete image/i,
-    /Cancel request/i, /onSchedule|onStart|onValidate|onRelease|onUpload/,
+    /Mark in progress/i, /Enter report/i, /Validate report/i, /Release report/i,
+    /Upload image/i, /Delete image/i, /Cancel request/i, /Reset to draft/i,
+    /onValidate|onRelease|onUpload|onCancelRequest|onEnter/,
   ];
   for (const [name, source] of COMPONENTS) {
     const emitted = code(source);
@@ -86,8 +120,96 @@ test("no workflow action is offered anywhere on the desk", () => {
   }
 });
 
-test("the panel says in words that the desk is read only", () => {
-  assert.ok(PANEL.includes("Read-only view. Workflow actions are not available on this desk yet."));
+test("the panel says in words which actions this desk has", () => {
+  assert.ok(PANEL.includes("Schedule and start only. Reporting, images, validation and release are not available on this desk yet."));
+});
+
+/* ------------------------------------------------------------------ *
+ * 1b. Confirmation and keyboard safety
+ * ------------------------------------------------------------------ */
+
+test("the confirmation copy is the tested wording and claims no date, slot or performer", () => {
+  const emitted = code(PANEL);
+  assert.ok(emitted.includes('kind === "schedule" ? scheduleConfirmText(detail) : startConfirmText(detail)'));
+  assert.ok(emitted.includes('kind === "schedule" ? SCHEDULE_SUPPORT_TEXT : START_SUPPORT_TEXT'));
+  assert.doesNotMatch(emitted, /type="(date|time|datetime-local)"/, "no scheduling date or time is collected");
+  for (const [name, source] of [["panel", PANEL], ["format", FORMAT]] as const) {
+    assert.doesNotMatch(code(source), /scheduled for|scheduled at|performed by|performed at|slot booked|appointment booked/i, name);
+  }
+});
+
+test("only an explicit final click sends; Escape cancels; no shortcut submits", () => {
+  const emitted = code(PANEL);
+  const action = emitted.slice(emitted.indexOf("function TransitionAction("), emitted.indexOf("function ReportSection("));
+  // Step one only opens the confirmation.
+  assert.ok(action.includes("onClick={() => setConfirming(true)}"));
+  // Only the Confirm button calls onConfirm.
+  assert.equal([...action.matchAll(/onConfirm\(/g)].length, 1);
+  assert.ok(action.includes('if (event.key === "Escape" && !pending)'));
+  assert.ok(action.includes('if (event.key === "Enter" && (event.ctrlKey || event.metaKey))'));
+  assert.doesNotMatch(action, /onKeyDown=\{[^}]*onConfirm/);
+});
+
+test("focus lands on Cancel, never on the step that changes the record", () => {
+  const action = code(PANEL);
+  assert.ok(action.includes("ref={cancelRef}"));
+  assert.ok(action.includes("if (confirming) cancelRef.current?.focus();"));
+  assert.doesNotMatch(action, /autoFocus/);
+});
+
+test("busy disables every action control and a second submit is refused", () => {
+  const panel = code(PANEL);
+  const action = panel.slice(panel.indexOf("function TransitionAction("), panel.indexOf("function ReportSection("));
+  assert.equal([...action.matchAll(/disabled=\{pending\}/g)].length, 3, "open, cancel and confirm");
+  assert.ok(action.includes("if (pending) return;"));
+  const workstation = code(WORKSTATION);
+  assert.ok(workstation.includes("if (pendingId !== null) return false;"));
+  assert.ok(workstation.includes("pending={pendingId !== null && detailForSelection !== null && pendingId === detailForSelection.id}"));
+});
+
+/* ------------------------------------------------------------------ *
+ * 1c. Reconciliation after an action
+ * ------------------------------------------------------------------ */
+
+test("success shows the server's request, pins it, and refetches queue and counts", () => {
+  const emitted = code(WORKSTATION);
+  const run = emitted.slice(emitted.indexOf("const runTransition = useCallback("), emitted.indexOf("const detailForSelection ="));
+  const success = run.slice(run.indexOf("const confirmed = payload.data.request;"), run.indexOf("return true;"));
+  assert.ok(success.includes("setDetail(confirmed);"));
+  assert.ok(success.includes("setJustActedId(confirmed.id);"));
+  assert.ok(success.includes("transitionOutcomeText(kind, confirmed)"));
+  assert.ok(success.includes("refresh();"), "counts come back from the server summary");
+});
+
+test("a refusal never replaces the request on screen, and reconciles when stale", () => {
+  const emitted = code(WORKSTATION);
+  const run = emitted.slice(emitted.indexOf("const runTransition = useCallback("), emitted.indexOf("const detailForSelection ="));
+  const refusal = run.slice(run.indexOf("if (!response.ok || !payload.success) {"), run.indexOf("const confirmed = payload.data.request;"));
+  assert.doesNotMatch(refusal, /setDetail\(/);
+  assert.ok(refusal.includes("shouldReconcileAfterTransition(codeFromPayload(payload))"));
+  const lost = run.slice(run.indexOf("} catch {"), run.indexOf("} finally {"));
+  assert.doesNotMatch(lost, /setDetail\(/);
+  assert.ok(lost.includes("refresh();"), "a lost response is re-read, not reported as not done");
+  assert.ok(run.includes("setPendingId(null);"));
+});
+
+test("the pin holds the request on screen and a real selection or lane change releases it", () => {
+  const emitted = code(WORKSTATION);
+  assert.ok(emitted.includes("activeSelection(visibleRows, selectedId, justActedId)"));
+  assert.ok(emitted.includes("visibleDetail(detail, activeId, justActedId)"));
+  const lane = emitted.slice(emitted.indexOf("onLaneChange={(nextLane) => {"), emitted.indexOf("onDateChange={setDate}"));
+  assert.ok(lane.includes("setJustActedId(null);"));
+  const select = emitted.slice(emitted.indexOf("onSelect={(requestId) => {"), emitted.indexOf("<RadRequestPanel"));
+  assert.ok(select.includes("setJustActedId(null);"));
+});
+
+test("a failed refresh after a confirmed action keeps the confirmed state and warns", () => {
+  const workstation = code(WORKSTATION);
+  assert.equal([...workstation.matchAll(/setRefreshWarningFor\(justActedRef\.current\)/g)].length, 2);
+  assert.ok(workstation.includes("setDetailStaleFor(requestId);"));
+  const panel = code(PANEL);
+  assert.ok(panel.includes("The action was confirmed, but the queue could not be refreshed."));
+  assert.ok(panel.includes("{outcome ? ("));
 });
 
 /* ------------------------------------------------------------------ *
@@ -106,9 +228,10 @@ test("the browser never addresses Odoo", () => {
 test("every fetch goes through a BFF path helper", () => {
   const emitted = code(WORKSTATION);
   const fetches = [...emitted.matchAll(/fetch\(\s*([^,\n]+)/g)].map((match) => match[1].trim());
-  assert.ok(fetches.length >= 3);
+  assert.ok(fetches.length >= 4);
   for (const target of fetches) {
-    assert.match(target, /^(RAD_SESSION_PATH|worklistPath\(|requestPath\()/, target);
+    // `path` is postRad's own parameter, which only transitionPath() supplies.
+    assert.match(target, /^(RAD_SESSION_PATH|worklistPath\(|requestPath\(|path$)/, target);
   }
 });
 
@@ -174,14 +297,14 @@ test("the panel receives the DERIVED loading value", () => {
   assert.ok(emitted.includes("const panelIsLoading = detailIsLoading("));
   assert.ok(emitted.includes("loading={panelIsLoading}"));
   assert.ok(!emitted.includes("loading={detailLoading}"));
-  assert.ok(emitted.includes("visibleDetail(detail, activeId)"));
+  assert.ok(emitted.includes("visibleDetail(detail, activeId, justActedId)"));
 });
 
 test("selection is derived, and lane, date, modality and search all refetch", () => {
   const emitted = code(WORKSTATION);
-  assert.ok(emitted.includes("resolveSelection(visibleRows, selectedId)"));
+  assert.ok(emitted.includes("activeSelection(visibleRows, selectedId, justActedId)"));
   assert.ok(emitted.includes("[statuses, date, modality, debouncedSearch, refreshToken]"));
-  assert.ok(emitted.includes("onLaneChange={setLane}"));
+  assert.ok(emitted.includes("setLane(nextLane);"));
   assert.ok(emitted.includes("onModalityChange={setModality}"));
   assert.ok(emitted.includes("onDateChange={setDate}"));
   assert.ok(emitted.includes("onSearchChange={setSearch}"));

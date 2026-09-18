@@ -426,13 +426,21 @@ def rad_desk_role_flags(env):
 def rad_desk_capability_flags(env):
     """What the Radiology Desk may do. Every flag mirrors a server-side guard.
 
-    SLICE 1 IS READ-ONLY, and this reports exactly that. No schedule, start,
-    report, validate, release or image flag exists -- not even as False -- for
-    the reason lab_desk_capability_flags gives: a flag with no endpoint behind
-    it is an invitation to build a button that has nothing to call.
+    SLICE 2 adds exactly the two transitions it implements: `schedule_study`
+    and `start_exam`, open to every desk role (no separation of duties yet).
+    No report, validate, release or image flag exists -- not even as False --
+    for the reason lab_desk_capability_flags gives: a flag with no endpoint
+    behind it is an invitation to build a button that has nothing to call.
+
+    These say which ACTS the role may attempt. Whether ONE request may be
+    scheduled or started is the request's own lane, re-checked under a row lock
+    by the endpoint on every call.
     """
+    allowed = may_rad_desk(env)
     return {
-        "radiology_desk": may_rad_desk(env),
+        "radiology_desk": allowed,
+        "schedule_study": allowed,
+        "start_exam": allowed,
     }
 
 

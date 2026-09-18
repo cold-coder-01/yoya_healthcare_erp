@@ -10,8 +10,10 @@
  * NOT reuse any Doctor-specific loader: the Doctor Desk resolves visits and
  * consultations through a doctor's own scope, and none of that applies here.
  *
- * READ ONLY. There is no body reader and no binary stream helper, because Slice
- * 1 has no write route and serves no image bytes.
+ * TWO WRITE ROUTES (Slice 2): schedule and start. Both are BODILESS -- the
+ * request is identified by the URL and nothing else is accepted -- so there is
+ * still no body reader here, and still no binary stream helper, because this
+ * desk serves no image bytes.
  */
 import "server-only";
 
@@ -42,6 +44,21 @@ export function callOdooApi<T>(sessionId: string, path: string) {
     path,
     "GET",
     undefined,
+    RADIOLOGY_SERVICE_LABEL,
+  );
+}
+
+/**
+ * A BODILESS POST, bound to the same label. Sends `{}`, the convention every
+ * POST route in this app follows; the upstream handler reads no field from it,
+ * and nothing a browser sends is forwarded.
+ */
+export function postOdooApi<T>(sessionId: string, path: string) {
+  return callOdooApiWithLabel<T>(
+    sessionId,
+    path,
+    "POST",
+    {},
     RADIOLOGY_SERVICE_LABEL,
   );
 }

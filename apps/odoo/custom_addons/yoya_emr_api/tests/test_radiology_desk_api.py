@@ -42,6 +42,10 @@ from urllib.parse import urlencode
 
 from odoo.tests import tagged
 
+from odoo.addons.hospital_radiology.models.radiology_request import (
+    _request_state_capability,
+)
+
 from ..controllers.radiology import SUMMARY_WORK_SCAN_MAX
 from ..services.rad_desk_serializers import (
     RAD_DESK_ACTIVE_LANES,
@@ -157,7 +161,16 @@ class RadDeskCase(RadiologyCase):
         return created
 
     def _set_state(self, record, state):
-        record.sudo().write({"state": state})
+        """FIXTURE ONLY. Places a request in `state` for a READ test.
+
+        Since Radiology Slice 2 the request model refuses a direct state write
+        from every channel; tests that exercise the transitions themselves use
+        the real Desk endpoints (test_radiology_desk_transitions). This helper
+        only arranges the starting state a read test needs, through the model's
+        own non-forgeable capability.
+        """
+        with _request_state_capability():
+            record.sudo().write({"state": state})
         record.invalidate_recordset()
         return record
 
@@ -301,9 +314,12 @@ class TestRadiologyDeskAuthorization(RadDeskCase):
             )
             self.assertIn(response.status_code, (404, 405), url)
 
-    def test_18_no_mutation_route_exists_under_radiology(self):
+    def test_18_no_unimplemented_mutation_route_exists_under_radiology(self):
+        """Slice 2 adds exactly schedule and start (tested in
+        test_radiology_desk_transitions). Nothing else is routed."""
         record, _patient = self._legacy_request(state="requested")
-        for suffix in ("schedule", "start", "report", "result", "cancel", "images"):
+        for suffix in ("report", "result", "cancel", "images", "validate", "release",
+                       "reset", "complete", "enter"):
             self._auth(self.rad_tech, self.tech_password)
             response = self.url_open(
                 "%s/%s" % (DETAIL % record.id, suffix),
@@ -341,7 +357,10 @@ class TestRadiologyDeskSession(RadDeskCase):
             data = payload["data"]
             self.assertEqual(data["user"], {"id": user.id, "name": user.name})
             self.assertEqual(data["roles"], expected, user.login)
-            self.assertEqual(data["capabilities"], {"radiology_desk": True})
+            self.assertEqual(
+                data["capabilities"],
+                {"radiology_desk": True, "schedule_study": True, "start_exam": True},
+            )
 
     def test_21_session_exposes_no_unrelated_security_metadata(self):
         _response, payload = self._desk_get(SESSION)

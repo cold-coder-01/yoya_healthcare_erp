@@ -336,7 +336,10 @@ class HospitalRadiologyRequestBilling(models.Model):
                 if not request.completed_at:
                     vals.update({"completed_at": now, "completed_by_id": self.env.user.id})
                 if request.state != "completed" or not request.completed_at:
-                    request.with_context(skip_radiology_request_write_audit=True).write(vals)
+                    # Through the request's controlled workflow write: a plain
+                    # write() of `state` is refused by hospital_radiology's
+                    # state authority guard (Radiology Slice 2).
+                    request._workflow_write(vals)
                     request._create_audit_log(action_type="state_change", description="Radiology request completed after all active examinations were released.")
         return True
 
