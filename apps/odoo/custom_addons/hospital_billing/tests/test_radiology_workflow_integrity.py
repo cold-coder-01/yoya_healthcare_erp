@@ -4,6 +4,10 @@ from odoo import fields
 from odoo.exceptions import UserError
 from odoo.tests import TransactionCase, tagged
 
+from odoo.addons.hospital_radiology.models.radiology_result import (
+    _result_workflow_capability,
+)
+
 
 @tagged("post_install", "-at_install", "radiology_workflow_integrity")
 class TestRadiologyWorkflowIntegrity(TransactionCase):
@@ -148,7 +152,13 @@ class TestRadiologyWorkflowIntegrity(TransactionCase):
                 self._pay(request, amount, charge=charge)
 
     def _result(self, request, lines=None):
-        return self.env["hospital.radiology.result"].sudo().create({"request_id": request.id, "patient_id": request.patient_id.id, "physician_id": request.physician_id.id, "line_ids": lines or False})
+        """A report WITH TEXT, so it can be entered (Radiology Slice 3 refuses to
+        enter an empty report). Created through the result workflow capability
+        because these tests deliberately hold a report against a request that
+        has not been started, to prove validation and release refuse it; the
+        report model otherwise starts a report only for an In progress study."""
+        with _result_workflow_capability():
+            return self.env["hospital.radiology.result"].sudo().create({"request_id": request.id, "patient_id": request.patient_id.id, "physician_id": request.physician_id.id, "findings": "Reported.", "line_ids": lines or False})
 
     def test_fresh_request_line_confirm_creates_single_charge_with_price_and_defaults(self):
         suffix = uuid.uuid4().hex[:8]

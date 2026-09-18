@@ -29,6 +29,10 @@ from odoo import fields
 from odoo.exceptions import AccessError
 from odoo.tests import TransactionCase, tagged
 
+from odoo.addons.hospital_radiology.models.radiology_result import (
+    _result_workflow_capability,
+)
+
 PNG = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
 
 
@@ -44,8 +48,10 @@ class TestRadiologyImageRecordRules(TransactionCase):
         cls.user_b = cls._make_user(
             "radimg_doctor_b", "hospital_management.group_hospital_doctor"
         )
+        # The imaging bench is the Radiology Technician (Radiology Slice 0A);
+        # Lab Technician no longer holds any Radiology rule.
         cls.bench = cls._make_user(
-            "radimg_bench", "hospital_management.group_hospital_lab_technician"
+            "radimg_bench", "hospital_radiology.group_hospital_radiology_technician"
         )
         cls.manager = cls._make_user(
             "radimg_manager", "hospital_management.group_hospital_manager"
@@ -83,6 +89,11 @@ class TestRadiologyImageRecordRules(TransactionCase):
 
     # ------------------------------------------------------------------
     def _image(self, result_physician, request_physician=None, visit_doctor=None):
+        """Radiology Slice 3: the report model refuses a direct state write, and a report on a request that has not started. This fixture arranges that legacy shape through the result workflow capability -- a server-side ContextVar, never a forged context."""
+        with _result_workflow_capability():
+            return self._arrange_image(result_physician, request_physician, visit_doctor)
+
+    def _arrange_image(self, result_physician, request_physician=None, visit_doctor=None):
         """An image whose three reachable scope branches are set separately.
 
         The consultation branch is not isolated here for the reason the

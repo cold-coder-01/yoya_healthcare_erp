@@ -41,6 +41,10 @@ from odoo.exceptions import AccessError, UserError, ValidationError
 from odoo.tests import tagged
 from odoo.tools import mute_logger
 
+from odoo.addons.hospital_radiology.models.radiology_result import (
+    _result_workflow_capability,
+)
+
 from .test_doctor_diagnosis_api import DiagnosisCase
 
 CATALOGUE = "/yoya-emr/api/v1/doctor/catalogue/radiology-exams"
@@ -1572,14 +1576,17 @@ class TestRadiologyAccess(RadiologyCase):
             password=self.other_password,
         )
         stored = self._requests_of(self._consultation_for(appointment))
-        result = self.env["hospital.radiology.result"].sudo().create(
-            {
-                "request_id": stored.id,
-                "patient_id": stored.patient_id.id,
-                "physician_id": stored.physician_id.id,
-                "impression": "Confidential.",
-            }
-        )
+        # A report on a request that has not started: a legacy shape since
+        # Radiology Slice 3, arranged through the result workflow capability.
+        with _result_workflow_capability():
+            result = self.env["hospital.radiology.result"].sudo().create(
+                {
+                    "request_id": stored.id,
+                    "patient_id": stored.patient_id.id,
+                    "physician_id": stored.physician_id.id,
+                    "impression": "Confidential.",
+                }
+            )
 
         visible = (
             self.env["hospital.radiology.result"]
@@ -1593,13 +1600,16 @@ class TestRadiologyAccess(RadiologyCase):
         appointment, _e = self._in_consultation_visit(doctor=self.doctor)
         self._order(appointment)
         stored = self._requests_of(self._consultation_for(appointment))
-        result = self.env["hospital.radiology.result"].sudo().create(
-            {
-                "request_id": stored.id,
-                "patient_id": stored.patient_id.id,
-                "physician_id": stored.physician_id.id,
-            }
-        )
+        # A report on a request that has not started: a legacy shape since
+        # Radiology Slice 3, arranged through the result workflow capability.
+        with _result_workflow_capability():
+            result = self.env["hospital.radiology.result"].sudo().create(
+                {
+                    "request_id": stored.id,
+                    "patient_id": stored.patient_id.id,
+                    "physician_id": stored.physician_id.id,
+                }
+            )
 
         visible = (
             self.env["hospital.radiology.result"]
@@ -1630,11 +1640,12 @@ class TestRadiologyAccess(RadiologyCase):
     def test_the_imaging_bench_still_sees_every_request(self):
         """THE regression a doctor-scoped rule most easily causes. The
         department works a cross-patient queue; scoping it would break imaging.
-        group_hospital_lab_technician is the operational radiology role in this
-        repository -- there is no radiographer group."""
+        Radiology Slice 0A: the operational radiology role is
+        hospital_radiology.group_hospital_radiology_technician. It used to be
+        group_hospital_lab_technician, because no radiographer group existed."""
         bench = self._make_user(
             "rad_tech", "rad-pw-1",
-            ["hospital_management.group_hospital_lab_technician"],
+            ["hospital_radiology.group_hospital_radiology_technician"],
         )
         appointment, _e = self._in_consultation_visit(doctor=self.doctor)
         self._order(appointment)
@@ -1658,7 +1669,7 @@ class TestRadiologyAccess(RadiologyCase):
         start the study it has been asked to do."""
         bench = self._make_user(
             "rad_tech_w", "rad-pw-2",
-            ["hospital_management.group_hospital_lab_technician"],
+            ["hospital_radiology.group_hospital_radiology_technician"],
         )
         appointment, encounter = self._in_consultation_visit(doctor=self.doctor)
         self._order(appointment)

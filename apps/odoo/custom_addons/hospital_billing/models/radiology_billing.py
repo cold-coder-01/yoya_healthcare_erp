@@ -11,6 +11,9 @@ Radiology follows the same ownership split as laboratory:
 """
 
 from odoo import api, fields, models
+from odoo.addons.hospital_radiology.models.radiology_result import (
+    _result_workflow_capability,
+)
 from odoo.exceptions import UserError, ValidationError
 
 
@@ -336,7 +339,10 @@ class HospitalRadiologyRequestBilling(models.Model):
                 if not request.completed_at:
                     vals.update({"completed_at": now, "completed_by_id": self.env.user.id})
                 if request.state != "completed" or not request.completed_at:
-                    request.with_context(skip_radiology_request_write_audit=True).write(vals)
+                    # Through the request's controlled workflow write: a plain
+                    # write() of `state` is refused by hospital_radiology's
+                    # state authority guard (Radiology Slice 2).
+                    request._workflow_write(vals)
                     request._create_audit_log(action_type="state_change", description="Radiology request completed after all active examinations were released.")
         return True
 
@@ -410,7 +416,11 @@ class HospitalRadiologyResultBilling(models.Model):
         request = self.request_id
         candidates = request.line_ids.filtered(lambda l: l.exam_id == result_line.exam_id and l.state != "cancelled")
         if len(candidates) == 1:
-            result_line.sudo().write({"request_line_id": candidates.id})
+            # Healing a legacy line with no request line, on a VALIDATED report
+            # whose lines are frozen: the one line write the result workflow
+            # capability admits (Radiology Slice 3).
+            with _result_workflow_capability():
+                result_line.sudo().write({"request_line_id": candidates.id})
             return candidates
         if not candidates:
             raise UserError("Result line '%s' does not correspond to any active examination on request %s." % (result_line.exam_id.display_name, request.display_name))

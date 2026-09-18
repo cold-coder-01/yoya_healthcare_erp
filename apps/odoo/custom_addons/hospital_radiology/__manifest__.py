@@ -13,13 +13,19 @@ result, with the type read from the file's own bytes rather than its name, a
 managed while the result is draft or entered, and is frozen from validated
 onward against create, write, unlink and archive alike, because a report whose
 evidence can still be replaced is signed off in name only.
+
+Owns the two Radiology roles, ``group_hospital_radiology_technician`` and
+``group_hospital_radiologist``. Radiology access is granted to those roles and
+to Hospital Manager and System Administrator; Lab Technician no longer holds it.
 """,
-    "version": "18.0.1.1.0",
+    "version": "18.0.1.6.0",
     "category": "Healthcare",
     "author": "Ethiopian Hospital ERP",
     "license": "LGPL-3",
     "depends": ["hospital_management"],
     "data": [
+        # Groups before the ACL rows that reference them.
+        "security/hospital_radiology_groups.xml",
         "security/ir.model.access.csv",
         "data/radiology_sequence.xml",
         "views/radiology_request_views.xml",

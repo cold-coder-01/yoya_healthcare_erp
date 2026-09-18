@@ -57,7 +57,16 @@ EXPECTED_ROLE_KEYS = {
     # Lab Technician to /laboratory with it; before it existed they fell through
     # every branch and landed on /triage, which they hold no ACL for.
     "lab_technician",
+    # Added with the Radiology Desk. NARROW like lab_technician: nothing implies
+    # either Radiology group (Radiology Slice 0A), so a manager and an admin
+    # read FALSE. The front end routes a pure Radiology Technician or Radiologist
+    # to /radiology with them.
+    "radiology_technician",
+    "radiologist",
 }
+
+G_RADIOLOGY_TECHNICIAN = "hospital_radiology.group_hospital_radiology_technician"
+G_RADIOLOGIST = "hospital_radiology.group_hospital_radiologist"
 
 
 @tagged("post_install", "-at_install", "front_desk_session_roles")
@@ -238,6 +247,32 @@ class TestFrontDeskSessionRoles(TransactionCase):
         # The desk is not a second door into the nursing or cash surfaces.
         for user in (self.nurse, self.front_desk, self.receptionist, self.cashier):
             self.assertFalse(may_doctor_desk(self.env(user=user)))
+
+    # ------------------------------------------------------------------
+    # radiology_technician / radiologist
+    # ------------------------------------------------------------------
+    def test_radiology_flags_read_true_for_their_own_group_only(self):
+        tech = self._make_user("fdsr_rad_tech", [G_RADIOLOGY_TECHNICIAN])
+        radiologist = self._make_user("fdsr_radiologist", [G_RADIOLOGIST])
+        self.assertTrue(self._flags(tech)["radiology_technician"])
+        self.assertFalse(self._flags(tech)["radiologist"])
+        self.assertTrue(self._flags(radiologist)["radiologist"])
+        self.assertFalse(self._flags(radiologist)["radiology_technician"])
+        for user in (tech, radiologist):
+            self.assertFalse(self._flags(user)["lab_technician"])
+            self.assertFalse(self._flags(user)["doctor"])
+
+    def test_radiology_flags_are_not_granted_by_elimination_or_implication(self):
+        """Lab Technician, Manager and Admin read FALSE -- the no-regression
+        property that keeps a lab technician on /laboratory and a manager on
+        /reception."""
+        lab = self._make_user("fdsr_lab_rad", [G_LAB_TECHNICIAN])
+        manager = self._make_user("fdsr_mgr_rad", [G_MANAGER])
+        admin = self._make_user("fdsr_admin_rad", [G_SYSADMIN])
+        for user in (self.nurse, self.receptionist, self.cashier, self.front_desk,
+                     self.doctor, lab, manager, admin):
+            self.assertFalse(self._flags(user)["radiology_technician"], user.login)
+            self.assertFalse(self._flags(user)["radiologist"], user.login)
 
     # ------------------------------------------------------------------
     # Payload contract

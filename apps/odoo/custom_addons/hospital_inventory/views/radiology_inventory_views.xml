@@ -14,8 +14,17 @@
                     groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator,hospital_management.group_hospital_nurse"/>
             </xpath>
             <xpath expr="//div[@name='button_box']" position="inside">
+                <!-- Shown only to the groups that hold READ on hospital.stock.consumption
+                     (security/ir.model.access.csv). The count is computed as the viewing
+                     user, so for anyone else it raised AccessError and the whole request
+                     form failed to open: the Receptionist already, and the Radiology
+                     Technician and Radiologist once Radiology left Lab Technician
+                     (Radiology Slice 0A). A group removed from the view is not computed;
+                     no access is granted by this, and the button would have failed for
+                     those users anyway. -->
                 <button name="action_view_inventory_consumptions" type="object"
-                    class="oe_stat_button" icon="fa-cubes" invisible="not id">
+                    class="oe_stat_button" icon="fa-cubes" invisible="not id"
+                    groups="hospital_management.group_hospital_pharmacist,hospital_management.group_hospital_nurse,hospital_management.group_hospital_lab_technician,hospital_management.group_hospital_doctor,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_data_protection_officer,hospital_management.group_hospital_system_administrator">
                     <field name="inventory_consumption_count" widget="statinfo" string="Consumption"/>
                 </button>
             </xpath>

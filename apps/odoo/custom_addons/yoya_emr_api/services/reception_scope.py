@@ -31,6 +31,10 @@ GROUP_FRONT_DESK_NURSE = (
     "yoya_reception_bridge.group_hospital_front_desk_nurse"
 )
 GROUP_INSURANCE_OFFICER = "hospital_billing.group_hospital_insurance_officer"
+# Owned by hospital_radiology (Radiology Slice 0A). yoya_emr_api reaches that
+# module through yoya_clinical_bridge, which depends on it explicitly.
+GROUP_RADIOLOGY_TECHNICIAN = "hospital_radiology.group_hospital_radiology_technician"
+GROUP_RADIOLOGIST = "hospital_radiology.group_hospital_radiologist"
 
 # Who may run the guided registration workflow at all.
 #
@@ -161,6 +165,16 @@ def role_flags(env):
         # implies receptionist + doctor + nurse and NOT lab technician. They are
         # claimed by the reception branch long before it matters either way.
         "lab_technician": user.has_group(GROUP_LAB_TECHNICIAN),
+        # Added with the Radiology Desk, and NARROW for the same reason as
+        # lab_technician: nothing implies either Radiology group (Slice 0A), so
+        # these are direct membership, and a manager or admin reads FALSE.
+        #
+        # REPORTING ONLY. Every /radiology/* endpoint decides for itself through
+        # may_rad_desk(). What these fix is the landing route: a pure Radiology
+        # Technician or Radiologist holds no reception-side, doctor or laboratory
+        # role, and would otherwise fall through to /triage.
+        "radiology_technician": user.has_group(GROUP_RADIOLOGY_TECHNICIAN),
+        "radiologist": user.has_group(GROUP_RADIOLOGIST),
     }
 
 
@@ -352,6 +366,114 @@ def lab_desk_capability_flags(env):
     """
     return {
         "lab_desk": may_lab_desk(env),
+    }
+
+
+# Who may OPEN the Radiology Desk (a read gate).
+#
+# THE IMAGING ROLES FROM RADIOLOGY SLICE 0A, AND OVERSIGHT. Radiology Technician
+# and Radiologist are the two groups hospital_radiology now owns, and the ones
+# yoya_clinical_bridge's rule_radiology_*_operations grant the hospital-wide
+# queue to. Manager and System Administrator are named for the reason every
+# other desk names them.
+#
+# THIS GATE IS NARROWER THAN THE ORM, deliberately and in two directions:
+#
+#   * Receptionist, Nurse and the DPO hold a read ACL on every Radiology model
+#     with no record rule narrowing it. That is known debt; this desk does not
+#     inherit it, so they get 403 here, never a populated queue.
+#   * The DOCTOR holds read/write/create on their own radiology requests. Their
+#     radiology surface is the Doctor Desk's Orders and Results tabs, scoped to
+#     their own patients; the imaging department's queue is not a second one.
+#
+# Lab Technician is ABSENT. Slice 0A took Radiology away from that group, and
+# this gate must not quietly hand it back.
+#
+# Authorization is group membership, never "can read the model": a role that
+# can SELECT hospital.radiology.request is not thereby an imaging workstation.
+RAD_DESK_GROUPS = (
+    GROUP_RADIOLOGY_TECHNICIAN,
+    GROUP_RADIOLOGIST,
+    GROUP_MANAGER,
+    GROUP_SYSADMIN,
+)
+
+
+def may_rad_desk(env):
+    """May this user open the Radiology Desk and read its worklist?"""
+    return _in_any(env, RAD_DESK_GROUPS)
+
+
+# THE REPORT AUTHORS (Radiology Slice 3): who may write a report's text and mark
+# it entered. The Radiology Technician opens and reads the report -- the
+# container imaging will hang on -- but does not author it. The same tuple as
+# hospital_radiology's REPORT_AUTHOR_GROUPS, which enforces it on the model.
+RAD_REPORT_AUTHOR_GROUPS = (
+    GROUP_RADIOLOGIST,
+    GROUP_MANAGER,
+    GROUP_SYSADMIN,
+)
+
+
+def may_author_rad_report(env):
+    """May this user write a radiology report and mark it entered?"""
+    return _in_any(env, RAD_REPORT_AUTHOR_GROUPS)
+
+
+def rad_desk_role_flags(env):
+    """The Radiology Desk's own role header: which of ITS roles the user holds.
+
+    Only the four groups the gate knows about. No other group, no group id, and
+    no statement about any other workstation: a header that says "Radiologist"
+    has no business telling the browser whether the same person is a cashier.
+
+    `manager` and `system_admin` are direct membership as has_group reports it,
+    so an admin reads TRUE for both (admin implies manager).
+    """
+    user = env.user
+    return {
+        "radiology_technician": user.has_group(GROUP_RADIOLOGY_TECHNICIAN),
+        "radiologist": user.has_group(GROUP_RADIOLOGIST),
+        "manager": user.has_group(GROUP_MANAGER),
+        "system_admin": user.has_group(GROUP_SYSADMIN),
+    }
+
+
+def rad_desk_capability_flags(env):
+    """What the Radiology Desk may do. Every flag mirrors a server-side guard.
+
+    SLICE 2 adds exactly the two transitions it implements: `schedule_study`
+    and `start_exam`, open to every desk role (no separation of duties yet).
+    No report, validate, release or image flag exists -- not even as False --
+    for the reason lab_desk_capability_flags gives: a flag with no endpoint
+    behind it is an invitation to build a button that has nothing to call.
+
+    SLICE 3 adds the report: `open_report` for every desk role, and
+    `edit_report` / `enter_report` for the report authors only (Radiologist,
+    Manager, System Administrator).
+
+    SLICE 4 adds `manage_images` -- upload, view and remove a file on a draft or
+    entered report -- for every desk role.
+
+    SLICE 5 adds `validate_report` and `release_report`, for the report authors
+    only: the technician views a report but never signs or publishes it.
+
+    These say which ACTS the role may attempt. Whether ONE request may be
+    scheduled, started or reported is the request's own lane, re-checked under
+    a row lock by the endpoint on every call.
+    """
+    allowed = may_rad_desk(env)
+    author = allowed and may_author_rad_report(env)
+    return {
+        "radiology_desk": allowed,
+        "schedule_study": allowed,
+        "start_exam": allowed,
+        "open_report": allowed,
+        "edit_report": author,
+        "enter_report": author,
+        "manage_images": allowed,
+        "validate_report": author,
+        "release_report": author,
     }
 
 

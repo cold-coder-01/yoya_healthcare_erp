@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="0">
+
+        <!--
+            THE RADIOLOGY ROLES.
+
+            Before these groups existed, group_hospital_lab_technician was the
+            operational imaging role: it held the Radiology ACLs, the hospital-
+            wide Radiology record rules and the Radiology menu. Every laboratory
+            technician was therefore also a radiographer and a radiologist, by
+            accident of there being no better group. These two replace it for
+            Radiology, and Lab Technician keeps its laboratory authority only.
+
+            Declared HERE, in the module that owns the radiology models, for the
+            reason hospital_billing gives for the Cashier group: the ACLs, rules
+            and (later) the Python guards that name these groups belong to
+            radiology, and hospital_management sits upstream of this module, so
+            it could never reference them without a dependency cycle. The
+            category is hospital_management's, so the roles appear beside every
+            other hospital role in the user form.
+
+            NEITHER IMPLIES THE OTHER, deliberately. Acquiring a study and
+            signing its report are different responsibilities, and a group that
+            implied the other would make least privilege unrepresentable. A small
+            hospital that has one person doing both assigns both groups
+            explicitly. Strict separation of duties between the two is NOT
+            enforced yet; that is a later, explicit decision.
+
+            NEITHER IMPLIES ANY OTHER HOSPITAL ROLE, and nothing implies them.
+            Manager and System Administrator keep their own explicit Radiology
+            ACL rows and record rules, exactly as they already do for the
+            laboratory, so the existing hierarchy in hospital_management is not
+            touched.
+        -->
+
+        <record id="group_hospital_radiology_technician" model="res.groups">
+            <field name="name">Hospital Radiology Technician</field>
+            <field name="category_id" ref="hospital_management.module_category_hospital_management"/>
+            <field name="comment">Operational imaging: works the hospital-wide radiology
+                queue, schedules and starts studies, and acquires and attaches imaging.
+                Implies no other role. Holds no laboratory, cashier or Doctor Desk
+                authority.</field>
+        </record>
+
+        <record id="group_hospital_radiologist" model="res.groups">
+            <field name="name">Hospital Radiologist</field>
+            <field name="category_id" ref="hospital_management.module_category_hospital_management"/>
+            <field name="comment">Reporting: reads the radiology queue with its request and
+                imaging context, and enters, validates and releases radiology reports.
+                Deliberately does NOT imply Radiology Technician. Implies no other role.</field>
+        </record>
+
+    </data>
+</odoo>

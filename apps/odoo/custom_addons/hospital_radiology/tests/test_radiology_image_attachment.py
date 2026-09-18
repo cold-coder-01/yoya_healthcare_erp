@@ -25,6 +25,8 @@ import uuid
 from odoo.exceptions import UserError
 from odoo.tests import TransactionCase, tagged
 
+from ..models.radiology_result import _result_workflow_capability
+
 from .test_radiology_image import JPEG, PDF, PNG
 
 
@@ -34,8 +36,10 @@ class TestRadiologyImageBackingAttachment(TransactionCase):
     def setUpClass(cls):
         super().setUpClass()
         tag = uuid.uuid4().hex[:6]
+        # The imaging bench is the Radiology Technician (Radiology Slice 0A),
+        # which holds write on hospital.radiology.image as the bench did.
         cls.bench = cls._make_user(
-            "radimg_bench", "hospital_management.group_hospital_lab_technician"
+            "radimg_bench", "hospital_radiology.group_hospital_radiology_technician"
         )
         cls.doctor_user = cls._make_user(
             "radimg_doc", "hospital_management.group_hospital_doctor"
@@ -67,6 +71,11 @@ class TestRadiologyImageBackingAttachment(TransactionCase):
         })
 
     def _image_in(self, state):
+        """Radiology Slice 3: the report model refuses a direct state write, and a report on a request that has not started. This fixture arranges that legacy shape through the result workflow capability -- a server-side ContextVar, never a forged context."""
+        with _result_workflow_capability():
+            return self._arrange_image_in(state)
+
+    def _arrange_image_in(self, state):
         """An image on a result advanced to `state`, plus its backing row."""
         request = self.env["hospital.radiology.request"].sudo().create({
             "patient_id": self.patient.id,

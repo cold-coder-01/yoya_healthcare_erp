@@ -41,6 +41,10 @@ import uuid
 
 from odoo.tests import tagged
 
+from odoo.addons.hospital_radiology.models.radiology_result import (
+    _result_workflow_capability,
+)
+
 from .test_doctor_laboratory_api import LaboratoryCase
 
 RESULTS = "/yoya-emr/api/v1/doctor/visits/%s/results"
@@ -143,17 +147,35 @@ class ResultsCase(LaboratoryCase):
                 break
         return result
 
-    def _rad_result(self, request, state="released", **header):
-        """A radiology report on `request`, advanced to `state`."""
-        result = self.env["hospital.radiology.result"].sudo().create(
-            dict({"request_id": request.id}, **header)
-        )
-        for step in ("entered", "validated", "released"):
-            if state == "draft":
-                break
-            result.sudo().write({"state": step})
-            if step == state:
-                break
+    def _advance(self, result, *states):
+        """Move a radiology report through `states` by fixture write. A legacy
+        arrangement since Radiology Slice 3, made through the result workflow
+        capability because the model refuses a direct state write."""
+        with _result_workflow_capability():
+            for state in states:
+                result.sudo().write({"state": state})
+
+    def _rad_result(self, request, state="released", line_values=None, **header):
+        """A radiology report on `request`, advanced to `state`.
+
+        Radiology Slice 3: the report model refuses a direct state write, and a
+        report on a request that has not started, so this legacy shape is
+        arranged through the result workflow capability -- a server-side
+        ContextVar, never a forged context. `line_values` is written while the
+        report is still a draft, because its lines freeze once it leaves draft.
+        """
+        with _result_workflow_capability():
+            result = self.env["hospital.radiology.result"].sudo().create(
+                dict({"request_id": request.id}, **header)
+            )
+            if line_values:
+                result.line_ids.write(line_values)
+            for step in ("entered", "validated", "released"):
+                if state == "draft":
+                    break
+                result.sudo().write({"state": step})
+                if step == state:
+                    break
         return result
 
     def _strip_linkage(self, result):
@@ -504,8 +526,7 @@ class TestResultContent(ResultsCase):
     def test_a_line_summary_alone_still_counts_as_a_report(self):
         appointment, _ = self._in_consultation_visit()
         request = self._rad_request(appointment)
-        result = self._rad_result(request)
-        result.sudo().line_ids.write({"result_summary": "Normal study."})
+        self._rad_result(request, line_values={"result_summary": "Normal study."})
 
         _, payload = self._results(appointment)
         self.assertTrue(self._rad_rows(payload)[0]["result"]["has_report"])
@@ -523,7 +544,9 @@ class TestResultContent(ResultsCase):
     def test_the_radiologist_is_a_display_name_and_nothing_else(self):
         appointment, _ = self._in_consultation_visit()
         request = self._rad_request(appointment)
-        self._rad_result(request, impression="Normal.")
+        # Radiology Slice 3: the reporting radiologist is no longer defaulted
+        # to whoever created the record; it is recorded at entry. Named here.
+        self._rad_result(request, impression="Normal.", radiologist_id=self.env.user.id)
 
         _, payload = self._results(appointment)
         result = self._rad_rows(payload)[0]["result"]

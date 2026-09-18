@@ -37,6 +37,10 @@ import uuid
 from odoo import fields
 from odoo.tests import tagged
 
+from odoo.addons.hospital_radiology.models.radiology_result import (
+    _result_workflow_capability,
+)
+
 from .test_doctor_results_api import ResultsCase
 
 HISTORY = "/yoya-emr/api/v1/doctor/visits/%s/history"
@@ -701,6 +705,11 @@ class TestHistoryImages(HistoryCase):
     RESULTS_IMAGE = "/yoya-emr/api/v1/doctor/visits/%s/results/images/%s"
 
     def _released_image_for(self, consultation, patient, release=True):
+        """Radiology Slice 3: the report model refuses a direct state write, and a report on a request that has not started. This fixture arranges that legacy shape through the result workflow capability -- a server-side ContextVar, never a forged context."""
+        with _result_workflow_capability():
+            return self._arrange_released_image_for(consultation, patient, release)
+
+    def _arrange_released_image_for(self, consultation, patient, release=True):
         """A released report with one image, attached to `consultation`.
 
         The image is attached while the result is still ENTERED, because Slice

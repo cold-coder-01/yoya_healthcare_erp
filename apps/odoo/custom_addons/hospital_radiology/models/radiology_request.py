@@ -1,5 +1,53 @@
+import contextvars
+from contextlib import contextmanager
+
 from odoo import api, fields, models
 from odoo.exceptions import UserError
+
+# ---------------------------------------------------------------------------
+# REQUEST STATE AUTHORITY (Radiology Slice 2)
+# ---------------------------------------------------------------------------
+# `state` on hospital.radiology.request moves ONLY through this model's own
+# workflow methods. Before this guard, anyone holding write access -- a doctor on
+# their own order, a desk role, an RPC client, sudo code -- could write
+# {"state": "in_progress"} and skip hospital_billing's clearance gate, its charge
+# moves and encounter start, and the transition audit.
+#
+# WHY A CONTEXTVAR AND NOT A CONTEXT FLAG. self.env.context is attacker-
+# controlled on every RPC call: execute_kw and /web/dataset/call_kw accept an
+# arbitrary context, so a check such as context.get("allow_state_write") is
+# defeated by sending that key. A ContextVar is server-side process state that no
+# RPC payload can set; the only way to raise it is to execute
+# `_request_state_capability()` in Python. This is the same design
+# yoya_reception_bridge.reception_capability and hospital_billing's payer
+# identity capability already use.
+#
+# THE WINDOW IS ONE WRITE WIDE. The capability is raised around the single
+# state write inside _write_state() / _workflow_write() and always released in a
+# `finally`, so an exception can never leave it open for a later call.
+_request_state_capability_var = contextvars.ContextVar(
+    "hospital_radiology_request_state_capability", default=False
+)
+
+
+@contextmanager
+def _request_state_capability():
+    token = _request_state_capability_var.set(True)
+    try:
+        yield
+    finally:
+        _request_state_capability_var.reset(token)
+
+
+def has_request_state_capability():
+    return _request_state_capability_var.get()
+
+
+STATE_WRITE_REFUSED_MESSAGE = (
+    "Radiology request %s cannot be moved from '%s' to '%s' by editing its "
+    "state. Use the request's workflow actions, which run the checks that "
+    "transition requires."
+)
 
 
 class HospitalRadiologyExam(models.Model):
@@ -115,6 +163,10 @@ class HospitalRadiologyRequest(models.Model):
         ],
         default="draft",
         required=True,
+        # A duplicate starts as a new draft order. Copying a completed or
+        # in-progress state would be a state write that no workflow method
+        # performed, and the create() guard below refuses exactly that.
+        copy=False,
     )
     line_ids = fields.One2many(
         "hospital.radiology.request.line",
@@ -212,6 +264,21 @@ class HospitalRadiologyRequest(models.Model):
     def create(self, vals_list):
         sequence = self.env["ir.sequence"]
         for vals in vals_list:
+            # A request is BORN draft. Creating one directly in any later state
+            # would skip every transition between, so it is refused on every
+            # channel -- sudo and RPC alike -- unless a workflow method of this
+            # model has raised the state capability.
+            requested_state = vals.get("state")
+            if (
+                requested_state
+                and requested_state != "draft"
+                and not has_request_state_capability()
+            ):
+                raise UserError(
+                    "A radiology request is created as a draft and moved "
+                    "through its workflow actions. It cannot be created "
+                    "directly in state '%s'." % requested_state
+                )
             if not vals.get("name") or vals.get("name") == "New":
                 vals["name"] = sequence.next_by_code(
                     "hospital.radiology.request.sequence"
@@ -228,6 +295,18 @@ class HospitalRadiologyRequest(models.Model):
         return requests
 
     def write(self, vals):
+        # STATE AUTHORITY. Runs before super() and does not look at the context
+        # or at sudo: a direct state CHANGE is refused on every channel unless a
+        # workflow method of this model raised the capability. Writing the
+        # value a request already has is not a transition and is allowed, so a
+        # form or import that echoes the current state does not break.
+        if "state" in vals and not has_request_state_capability():
+            for request in self:
+                if vals["state"] != request.state:
+                    raise UserError(
+                        STATE_WRITE_REFUSED_MESSAGE
+                        % (request.display_name, request.state, vals["state"])
+                    )
         tracked_vals = {
             key: value
             for key, value in vals.items()
@@ -300,11 +379,22 @@ class HospitalRadiologyRequest(models.Model):
                 raise UserError("Only cancelled radiology requests can be reset to draft.")
             request._write_state("draft")
 
+    def _workflow_write(self, vals):
+        """THE controlled path for a workflow write that includes `state`.
+
+        Private (underscore), so it cannot be called over RPC. Used by this
+        model's _write_state() and by hospital_billing's release-completion
+        sync, which must set `completed` together with completed_at / by. The
+        capability covers this one write and nothing after it.
+        """
+        with _request_state_capability():
+            return self.with_context(skip_radiology_request_write_audit=True).write(
+                vals
+            )
+
     def _write_state(self, new_state):
         old_state = self.state
-        self.with_context(skip_radiology_request_write_audit=True).write(
-            {"state": new_state}
-        )
+        self._workflow_write({"state": new_state})
         self._create_audit_log(
             action_type="state_change",
             description="Radiology request state changed.",

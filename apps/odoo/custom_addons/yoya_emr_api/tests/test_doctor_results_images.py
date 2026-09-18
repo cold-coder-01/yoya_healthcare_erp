@@ -73,8 +73,7 @@ class ResultsImagesCase(ResultsCase):
         request = self._rad_request(appointment)
         result = self._rad_result(request, state="entered", **result_kw)
         created = [self._image(result, **spec) for spec in (images or [{}])]
-        result.sudo().write({"state": "validated"})
-        result.sudo().write({"state": "released"})
+        self._advance(result, "validated", "released")
         return appointment, result, created
 
     def _content(self, appointment, image_id, user=None, password=None, **params):
@@ -160,8 +159,7 @@ class TestResultImageMetadata(ResultsImagesCase):
         kept = self._image(result, name="Kept")
         dropped = self._image(result, name="Archived")
         dropped.sudo().write({"active": False})
-        result.sudo().write({"state": "validated"})
-        result.sudo().write({"state": "released"})
+        self._advance(result, "validated", "released")
 
         row = self._radiology_row(appointment)
         self.assertEqual(row["result"]["image_count"], 1)
@@ -286,8 +284,7 @@ class TestResultImageContent(ResultsImagesCase):
         request = self._rad_request(appointment)
         result = self._rad_result(request, state="entered")
         image = self._image(result, filename='ev\ril"\n.png')
-        result.sudo().write({"state": "validated"})
-        result.sudo().write({"state": "released"})
+        self._advance(result, "validated", "released")
 
         response = self._content(appointment, image.id)
         self.assertEqual(response.status_code, 200)
@@ -324,8 +321,7 @@ class TestResultImageContent(ResultsImagesCase):
         })
         result = self._rad_result(request, state="entered")
         image = self._image(result)
-        result.sudo().write({"state": "validated"})
-        result.sudo().write({"state": "released"})
+        self._advance(result, "validated", "released")
 
         # As the caller's OWN visit id, so the refusal is about the image and
         # not about the appointment.
@@ -354,12 +350,12 @@ class TestResultImageContent(ResultsImagesCase):
             result = self._rad_result(request, state="entered")
             image = self._image(result)
             if state == "cancelled":
-                result.sudo().write({"state": "cancelled"})
+                self._advance(result, "cancelled")
             elif state != "entered":
                 if state == "draft":
-                    result.sudo().write({"state": "draft"})
+                    self._advance(result, "draft")
                 else:
-                    result.sudo().write({"state": "validated"})
+                    self._advance(result, "validated")
             self.assertEqual(result.state, state)
             self._assert_not_found(
                 self._content(appointment, image.id), "parent in %s" % state
@@ -371,8 +367,7 @@ class TestResultImageContent(ResultsImagesCase):
         result = self._rad_result(request, state="entered")
         image = self._image(result)
         image.sudo().write({"active": False})
-        result.sudo().write({"state": "validated"})
-        result.sudo().write({"state": "released"})
+        self._advance(result, "validated", "released")
         self._assert_not_found(self._content(appointment, image.id), "archived")
 
     def test_a_patient_document_id_is_not_found(self):

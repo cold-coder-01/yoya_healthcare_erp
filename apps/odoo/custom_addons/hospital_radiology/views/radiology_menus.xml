@@ -11,7 +11,8 @@
             ref('hospital_management.group_hospital_receptionist'),
             ref('hospital_management.group_hospital_doctor'),
             ref('hospital_management.group_hospital_nurse'),
-            ref('hospital_management.group_hospital_lab_technician'),
+            ref('group_hospital_radiology_technician'),
+            ref('group_hospital_radiologist'),
             ref('hospital_management.group_hospital_data_protection_officer'),
             ref('base.group_system')
         ])]"/>
@@ -41,7 +42,6 @@
         <field name="groups_id" eval="[(6, 0, [
             ref('hospital_management.group_hospital_system_administrator'),
             ref('hospital_management.group_hospital_manager'),
-            ref('hospital_management.group_hospital_lab_technician'),
             ref('base.group_system')
         ])]"/>
     </record>

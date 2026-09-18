@@ -56,6 +56,17 @@ export type ReceptionRoles = {
    * and nurse, but NOT lab technician.
    */
   lab_technician: boolean;
+  /**
+   * Membership of hospital_radiology.group_hospital_radiology_technician and
+   * hospital_radiology.group_hospital_radiologist (Radiology Slice 0A).
+   *
+   * NARROW, like lab_technician: nothing implies either group, and neither
+   * implies the other, so these are direct membership. A manager and an admin
+   * read FALSE, and a Lab Technician reads FALSE -- Radiology is no longer part
+   * of that role.
+   */
+  radiology_technician: boolean;
+  radiologist: boolean;
 };
 
 export const RECEPTION_ROUTE = "/reception";
@@ -65,6 +76,7 @@ export const CASHIER_ROUTE = "/cashier";
 export const INSURANCE_CREDIT_ROUTE = "/insurance-credit";
 export const DOCTOR_ROUTE = "/doctor";
 export const LABORATORY_ROUTE = "/laboratory";
+export const RADIOLOGY_ROUTE = "/radiology";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -87,6 +99,8 @@ export function parseReceptionRoles(value: unknown): ReceptionRoles | null {
     "insurance_officer",
     "doctor",
     "lab_technician",
+    "radiology_technician",
+    "radiologist",
   ];
   if (!known.some((key) => key in value)) {
     return null;
@@ -105,6 +119,8 @@ export function parseReceptionRoles(value: unknown): ReceptionRoles | null {
     insurance_officer: flag("insurance_officer"),
     doctor: flag("doctor"),
     lab_technician: flag("lab_technician"),
+    radiology_technician: flag("radiology_technician"),
+    radiologist: flag("radiologist"),
   };
 }
 
@@ -291,7 +307,46 @@ export function landingRouteForRoles(roles: ReceptionRoles | null): string {
   if (roles?.lab_technician === true) {
     return LABORATORY_ROUTE;
   }
+  // BELOW the laboratory branch, for the same no-regression reason that put
+  // the laboratory below the doctor: a user who holds both keeps the landing
+  // page they have today. A pure Radiology Technician or Radiologist holds none
+  // of the roles above and would otherwise fall through to /triage.
+  //
+  // NARROW FLAGS ONLY. canUseRadiologyDesk also admits manager and admin, who
+  // were claimed by the reception branch long before this line. A Lab
+  // Technician reads both flags false and is never routed here.
+  //
+  // A LANDING ROUTE IS NOT A PERMISSION. /radiology/* is gated server-side by
+  // may_rad_desk(); anyone who reaches /radiology without a desk role sees the
+  // desk's own "not your workstation" banner and 403 on every data call.
+  if (roles?.radiology_technician === true || roles?.radiologist === true) {
+    return RADIOLOGY_ROUTE;
+  }
   return CLINICAL_ROUTE;
+}
+
+/**
+ * Radiology Desk visibility.
+ *
+ * Mirrors the server's RAD_DESK_GROUPS (yoya_emr_api reception_scope): Radiology
+ * Technician, Radiologist, Manager, System Administrator. BROADER than the
+ * landing branch above, for the reason canUseDoctorDesk is: a manager still
+ * LANDS on reception but may open the desk.
+ *
+ * Lab Technician, Doctor, Nurse, Receptionist, Front Desk Nurse, Cashier,
+ * Accountant and Insurance Officer are absent, as they are from the server
+ * tuple. This decides what is OFFERED; the server decides what is allowed.
+ */
+export function canUseRadiologyDesk(roles: ReceptionRoles | null): boolean {
+  if (!roles) {
+    return false;
+  }
+  return (
+    roles.radiology_technician ||
+    roles.radiologist ||
+    roles.manager ||
+    roles.system_administrator
+  );
 }
 
 /**
