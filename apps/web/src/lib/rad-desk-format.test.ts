@@ -11,6 +11,8 @@ import test from "node:test";
 
 // TYPE-ONLY: erased at runtime, so no path alias has to resolve.
 import type {
+  RadDeskCapabilities,
+  RadOperationalResult,
   RadQueueRow,
   RadRequestDetail,
   RadWorklistSummary,
@@ -21,10 +23,44 @@ import {
   RAD_DESK_ACTIVE_LANE_ORDER,
   RAD_DESK_LANE_ORDER,
   RAD_SESSION_PATH,
+  REPORT_ENTER_SUPPORT_TEXT,
   SCHEDULE_SUPPORT_TEXT,
   START_SUPPORT_TEXT,
   activeSelection,
   ageSexLabel,
+  ACCEPTED_IMAGE_LABEL,
+  ACCEPTED_IMAGE_TYPES,
+  IMAGE_REMOVE_SUPPORT_TEXT,
+  MAX_IMAGE_BYTES,
+  MAX_IMAGE_LABEL,
+  RELEASE_REVIEW_TEXT,
+  VALIDATE_REVIEW_TEXT,
+  VALIDATE_SUPPORT_TEXT,
+  canOpenReport,
+  canReleaseReport,
+  canValidateReport,
+  canViewReport,
+  releaseConfirmText,
+  releaseIdentityText,
+  releaseSupportText,
+  reportReleasePath,
+  reportValidatePath,
+  shouldReconcileAfterSignoff,
+  signoffErrorMessage,
+  signoffOutcomeText,
+  signoffPath,
+  validateConfirmText,
+  imageErrorMessage,
+  imageKind,
+  imagePath,
+  imageRemoveConfirmText,
+  imageRemovePath,
+  imageTooLarge,
+  imageTypeLabel,
+  imageUploadForm,
+  imagesEditable,
+  imagesPath,
+  shouldReconcileAfterImage,
   canScheduleStudy,
   canStartExam,
   clearanceNotice,
@@ -41,13 +77,28 @@ import {
   laneStatuses,
   matchesSearch,
   orDash,
+  patchReportLine,
   radLaneCode,
   radLaneLabel,
   radPriorityCode,
   radPriorityLabel,
+  reportBody,
+  reportContext,
+  reportDraftChanged,
+  reportDraftFromResult,
+  reportEditable,
+  reportEnterConfirmText,
+  reportEnterPath,
+  reportEnteredOutcomeText,
+  reportErrorMessage,
+  reportPath,
+  reportSavePath,
+  reportStatusText,
   requestPath,
   resolveSelection,
   reviewMessage,
+  serializeReportBody,
+  shouldReconcileAfterReport,
   scheduleConfirmText,
   schedulePath,
   shouldReconcileAfterTransition,
@@ -590,4 +641,463 @@ test("the worklist path encodes filters and omits empties", () => {
 
   const empty = new URL(worklistPath({ q: "  ", date: null, modality: "" }), "http://bff.invalid");
   assert.equal(empty.search, "");
+});
+
+/* ------------------------------------------------------------------ *
+ * The report (Slice 3)
+ * ------------------------------------------------------------------ */
+
+function report(overrides: Partial<RadOperationalResult> = {}): RadOperationalResult {
+  return {
+    id: 51,
+    name: "RADRES0051",
+    state: "draft",
+    state_label: "Draft",
+    result_date: "2026-09-18",
+    radiologist: null,
+    has_report: false,
+    image_count: 0,
+    findings: null,
+    impression: null,
+    recommendations: null,
+    lines: [
+      {
+        id: 81,
+        request_line_id: 71,
+        exam: { id: 3, name: "Brain CT Scan", code: "CT-BRAIN" },
+        modality: "ct",
+        modality_label: "CT Scan",
+        body_part: "Brain",
+        contrast_used: false,
+        result_summary: null,
+        notes: null,
+      },
+    ],
+    images: [],
+    images_mutable: true,
+    ...overrides,
+  };
+}
+
+const AUTHOR: RadDeskCapabilities = {
+  radiology_desk: true,
+  schedule_study: true,
+  start_exam: true,
+  open_report: true,
+  edit_report: true,
+  enter_report: true,
+  manage_images: true,
+  validate_report: true,
+  release_report: true,
+};
+const TECHNICIAN: RadDeskCapabilities = {
+  ...AUTHOR,
+  edit_report: false,
+  enter_report: false,
+  validate_report: false,
+  release_report: false,
+};
+
+const REPORTABLE = { state: "in_progress", lane: "awaiting_report" } as const;
+
+test("report paths are BFF paths", () => {
+  assert.equal(reportPath(411), "/api/radiology/requests/411/report");
+  assert.equal(reportSavePath(51), "/api/radiology/results/51/save");
+  assert.equal(reportEnterPath(51), "/api/radiology/results/51/enter");
+  for (const path of [reportPath(1), reportSavePath(1), reportEnterPath(1)]) {
+    assert.doesNotMatch(path, /odoo|yoya-emr|\/validate|\/release/);
+  }
+});
+
+test("Open report is offered only where a draft may still be created", () => {
+  assert.equal(canOpenReport(detail(REPORTABLE)), true);
+  // Slice 5: every later lane VIEWS the report it already has instead.
+  const hidden: Array<[string, Partial<RadRequestDetail>]> = [
+    ["awaiting validation", { state: "in_progress", lane: "awaiting_validation" }],
+    ["requested", { state: "requested", lane: "to_schedule" }],
+    ["scheduled", { state: "scheduled", lane: "ready_to_start" }],
+    ["awaiting release", { state: "in_progress", lane: "awaiting_release" }],
+    ["completed", { state: "completed", lane: "completed" }],
+    ["cancelled", { state: "cancelled", lane: "cancelled" }],
+    ["anomaly lane", { state: "in_progress", lane: "anomaly" }],
+    ["anomaly reason", { ...REPORTABLE, anomaly_reason: "unknown_state" }],
+    ["report conflict", { ...REPORTABLE, result_conflict: true }],
+    ["no active study", { ...REPORTABLE, exam_count: 0, first_exam: null }],
+  ];
+  for (const [name, overrides] of hidden) {
+    assert.equal(canOpenReport(detail(overrides)), false, name);
+  }
+  assert.equal(canOpenReport(null), false);
+});
+
+test("a report is editable only as a draft, and only by a report author", () => {
+  assert.equal(reportEditable(report(), AUTHOR), true);
+  assert.equal(reportEditable(report(), TECHNICIAN), false);
+  assert.equal(reportEditable(report(), null), false);
+  for (const state of ["entered", "validated", "released", "cancelled"]) {
+    assert.equal(reportEditable(report({ state }), AUTHOR), false, state);
+  }
+  assert.equal(reportEditable(null, AUTHOR), false);
+});
+
+test("the draft is the report's text as strings, and back again as the allow-listed body", () => {
+  const draft = reportDraftFromResult(
+    report({ findings: "Clear.", lines: [{ ...report().lines[0], notes: "Non-contrast." }] }),
+  );
+  assert.deepEqual(draft, {
+    findings: "Clear.",
+    impression: "",
+    recommendations: "",
+    lines: [{ id: 81, result_summary: "", notes: "Non-contrast." }],
+  });
+  const body = reportBody(draft);
+  assert.deepEqual(body, {
+    findings: "Clear.",
+    impression: null,
+    recommendations: null,
+    lines: [{ id: 81, result_summary: null, notes: "Non-contrast." }],
+  });
+  assert.deepEqual(Object.keys(body).sort(), ["findings", "impression", "lines", "recommendations"]);
+  assert.deepEqual(Object.keys(body.lines[0]).sort(), ["id", "notes", "result_summary"]);
+  assert.deepEqual(JSON.parse(serializeReportBody(draft)), body);
+});
+
+test("the body carries text exactly as typed: whitespace is the server's to judge", () => {
+  const body = reportBody({ findings: "  ", impression: "Normal.\n", recommendations: "", lines: [] });
+  assert.equal(body.findings, "  ");
+  assert.equal(body.impression, "Normal.\n");
+  assert.equal(body.recommendations, null);
+});
+
+test("the body never carries a protected field", () => {
+  const text = serializeReportBody(reportDraftFromResult(report()));
+  for (const key of [
+    "state", "request_id", "patient_id", "physician_id", "radiologist", "active",
+    "result_date", "image", "exam", "request_line_id", "contrast", "body_part",
+  ]) {
+    assert.ok(!text.includes(`"${key}`), key);
+  }
+});
+
+test("a change is detected field by field, and a line patch touches one line", () => {
+  const base = reportDraftFromResult(report());
+  assert.equal(reportDraftChanged(base, reportDraftFromResult(report())), false);
+  assert.equal(reportDraftChanged(base, { ...base, impression: "Normal." }), true);
+  const patched = patchReportLine(base, 81, { result_summary: "Normal." });
+  assert.equal(patched.lines[0].result_summary, "Normal.");
+  assert.equal(base.lines[0].result_summary, "", "the original draft is not mutated");
+  assert.equal(reportDraftChanged(base, patched), true);
+  assert.deepEqual(patchReportLine(base, 999, { notes: "X" }), base);
+});
+
+test("the entry confirmation names the report, in the tested wording", () => {
+  assert.equal(reportEnterConfirmText(report()), "Mark RADRES0051 as entered?");
+  assert.equal(
+    REPORT_ENTER_SUPPORT_TEXT,
+    "This locks the current report text for review before validation. The ordering clinician will still not see the report until it is released.",
+  );
+});
+
+test("the sheet's header context comes from the server's payloads", () => {
+  const context = reportContext(
+    detail({
+      exams_summary: "Brain CT Scan",
+      modality_label: "CT Scan",
+      body_part: "Brain",
+    }),
+    report(),
+  );
+  assert.deepEqual(context, [
+    { label: "Patient", value: "Bezabeh Ketema" },
+    { label: "MRN", value: "HMS11832" },
+    { label: "Request", value: "RADREQ0411" },
+    { label: "Report", value: "RADRES0051" },
+    { label: "Exams", value: "Brain CT Scan" },
+    { label: "Modality", value: "CT Scan" },
+    { label: "Body part", value: "Brain" },
+    { label: "Ordering doctor", value: "Dr. Hana Bekele" },
+    { label: "Radiologist", value: "—" },
+  ]);
+  assert.equal(
+    reportContext(detail({}), report({ radiologist: "Dr. Yonas Radiologist" }))[8].value,
+    "Dr. Yonas Radiologist",
+  );
+  const bare = reportContext(detail({ patient: null, ordering_physician: null }), report());
+  assert.equal(bare[0].value, "—");
+  assert.equal(bare[7].value, "—");
+});
+
+test("the entered outcome reads the server's new lane", () => {
+  assert.equal(
+    reportEnteredOutcomeText(report(), detail({ lane_label: "Awaiting validation" })),
+    "Report RADRES0051 entered. The request is now in Awaiting validation.",
+  );
+});
+
+test("the status line says what the sheet is doing", () => {
+  const base = { readOnly: false, busy: null, changed: false, savedSinceOpen: false } as const;
+  assert.equal(reportStatusText({ ...base, busy: "save" }), "Saving draft…");
+  assert.equal(reportStatusText({ ...base, busy: "enter" }), "Marking entered…");
+  assert.equal(reportStatusText({ ...base, readOnly: true }), "Read only.");
+  assert.equal(reportStatusText({ ...base, changed: true }), "Unsaved changes.");
+  assert.equal(reportStatusText({ ...base, savedSinceOpen: true }), "Draft saved.");
+  assert.equal(reportStatusText(base), "No changes yet.");
+});
+
+test("a report refusal prefers the server's sentence and falls back without figures", () => {
+  const server = "Radiology report RADRES0051 is not complete: enter the findings or the impression.";
+  assert.equal(reportErrorMessage(` ${server} `, "enter"), server);
+  const fallbacks = [
+    reportErrorMessage(null, "open"),
+    reportErrorMessage("", "save"),
+    reportErrorMessage(undefined, "enter"),
+  ];
+  assert.deepEqual(fallbacks, [
+    "The report could not be opened. Nothing was changed.",
+    "The draft could not be saved. Nothing was changed.",
+    "The report could not be marked entered. Nothing was changed.",
+  ]);
+  for (const text of [...fallbacks, server]) {
+    assert.doesNotMatch(text, /\d+\.\d{2}|ETB|Birr|payable|invoice|receipt|amount|price|balance|charge/i, text);
+  }
+});
+
+test("the desk re-reads after a report refusal that means the screen is stale", () => {
+  for (const code of [
+    "radiology_request_not_found",
+    "radiology_result_not_found",
+    "radiology_report_not_available",
+    "radiology_request_no_active_study",
+    "radiology_result_ambiguous",
+    "radiology_result_not_editable",
+    "radiology_result_state_conflict",
+  ]) {
+    assert.equal(shouldReconcileAfterReport(code), true, code);
+  }
+  for (const code of [
+    null, undefined, "", "radiology_report_incomplete", "radiology_report_author_required",
+    "radiology_report_field_not_allowed", "radiology_report_response_failed",
+  ]) {
+    assert.equal(shouldReconcileAfterReport(code), false, String(code));
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * Images (Slice 4)
+ * ------------------------------------------------------------------ */
+
+test("image paths are the desk's own BFF paths", () => {
+  assert.equal(imagesPath(51), "/api/radiology/results/51/images");
+  assert.equal(imagePath(51, 7), "/api/radiology/results/51/images/7");
+  assert.equal(imagePath(51, 7, true), "/api/radiology/results/51/images/7?disposition=attachment");
+  assert.equal(imageRemovePath(51, 7), "/api/radiology/results/51/images/7/remove");
+  for (const path of [imagesPath(1), imagePath(1, 2), imageRemovePath(1, 2)]) {
+    assert.doesNotMatch(path, /odoo|yoya-emr|web\/content|doctor|token/);
+  }
+});
+
+test("image mutability is the server's flag and the role's capability, not the text's", () => {
+  assert.equal(imagesEditable(report({ state: "entered", images_mutable: true }), AUTHOR), true);
+  assert.equal(imagesEditable(report({ state: "entered", images_mutable: true }), TECHNICIAN), true);
+  assert.equal(reportEditable(report({ state: "entered" }), AUTHOR), false, "the text stays frozen");
+  assert.equal(imagesEditable(report({ images_mutable: false }), AUTHOR), false);
+  assert.equal(imagesEditable(report(), { ...AUTHOR, manage_images: false }), false);
+  assert.equal(imagesEditable(null, AUTHOR), false);
+  assert.equal(imagesEditable(report(), null), false);
+});
+
+test("the picker offers JPG, PNG and PDF up to 25 MB", () => {
+  assert.equal(ACCEPTED_IMAGE_TYPES, "image/jpeg,image/png,application/pdf");
+  assert.equal(ACCEPTED_IMAGE_LABEL, "JPG, PNG or PDF");
+  assert.equal(MAX_IMAGE_LABEL, "Max file size: 25 MB");
+  assert.equal(MAX_IMAGE_BYTES, 25 * 1024 * 1024);
+  assert.equal(imageTooLarge({ size: MAX_IMAGE_BYTES }), false);
+  assert.equal(imageTooLarge({ size: MAX_IMAGE_BYTES + 1 }), true);
+});
+
+test("the upload form carries the file and a trimmed caption, nothing else", () => {
+  const file = new File([new Uint8Array([0x89, 0x50])], "axial.png", { type: "image/png" });
+  const form = imageUploadForm(file, "  Axial 12  ");
+  assert.deepEqual([...form.keys()].sort(), ["caption", "file"]);
+  assert.equal(form.get("caption"), "Axial 12");
+  assert.equal((form.get("file") as File).name, "axial.png");
+  assert.deepEqual([...imageUploadForm(file, "   ").keys()], ["file"]);
+  assert.deepEqual([...imageUploadForm(file).keys()], ["file"]);
+});
+
+test("a JPEG or PNG previews, a PDF opens, anything else is a plain file", () => {
+  assert.equal(imageKind({ mimetype: "image/jpeg" }), "image");
+  assert.equal(imageKind({ mimetype: "image/png" }), "image");
+  assert.equal(imageKind({ mimetype: "application/pdf" }), "pdf");
+  assert.equal(imageKind({ mimetype: "image/svg+xml" }), "other");
+  assert.equal(imageKind({ mimetype: null }), "other");
+  assert.deepEqual(
+    ["image/jpeg", "image/png", "application/pdf", null].map((mimetype) => imageTypeLabel({ mimetype })),
+    ["JPEG", "PNG", "PDF", "File"],
+  );
+});
+
+test("the remove confirmation names the file, in the tested wording", () => {
+  assert.equal(
+    imageRemoveConfirmText({ filename: "axial.png" }),
+    "Remove axial.png from this radiology report?",
+  );
+  assert.equal(
+    IMAGE_REMOVE_SUPPORT_TEXT,
+    "This removes the uploaded file from the report. This action is unavailable after validation.",
+  );
+});
+
+test("an image refusal prefers the server's sentence and falls back without figures", () => {
+  const server = "This file is not a JPEG, PNG or PDF. The file's content decides this, not its name. Nothing has been uploaded.";
+  assert.equal(imageErrorMessage(server, "upload"), server);
+  assert.equal(imageErrorMessage(null, "upload"), "The file could not be uploaded. Nothing was changed.");
+  assert.equal(imageErrorMessage("  ", "remove"), "The file could not be removed. Nothing was changed.");
+  for (const text of [server, imageErrorMessage(null, "upload"), imageErrorMessage(null, "remove")]) {
+    assert.doesNotMatch(text, /\d+\.\d{2}|ETB|Birr|payable|invoice|receipt|amount|price|balance|charge/i);
+  }
+});
+
+test("the desk re-reads after an image refusal that means the screen is stale", () => {
+  for (const code of ["radiology_result_not_found", "radiology_image_not_found", "radiology_image_not_editable"]) {
+    assert.equal(shouldReconcileAfterImage(code), true, code);
+  }
+  for (const code of [null, "", "radiology_image_too_large", "radiology_image_unsupported_type",
+                      "radiology_image_invalid_file", "radiology_image_response_failed"]) {
+    assert.equal(shouldReconcileAfterImage(code), false, String(code));
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * Validation and release (Slice 5)
+ * ------------------------------------------------------------------ */
+
+const AWAITING_VALIDATION = {
+  state: "in_progress", lane: "awaiting_validation", result: report({ state: "entered" }),
+} as const;
+const AWAITING_RELEASE = {
+  state: "in_progress", lane: "awaiting_release", result: report({ state: "validated" }),
+} as const;
+
+test("sign-off paths are the desk's own BFF paths", () => {
+  assert.equal(reportValidatePath(75), "/api/radiology/results/75/validate");
+  assert.equal(reportReleasePath(75), "/api/radiology/results/75/release");
+  assert.equal(signoffPath("validate", 75), "/api/radiology/results/75/validate");
+  assert.equal(signoffPath("release", 75), "/api/radiology/results/75/release");
+});
+
+test("View report is offered for every lane past Awaiting report, never on a conflict", () => {
+  for (const lane of ["awaiting_validation", "awaiting_release", "completed", "anomaly"]) {
+    assert.equal(canViewReport(detail({ lane, result: report() })), true, lane);
+  }
+  assert.equal(canViewReport(detail({ lane: "awaiting_report", result: report() })), false);
+  assert.equal(canViewReport(detail({ lane: "completed", result: null })), false);
+  assert.equal(canViewReport(detail({ lane: "anomaly", result: null, result_conflict: true })), false);
+});
+
+test("Validate is offered only in Awaiting validation, and only to a report author", () => {
+  assert.equal(canValidateReport(detail(AWAITING_VALIDATION), AUTHOR), true);
+  assert.equal(canValidateReport(detail(AWAITING_VALIDATION), TECHNICIAN), false);
+  assert.equal(canValidateReport(detail(AWAITING_VALIDATION), null), false);
+  for (const [name, overrides] of [
+    ["awaiting release", AWAITING_RELEASE],
+    ["awaiting report", { ...AWAITING_VALIDATION, lane: "awaiting_report" }],
+    ["completed", { ...AWAITING_VALIDATION, state: "completed", lane: "completed" }],
+    ["conflict", { ...AWAITING_VALIDATION, result_conflict: true }],
+    ["anomaly", { ...AWAITING_VALIDATION, anomaly_reason: "unknown_state" }],
+    ["no report", { ...AWAITING_VALIDATION, result: null }],
+  ] as Array<[string, Partial<RadRequestDetail>]>) {
+    assert.equal(canValidateReport(detail(overrides), AUTHOR), false, name);
+  }
+});
+
+test("Release is offered only in Awaiting release, and only to a report author", () => {
+  assert.equal(canReleaseReport(detail(AWAITING_RELEASE), AUTHOR), true);
+  assert.equal(canReleaseReport(detail(AWAITING_RELEASE), TECHNICIAN), false);
+  for (const [name, overrides] of [
+    ["awaiting validation", AWAITING_VALIDATION],
+    ["completed", { ...AWAITING_RELEASE, state: "completed", lane: "completed" }],
+    ["conflict", { ...AWAITING_RELEASE, result_conflict: true }],
+    ["released but not completed", { ...AWAITING_RELEASE, lane: "anomaly", anomaly_reason: "released_not_completed" }],
+  ] as Array<[string, Partial<RadRequestDetail>]>) {
+    assert.equal(canReleaseReport(detail(overrides), AUTHOR), false, name);
+  }
+  // No request is ever offered both.
+  for (const lane of RAD_DESK_LANE_ORDER) {
+    const candidate = detail({ ...AWAITING_RELEASE, lane });
+    assert.ok(!(canValidateReport(candidate, AUTHOR) && canReleaseReport(candidate, AUTHOR)), lane);
+  }
+});
+
+test("the validation copy is the tested wording", () => {
+  assert.equal(
+    VALIDATE_REVIEW_TEXT,
+    "Review the report and all attached imaging before validation. Validation freezes the report and uploaded files for final release.",
+  );
+  assert.equal(
+    validateConfirmText(detail({}), report({ name: "RADRES0075" })),
+    "Validate RADRES0075 for Bezabeh Ketema (HMS11832) — Brain CT Scan?",
+  );
+  assert.equal(
+    VALIDATE_SUPPORT_TEXT,
+    "This cannot be undone from the Radiology Desk. The ordering clinician will still not see the report until it is released.",
+  );
+});
+
+test("the release copy is the tested wording", () => {
+  assert.equal(
+    RELEASE_REVIEW_TEXT,
+    "Review the validated report before release. Releasing publishes the report and imaging to the ordering clinician immediately.",
+  );
+  assert.equal(
+    releaseConfirmText(detail({}), report({ name: "RADRES0075" })),
+    "Release RADRES0075 to Dr. Hana Bekele?",
+  );
+  assert.equal(releaseIdentityText(detail({})), "Bezabeh Ketema (HMS11832) · Brain CT Scan");
+  assert.equal(
+    releaseSupportText(detail({})),
+    "The report and attached images become visible on the Doctor Desk immediately. RADREQ0411 will complete when all ordered studies are released.",
+  );
+});
+
+test("the outcome reads the server's completion answer and lane", () => {
+  const request = (overrides: Partial<RadRequestDetail>) => detail(overrides);
+  assert.equal(
+    signoffOutcomeText("validate", { request_completed: false, request: request({ lane_label: "Awaiting release" }) }),
+    "Validated · The request is now in Awaiting release.",
+  );
+  assert.equal(
+    signoffOutcomeText("release", { request_completed: true, request: request({ lane_label: "Completed" }) }),
+    "Released · Request completed",
+  );
+  assert.equal(
+    signoffOutcomeText("release", { request_completed: false, request: request({ review_message: null }) }),
+    "Released · Request still in progress",
+  );
+  assert.equal(
+    signoffOutcomeText("release", {
+      request_completed: false,
+      request: request({ review_message: "A released report did not complete this request." }),
+    }),
+    "Released · Request still in progress. A released report did not complete this request.",
+  );
+});
+
+test("a sign-off refusal prefers the server's fixed sentence and never carries a figure", () => {
+  const server = "The radiology report could not be released. Nothing was changed. Ask a hospital manager to review this request.";
+  assert.equal(signoffErrorMessage(server, "release"), server);
+  assert.equal(signoffErrorMessage(null, "validate"), "The radiology report could not be validated. Nothing was changed.");
+  assert.equal(signoffErrorMessage("", "release"), "The radiology report could not be released. Nothing was changed.");
+  for (const text of [server, signoffErrorMessage(null, "validate"), signoffErrorMessage(null, "release")]) {
+    assert.doesNotMatch(text, /\d+\.\d{2}|ETB|Birr|payable|invoice|receipt|amount|balance|charge/i);
+  }
+  for (const code of ["radiology_result_not_validatable", "radiology_result_not_releasable",
+                      "radiology_result_ambiguous", "radiology_result_state_conflict",
+                      "radiology_result_not_found"]) {
+    assert.equal(shouldReconcileAfterSignoff(code), true, code);
+  }
+  for (const code of [null, "radiology_report_validation_blocked", "radiology_report_release_blocked",
+                      "radiology_report_incomplete", "radiology_report_author_required"]) {
+    assert.equal(shouldReconcileAfterSignoff(code), false, String(code));
+  }
 });

@@ -45,6 +45,9 @@ from odoo.tests import tagged
 from odoo.addons.hospital_radiology.models.radiology_request import (
     _request_state_capability,
 )
+from odoo.addons.hospital_radiology.models.radiology_result import (
+    _result_workflow_capability,
+)
 
 from ..controllers.radiology import SUMMARY_WORK_SCAN_MAX
 from ..services.rad_desk_serializers import (
@@ -175,6 +178,11 @@ class RadDeskCase(RadiologyCase):
         return record
 
     def _report(self, record, state="draft", **values):
+        """Radiology Slice 3: the report model refuses a direct state write, and a report on a request that has not started. This fixture arranges that legacy shape through the result workflow capability -- a server-side ContextVar, never a forged context."""
+        with _result_workflow_capability():
+            return self._arrange_report(record, state, **values)
+
+    def _arrange_report(self, record, state="draft", **values):
         """A report on `record`, driven to `state` by fixture writes."""
         result = self.env["hospital.radiology.result"].sudo().create(
             dict({"request_id": record.id}, **values)
@@ -315,11 +323,12 @@ class TestRadiologyDeskAuthorization(RadDeskCase):
             self.assertIn(response.status_code, (404, 405), url)
 
     def test_18_no_unimplemented_mutation_route_exists_under_radiology(self):
-        """Slice 2 adds exactly schedule and start (tested in
-        test_radiology_desk_transitions). Nothing else is routed."""
+        """Slice 2 adds schedule and start (test_radiology_desk_transitions);
+        Slice 3 adds report, and save and enter under /results
+        (test_radiology_desk_report). Nothing else is routed on a request."""
         record, _patient = self._legacy_request(state="requested")
-        for suffix in ("report", "result", "cancel", "images", "validate", "release",
-                       "reset", "complete", "enter"):
+        for suffix in ("result", "cancel", "images", "validate", "release",
+                       "reset", "complete", "enter", "save"):
             self._auth(self.rad_tech, self.tech_password)
             response = self.url_open(
                 "%s/%s" % (DETAIL % record.id, suffix),
@@ -359,7 +368,16 @@ class TestRadiologyDeskSession(RadDeskCase):
             self.assertEqual(data["roles"], expected, user.login)
             self.assertEqual(
                 data["capabilities"],
-                {"radiology_desk": True, "schedule_study": True, "start_exam": True},
+                {"radiology_desk": True, "schedule_study": True, "start_exam": True,
+                 "open_report": True,
+                 # Slice 3: the technician opens the report but does not author it.
+                 "edit_report": user != self.rad_tech,
+                 "enter_report": user != self.rad_tech,
+                 # Slice 4: every desk role manages imaging on an open report.
+                 "manage_images": True,
+                 # Slice 5: only the report authors sign and publish.
+                 "validate_report": user != self.rad_tech,
+                 "release_report": user != self.rad_tech},
             )
 
     def test_21_session_exposes_no_unrelated_security_metadata(self):
@@ -758,12 +776,16 @@ class TestRadiologyDeskDetail(RadDeskCase):
         self._settle(encounter)
         self._set_state(record, "in_progress")
         report = self._report(
-            record, "entered",
+            record, "draft",
             findings="No acute intracranial haemorrhage.",
             impression="Normal CT brain.",
             recommendations="Clinical correlation.",
         )
         report.line_ids[:1].sudo().write({"result_summary": "Unremarkable"})
+        # Radiology Slice 3: a report's lines freeze once it leaves draft, so
+        # the summary is written first and the report entered after it.
+        with _result_workflow_capability():
+            report.sudo().write({"state": "entered"})
         result = self._detail(record)["result"]
         self.assertEqual(result["id"], report.id)
         self.assertEqual(result["state"], "entered")
@@ -787,7 +809,9 @@ class TestRadiologyDeskDetail(RadDeskCase):
         self.assertEqual(
             set(images[0]),
             {"id", "name", "caption", "image_type", "image_type_label", "filename",
-             "mimetype", "file_size", "uploaded_by", "uploaded_at", "sequence"},
+             "mimetype", "file_size", "uploaded_by", "uploaded_at", "sequence",
+             # Slice 4 lists the active flag the metadata contract names.
+             "active"},
         )
         self.assertEqual(images[0]["id"], image.id)
         self.assertEqual(images[0]["mimetype"], "image/png")
@@ -969,10 +993,12 @@ class TestRadiologyDeskDoctorRegression(RadDeskCase):
         self._set_state(record, "in_progress")
         report = self._report(record, "draft", findings="Doctor must wait for this.")
         image = self._image(report)
-        for step in ("entered", "validated", "released"):
-            if report.state == state:
-                break
-            report.sudo().write({"state": step})
+        # Radiology Slice 3: a fixture state write, through the capability.
+        with _result_workflow_capability():
+            for step in ("entered", "validated", "released"):
+                if report.state == state:
+                    break
+                report.sudo().write({"state": step})
         return appointment, record, report, image
 
     def test_90_doctor_sees_only_released_reports(self):

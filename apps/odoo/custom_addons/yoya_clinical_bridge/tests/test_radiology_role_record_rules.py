@@ -21,6 +21,10 @@ from odoo import fields
 from odoo.exceptions import AccessError
 from odoo.tests import TransactionCase, tagged
 
+from odoo.addons.hospital_radiology.models.radiology_result import (
+    _result_workflow_capability,
+)
+
 PNG = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
 
 TECHNICIAN = "hospital_radiology.group_hospital_radiology_technician"
@@ -90,6 +94,12 @@ class TestRadiologyRoleRecordRules(TransactionCase):
 
     @classmethod
     def _study(cls, doctor):
+        """Radiology Slice 3: the report model refuses a direct state write, and a report on a request that has not started. This fixture arranges that legacy shape through the result workflow capability -- a server-side ContextVar, never a forged context."""
+        with _result_workflow_capability():
+            return cls._arrange_study(doctor)
+
+    @classmethod
+    def _arrange_study(cls, doctor):
         """One doctor's request, line, result, result line and image."""
         suffix = uuid.uuid4().hex[:8]
         patient = cls.env["hospital.patient"].sudo().create(

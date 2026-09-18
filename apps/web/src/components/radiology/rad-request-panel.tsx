@@ -7,6 +7,10 @@ import {
   SCHEDULE_SUPPORT_TEXT,
   START_SUPPORT_TEXT,
   ageSexLabel,
+  canOpenReport,
+  canReleaseReport,
+  canValidateReport,
+  canViewReport,
   canScheduleStudy,
   canStartExam,
   clearanceNotice,
@@ -22,6 +26,7 @@ import type {
   RadDeskCapabilities,
   RadOperationalResult,
   RadRequestDetail,
+  RadSignoffKind,
   RadTransitionKind,
 } from "@/types/rad-desk";
 
@@ -30,11 +35,17 @@ import { RadLanePill, RadPriorityPill, RadReportStatePill } from "./rad-status-p
 /**
  * The Radiology Desk request panel.
  *
- * TWO ACTIONS, EACH FOR EXACTLY ONE LANE (Slice 2): Schedule study for a clear
- * request in To schedule, Start exam for a clear request in Ready to start. No
- * lane offers both, and every other lane offers nothing -- not even a disabled
- * button. Reporting, validation, release and image upload are later slices, and
- * a greyed-out button is a promise about workflow that has not shipped.
+ * THREE ACTIONS, EACH FOR EXACTLY ONE LANE: Schedule study for a clear request
+ * in To schedule, Start exam for a clear request in Ready to start (Slice 2),
+ * and Open report for an In progress study in Awaiting report (Slice 3). No
+ * lane offers two, and every other lane offers nothing -- not even a disabled
+ * button. Validation, release and image upload are later slices, and a
+ * greyed-out button is a promise about workflow that has not shipped.
+ *
+ * OPEN REPORT IS ONE CLICK. It creates nothing the user did not ask for: the
+ * server finds or creates THE one draft, and the report sheet opens on it. The
+ * acts that change the record -- Save draft, Mark entered -- are inside the
+ * sheet, and Mark entered asks for a second click there.
  *
  * THE BUTTON IS AN AFFORDANCE, NOT A PERMISSION. It renders from the server's
  * own lane and flags; the endpoint re-checks the same policy under a row lock.
@@ -309,6 +320,9 @@ export default function RadRequestPanel({
   refreshWarning,
   onSchedule,
   onStart,
+  reportPending,
+  onOpenReport,
+  onViewReport,
 }: {
   detail: RadRequestDetail | null;
   loading: boolean;
@@ -326,6 +340,12 @@ export default function RadRequestPanel({
   refreshWarning: boolean;
   onSchedule: (requestId: number) => Promise<boolean>;
   onStart: (requestId: number) => Promise<boolean>;
+  /** The report for THIS request is being opened. */
+  reportPending: boolean;
+  /** Opens the report sheet. The button is passed so focus can return to it. */
+  onOpenReport: (requestId: number, opener: HTMLElement) => void;
+  /** View (null), Validate or Release: the sheet on the report already held. */
+  onViewReport: (requestId: number, opener: HTMLElement, signoff: RadSignoffKind | null) => void;
 }) {
   if (error) {
     return (
@@ -369,6 +389,11 @@ export default function RadRequestPanel({
   const review = reviewMessage(detail);
   const offerSchedule = capabilities?.schedule_study === true && canScheduleStudy(detail);
   const offerStart = capabilities?.start_exam === true && canStartExam(detail);
+  const offerReport = capabilities?.open_report === true && canOpenReport(detail);
+  const offerView = capabilities?.radiology_desk === true && canViewReport(detail);
+  const offerValidate = canValidateReport(detail, capabilities);
+  const offerRelease = canReleaseReport(detail, capabilities);
+  const signLane = detail.lane === "awaiting_validation" || detail.lane === "awaiting_release";
 
   return (
     <section className="flex min-h-[340px] min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm min-[1100px]:min-h-0">
@@ -432,6 +457,60 @@ export default function RadRequestPanel({
             pending={pending}
             onConfirm={onStart}
           />
+        ) : null}
+        {offerReport ? (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={(event) => onOpenReport(detail.id, event.currentTarget)}
+              disabled={reportPending || pending}
+              className="rounded border border-teal-700 bg-teal-700 px-3 py-1.5 cl-secondary font-bold text-white hover:bg-teal-800 disabled:opacity-50"
+            >
+              {reportPending ? "Opening…" : "Open report"}
+            </button>
+            {capabilities?.edit_report !== true ? (
+              <span className="cl-meta text-slate-500">
+                Read only: a radiologist writes and enters the report.
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+        {offerView ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={(event) => onViewReport(detail.id, event.currentTarget, null)}
+              disabled={pending}
+              className="rounded border border-slate-400 bg-white px-3 py-1.5 cl-secondary font-bold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+            >
+              View report
+            </button>
+            {offerValidate ? (
+              <button
+                type="button"
+                onClick={(event) => onViewReport(detail.id, event.currentTarget, "validate")}
+                disabled={pending}
+                className="rounded border border-teal-700 bg-teal-700 px-3 py-1.5 cl-secondary font-bold text-white hover:bg-teal-800 disabled:opacity-50"
+              >
+                Validate report
+              </button>
+            ) : null}
+            {offerRelease ? (
+              <button
+                type="button"
+                onClick={(event) => onViewReport(detail.id, event.currentTarget, "release")}
+                disabled={pending}
+                className="rounded border border-teal-700 bg-teal-700 px-3 py-1.5 cl-secondary font-bold text-white hover:bg-teal-800 disabled:opacity-50"
+              >
+                Release report
+              </button>
+            ) : null}
+            {signLane && capabilities?.validate_report !== true ? (
+              <span className="cl-meta text-slate-500">
+                View only: a radiologist validates and releases the report.
+              </span>
+            ) : null}
+          </div>
         ) : null}
 
         <dl className="grid grid-cols-2 gap-x-4 gap-y-2 min-[700px]:grid-cols-4">
@@ -510,7 +589,7 @@ export default function RadRequestPanel({
       </div>
 
       <footer className="flex h-7 shrink-0 items-center border-t border-slate-200 bg-slate-50 px-3 cl-meta text-slate-500">
-        Schedule and start only. Reporting, images, validation and release are not available on this desk yet.
+        Schedule, start, report entry, images, validation and release. Amendments are not available on this desk.
       </footer>
     </section>
   );

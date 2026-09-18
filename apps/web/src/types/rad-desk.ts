@@ -175,6 +175,7 @@ export type RadImageMetadata = {
   uploaded_by: string | null;
   uploaded_at: string | null;
   sequence: number;
+  active: boolean;
 };
 
 /** The one operational report, with its text, for the desk that writes it. */
@@ -184,6 +185,12 @@ export type RadOperationalResult = RadResultSummary & {
   recommendations: string | null;
   lines: RadResultLine[];
   images: RadImageMetadata[];
+  /**
+   * Slice 4. Whether the IMAGE SET may still change -- the server's answer,
+   * from the image model's own states. Independent of the report text: an
+   * entered report's narrative is frozen while its images are not.
+   */
+  images_mutable: boolean;
 };
 
 /** The detail panel's shape: the queue row plus the request in full. */
@@ -205,6 +212,16 @@ export type RadDeskCapabilities = {
   /** The ROLE may attempt the act. Whether one request may is its own lane. */
   schedule_study: boolean;
   start_exam: boolean;
+  /** Slice 3. Every desk role opens the report; the technician only reads it. */
+  open_report: boolean;
+  /** Slice 3. Report authors only: Radiologist, Manager, System Administrator. */
+  edit_report: boolean;
+  enter_report: boolean;
+  /** Slice 4. Upload, view and remove files on an open report. Every desk role. */
+  manage_images: boolean;
+  /** Slice 5. Report authors only: Radiologist, Manager, System Administrator. */
+  validate_report: boolean;
+  release_report: boolean;
 };
 
 /**
@@ -216,6 +233,38 @@ export type RadTransitionResponse = RadRequestResponse;
 
 /** The two transitions this desk performs. */
 export type RadTransitionKind = "schedule" | "start";
+
+/**
+ * What POST .../report, /results/<id>/save and /results/<id>/enter return: the
+ * report and its request, as the server now holds them. `created` is only on
+ * the open route.
+ */
+export type RadReportResponse = {
+  result: RadOperationalResult;
+  request: RadRequestDetail;
+  created?: boolean;
+  capabilities: RadDeskCapabilities;
+};
+
+/**
+ * What POST .../validate and .../release return. `request_completed` is the
+ * server's own answer to whether the release completed the request.
+ */
+export type RadSignoffResponse = RadReportResponse & { request_completed: boolean };
+
+/** The two sign-off acts. */
+export type RadSignoffKind = "validate" | "release";
+
+/** What an image upload and remove route returns. `image` only on upload. */
+export type RadImageResponse = RadReportResponse & { image?: RadImageMetadata };
+
+/** The only body the report routes accept. Every other key is refused. */
+export type RadReportDraftBody = {
+  findings: string | null;
+  impression: string | null;
+  recommendations: string | null;
+  lines: { id: number; result_summary: string | null; notes: string | null }[];
+};
 
 export type RadDeskRoles = {
   radiology_technician: boolean;

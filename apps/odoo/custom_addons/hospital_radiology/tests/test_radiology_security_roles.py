@@ -61,6 +61,10 @@ MODES = ("read", "write", "create", "unlink")
 #   Technician IMAGE unlink: removing a mistaken upload from the inline image
 #     list is an unlink, and there is no archive control in that list. The
 #     image model's own freeze still refuses it from `validated` onward.
+#   Radiologist IMAGE write/create/unlink (Radiology Slice 4): the approved
+#     Slice 4 role policy lets the radiologist attach and remove imaging on a
+#     draft or entered report, exactly as the technician does. The image
+#     model's own freeze still refuses every change from `validated` onward.
 #   Radiologist REQUEST write: hospital_billing's action_release() completes
 #     the request through _sync_completion_from_results(), which writes the
 #     request AS THE RELEASING USER. Without write, a radiologist could not
@@ -79,7 +83,7 @@ RADIOLOGIST_MATRIX = {
     REQUEST_LINE: (1, 0, 0, 0),
     RESULT: (1, 1, 1, 0),
     RESULT_LINE: (1, 1, 1, 0),
-    IMAGE: (1, 0, 0, 0),
+    IMAGE: (1, 1, 1, 1),
 }
 NO_ACCESS = {model: (0, 0, 0, 0) for model in RADIOLOGY_MODELS}
 

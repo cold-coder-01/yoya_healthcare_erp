@@ -8,9 +8,12 @@
  * "must not contain" check, so a docstring that explains a rule cannot trip it.
  *
  * WHAT IS HELD:
- *   1. EXACTLY TWO WRITES (Slice 2). One bodiless POST site, to the schedule and
- *      start paths only; each offered for exactly one lane, behind an explicit
- *      confirmation. No other workflow action exists, not even disabled.
+ *   1. EXACTLY NINE WRITES, ONE POST SITE. Schedule and Start (Slice 2), Open
+ *      report (Slice 3), Remove file (Slice 4), Validate and Release (Slice 5)
+ *      are bodiless; Save draft and Mark entered send the one body
+ *      serializeReportBody() builds; Upload sends the one form
+ *      imageUploadForm() builds. The record-changing acts need an explicit
+ *      confirmation. No other workflow action exists.
  *   2. NO ODOO. Every URL is a /api/radiology/* BFF path.
  *   3. NO MONEY. No financial vocabulary is rendered or read.
  *   4. SERVER-DERIVED STATE. Lane badges read the server summary, the lane is
@@ -23,7 +26,8 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 function read(relative: string): string {
-  return readFileSync(new URL(`../${relative}`, import.meta.url), "utf8");
+  // Line endings normalized: the working tree may be CRLF.
+  return readFileSync(new URL(`../${relative}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 }
 
 /** Source with comments removed: the property is what a file EMITS. */
@@ -42,6 +46,7 @@ const PILLS = read("components/radiology/rad-status-pill.tsx");
 const FORMAT = read("lib/rad-desk-format.ts");
 const LAYOUT = read("app/radiology/layout.tsx");
 const PAGE = read("app/radiology/page.tsx");
+const MODAL = read("components/radiology/rad-report-modal.tsx");
 
 const COMPONENTS: ReadonlyArray<readonly [string, string]> = [
   ["rad-workstation.tsx", WORKSTATION],
@@ -49,6 +54,7 @@ const COMPONENTS: ReadonlyArray<readonly [string, string]> = [
   ["rad-queue.tsx", QUEUE],
   ["rad-filters.tsx", FILTERS],
   ["rad-status-pill.tsx", PILLS],
+  ["rad-report-modal.tsx", MODAL],
   ["rad-desk-format.ts", FORMAT],
   ["layout.tsx", LAYOUT],
   ["page.tsx", PAGE],
@@ -58,7 +64,16 @@ const COMPONENTS: ReadonlyArray<readonly [string, string]> = [
  * 1. Exactly two writes
  * ------------------------------------------------------------------ */
 
-test("there is exactly one POST site, and it sends no body worth reading", () => {
+/** The one function allowed to build a request body. */
+function serializeReportBodySource(): string {
+  const emitted = code(FORMAT);
+  const start = emitted.indexOf("export function serializeReportBody(");
+  assert.ok(start >= 0, "serializeReportBody exists");
+  const end = emitted.indexOf("\n}\n", start);
+  return emitted.slice(start, end + 3);
+}
+
+test("there is exactly one POST site, and its only body comes from serializeReportBody", () => {
   const posts = COMPONENTS.flatMap(([name, source]) =>
     [...code(source).matchAll(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/g)].map(
       (match) => [name, match[1]] as const,
@@ -66,36 +81,84 @@ test("there is exactly one POST site, and it sends no body worth reading", () =>
   );
   assert.deepEqual(posts, [["rad-workstation.tsx", "POST"]]);
   const emitted = code(WORKSTATION);
-  assert.ok(emitted.includes("async function postRad<T>(path: string)"));
-  assert.ok(emitted.includes('body: "{}",'), "bodiless: the request is identified by the URL");
+  assert.ok(emitted.includes('async function postRad<T>(path: string, body: string | FormData = "{}")'));
+  assert.ok(emitted.includes("    body,\n"), "the body is the parameter, bodiless by default");
+  // A multipart body gets NO Content-Type: the browser writes the boundary.
+  assert.ok(emitted.includes('headers: typeof body === "string" ? { "Content-Type": "application/json" } : undefined,'));
+  // FormData is built in exactly one place: imageUploadForm.
   for (const [name, source] of COMPONENTS) {
-    assert.doesNotMatch(code(source), /JSON\.stringify\(/, `${name} must build no request body`);
+    const stripped =
+      name === "rad-desk-format.ts"
+        ? code(source).replace(imageUploadFormSource(), "")
+        : code(source);
+    assert.doesNotMatch(stripped, /new FormData\(/, `${name} must build no form`);
   }
+  // JSON.stringify exists in exactly one place: serializeReportBody, over
+  // reportBody()'s allow-listed keys.
+  for (const [name, source] of COMPONENTS) {
+    const stripped =
+      name === "rad-desk-format.ts"
+        ? code(source).replace(serializeReportBodySource(), "")
+        : code(source);
+    assert.doesNotMatch(stripped, /JSON\.stringify\(/, `${name} must build no request body`);
+  }
+  assert.match(serializeReportBodySource(), /return JSON\.stringify\(reportBody\(draft\)\);/);
 });
 
-test("the POST site is only ever pointed at the two transition paths", () => {
+test("the POST site is only ever pointed at the transition and report paths", () => {
   const emitted = code(WORKSTATION);
-  // Call sites only (`await postRad<...>(`), captured up to the trailing `,)`.
-  const calls = [...emitted.matchAll(/await postRad<[^>]*>\(\s*([\s\S]*?),\s*\)/g)].map((m) => m[1].trim());
-  assert.deepEqual(calls, ["transitionPath(kind, requestId)"]);
+  // Call sites only (`await postRad<...>(`), up to the closing paren.
+  const calls = [...emitted.matchAll(/await postRad<[^>]*>\(([\s\S]*?)\);/g)].map((m) =>
+    m[1].replace(/\s+/g, " ").replace(/,\s*$/, "").trim(),
+  );
+  assert.deepEqual(calls, [
+    "transitionPath(kind, requestId)",
+    "reportPath(requestId)",
+    "signoffPath(kind, report.result.id)",
+    'kind === "save" ? reportSavePath(resultId) : reportEnterPath(resultId), serializeReportBody(draft)',
+    "imagesPath(resultId), imageUploadForm(target.file, target.caption)",
+    "imageRemovePath(resultId, target.imageId)",
+  ]);
+  assert.ok(format_includes("/api/radiology/results/${resultId}/validate"));
+  assert.ok(format_includes("/api/radiology/results/${resultId}/release"));
+  assert.ok(format_includes('return kind === "validate" ? reportValidatePath(resultId) : reportReleasePath(resultId);'));
+  assert.ok(format_includes("/api/radiology/results/${resultId}/images"));
+  assert.ok(format_includes("/api/radiology/results/${resultId}/images/${imageId}/remove"));
+  assert.ok(format_includes("/api/radiology/requests/${requestId}/report"));
+  assert.ok(format_includes("/api/radiology/results/${resultId}/save"));
+  assert.ok(format_includes("/api/radiology/results/${resultId}/enter"));
   const format = code(FORMAT);
   assert.ok(format.includes('return kind === "schedule" ? schedulePath(requestId) : startPath(requestId);'));
   assert.ok(format.includes("/api/radiology/requests/${requestId}/schedule"));
   assert.ok(format.includes("/api/radiology/requests/${requestId}/start"));
 });
 
-test("the panel's only controls are the two actions and their confirmation", () => {
+function format_includes(text: string): boolean {
+  return code(FORMAT).includes(text);
+}
+
+test("the panel's only controls are the transitions and the report actions", () => {
   const emitted = code(PANEL);
   const labels = [...emitted.matchAll(/"(Schedule study|Start exam|Confirm schedule|Confirm start|Cancel)"/g)].map((m) => m[1]);
   for (const label of ["Schedule study", "Start exam", "Confirm schedule", "Confirm start"]) {
     assert.ok(labels.includes(label), label);
   }
   assert.ok(emitted.includes(">\n          Cancel\n        </button>") || emitted.includes("Cancel"));
-  // Every <button in the panel lives inside TransitionAction.
+  // Every <button in the panel lives inside TransitionAction -- except the
+  // report actions: Open report (offerReport), and View / Validate / Release
+  // report (offerView).
   const actionStart = emitted.indexOf("function TransitionAction(");
   const actionEnd = emitted.indexOf("function ReportSection(");
   const outside = emitted.slice(0, actionStart) + emitted.slice(actionEnd);
-  assert.doesNotMatch(outside, /<button/, "no control outside the two transitions");
+  assert.equal([...outside.matchAll(/<button/g)].length, 4, "the report actions only");
+  const viewBlock = outside.slice(outside.indexOf("{offerView ? ("));
+  assert.equal(
+    [...viewBlock.slice(0, viewBlock.indexOf("\n        ) : null}\n")).matchAll(/<button/g)].length,
+    3,
+  );
+  const reportBlock = outside.slice(outside.indexOf("{offerReport ? ("));
+  assert.ok(reportBlock.indexOf("<button") >= 0 && reportBlock.indexOf("<button") < reportBlock.indexOf(") : null}"));
+  assert.ok(outside.includes('{reportPending ? "Opening…" : "Open report"}'));
 });
 
 test("each action is offered only through the tested visibility helpers and capability", () => {
@@ -108,9 +171,9 @@ test("each action is offered only through the tested visibility helpers and capa
 
 test("no other workflow action is offered anywhere on the desk", () => {
   const forbidden = [
-    /Mark in progress/i, /Enter report/i, /Validate report/i, /Release report/i,
-    /Upload image/i, /Delete image/i, /Cancel request/i, /Reset to draft/i,
-    /onValidate|onRelease|onUpload|onCancelRequest|onEnter/,
+    /Mark in progress/i, /Enter report/i, /Amend report/i, /Retract/i,
+    /Delete image/i, /Cancel request/i, /Reset to draft/i, /Cancel report/i,
+    /onValidate|onRelease|onCancelRequest|onEnter\b/,
   ];
   for (const [name, source] of COMPONENTS) {
     const emitted = code(source);
@@ -121,7 +184,7 @@ test("no other workflow action is offered anywhere on the desk", () => {
 });
 
 test("the panel says in words which actions this desk has", () => {
-  assert.ok(PANEL.includes("Schedule and start only. Reporting, images, validation and release are not available on this desk yet."));
+  assert.ok(PANEL.includes("Schedule, start, report entry, images, validation and release. Amendments are not available on this desk."));
 });
 
 /* ------------------------------------------------------------------ *
@@ -272,9 +335,20 @@ test("lane badges read the server summary, never a local recount", () => {
   assert.doesNotMatch(emitted, /rows\.(length|filter|reduce)/);
 });
 
+/** reportEditable's body: the ONE report-state read, and it decides editing, not a lane. */
+function reportEditableSource(): string {
+  const emitted = code(FORMAT);
+  const start = emitted.indexOf("export function reportEditable(");
+  return emitted.slice(start, emitted.indexOf("\n}\n", start) + 3);
+}
+
 test("the browser never derives a lane", () => {
+  assert.match(reportEditableSource(), /result\.state === "draft" &&/);
   for (const [name, source] of COMPONENTS) {
-    const emitted = code(source);
+    const emitted =
+      name === "rad-desk-format.ts"
+        ? code(source).replace(reportEditableSource(), "")
+        : code(source);
     assert.doesNotMatch(emitted, /\.lane\s*=[^=]/, `${name} assigns a lane`);
     assert.doesNotMatch(emitted, /billing_blocked\s*\?/, `${name} branches on billing_blocked`);
     assert.doesNotMatch(emitted, /result\??\.state\s*===/, `${name} derives from report state`);
@@ -378,4 +452,350 @@ test("the shell is visually distinct and guards nothing itself", () => {
   assert.ok(emitted.includes("#0f766e"));
   assert.ok(!emitted.includes("#4338ca"), "must not reuse the Laboratory keyline");
   assert.doesNotMatch(emitted, /redirect\(|notFound\(/);
+});
+
+/* ------------------------------------------------------------------ *
+ * The report (Slice 3)
+ * ------------------------------------------------------------------ */
+
+test("Open report is offered only through canOpenReport and the open_report capability", () => {
+  const emitted = code(PANEL);
+  assert.ok(
+    emitted.includes(
+      "const offerReport = capabilities?.open_report === true && canOpenReport(detail);",
+    ),
+  );
+  const format = code(FORMAT);
+  for (const rule of [
+    'detail.state === "in_progress"',
+    'detail.lane === "awaiting_report"',
+    "detail.result_conflict === false",
+    "detail.anomaly_reason === null",
+    "detail.exam_count > 0",
+  ]) {
+    assert.ok(format.includes(rule), rule);
+  }
+});
+
+test("the report sheet is editable only for a draft and a report-author role", () => {
+  assert.ok(
+    code(WORKSTATION).includes("editable={!report.signoff && reportEditable(report.result, capabilities)}"),
+  );
+  const helper = reportEditableSource();
+  assert.ok(helper.includes("capabilities?.edit_report === true"));
+  assert.ok(helper.includes("capabilities?.enter_report === true"));
+  // Read-only is the ONLY other mode, and it offers Close and nothing else.
+  const modal = code(MODAL);
+  assert.ok(modal.includes("const readOnly = !editable;"));
+  assert.ok(modal.includes("readOnly={readOnly}"));
+  const readOnlyFooter = modal.slice(modal.indexOf("{readOnly ? (\n              <button"));
+  assert.ok(readOnlyFooter.indexOf("Close") < readOnlyFooter.indexOf(") : ("));
+});
+
+test("the report sheet shows the request context and the tested labels", () => {
+  const modal = code(MODAL);
+  assert.ok(modal.includes("Radiology report"));
+  assert.ok(modal.includes("reportContext(request, result)"));
+  for (const label of ["Findings", "Impression", "Recommendations", "Result summary", "Notes"]) {
+    assert.ok(modal.includes(label), label);
+  }
+  for (const label of ['"Saving…" : "Save draft"', "Mark entered", "Cancel", "Close"]) {
+    assert.ok(modal.includes(label), label);
+  }
+  const format = code(FORMAT);
+  for (const label of ["Patient", "MRN", "Request", "Report", "Exams", "Modality", "Body part", "Ordering doctor"]) {
+    assert.ok(format.includes(`label: "${label}"`), label);
+  }
+});
+
+test("the report sheet has no cancel, reset, amendment or retraction control", () => {
+  const modal = code(MODAL);
+  assert.doesNotMatch(modal, /Cancel report|Reset|Amend|Retract/);
+  for (const source of [code(WORKSTATION), code(FORMAT)]) {
+    assert.doesNotMatch(source, /\/cancel|\/reset|\/amend|\/retract/);
+  }
+});
+
+test("Mark entered takes a second click, focuses Cancel, and has no shortcut", () => {
+  const modal = code(MODAL);
+  // Step one only opens the confirmation.
+  const ask = modal.slice(modal.indexOf("const askToEnter"), modal.indexOf("const markEntered"));
+  assert.doesNotMatch(ask, /onMarkEntered/);
+  assert.ok(ask.includes("setConfirmEnter(true)"));
+  // Step two refuses to run unless the confirmation is open.
+  const mark = modal.slice(modal.indexOf("const markEntered"), modal.indexOf("/* ---------------- keyboard"));
+  assert.ok(mark.includes("if (readOnly || busy !== null || !confirmEnter) return;"));
+  assert.ok(modal.includes("{reportEnterConfirmText(result)}"));
+  assert.ok(modal.includes("{REPORT_ENTER_SUPPORT_TEXT}"));
+  assert.ok(modal.includes("if (confirmEnter) enterCancelRef.current?.focus();"));
+  assert.ok(modal.includes("ref={enterCancelRef}"));
+  // Ctrl/Cmd+Enter is swallowed and performs nothing.
+  const keys = modal.slice(modal.indexOf("function onKeyDown"), modal.indexOf("const trapFocus"));
+  assert.ok(keys.includes('if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {\n        event.preventDefault();\n      }'));
+  assert.doesNotMatch(keys, /markEntered|saveDraft|onMarkEntered|onSaveDraft/);
+  assert.doesNotMatch(modal, /isSaveShortcut/);
+});
+
+test("Escape backs out of the confirmation and guards unsaved text; busy disables every act", () => {
+  const modal = code(MODAL);
+  const keys = modal.slice(modal.indexOf("function onKeyDown"), modal.indexOf("const trapFocus"));
+  assert.ok(keys.includes("if (confirmEnter) {\n          if (!isBusy) setConfirmEnter(false);"));
+  assert.ok(keys.includes("escapeIntent("));
+  assert.ok(modal.includes("closeIntent({ readOnly, changed, busy: isBusy })"));
+  assert.ok(modal.includes("Discard the changes you have not saved?"));
+  assert.ok(modal.includes("if (readOnly || busy !== null) return;"));
+  assert.equal([...modal.matchAll(/disabled=\{isBusy \|\| confirmEnter\}/g)].length, 2);
+  // Close, the entry confirmation's two buttons and Cancel -- plus, in the
+  // Images section, Upload image/report, caption, Upload, Clear and the remove
+  // confirmation's two buttons. Every act is disabled while anything is busy.
+  // ...and, since Slice 5, the one passed to the sign-off step.
+  assert.equal([...modal.matchAll(/disabled=\{isBusy\}/g)].length, 11);
+  // Slice 5's sign-off step: its three buttons take the same `disabled` flag.
+  assert.equal([...modal.matchAll(/disabled=\{disabled\}/g)].length, 3);
+  assert.ok(modal.includes("disabled={isBusy}\n              goBackRef={goBackRef}"));
+});
+
+test("a refused save or entry keeps the text and shows the reason in the sheet", () => {
+  const modal = code(MODAL);
+  assert.ok(modal.includes("setError(outcome.message);"));
+  assert.ok(modal.includes('role="alert"'));
+  // The sheet never closes itself on entry: the workstation replaces it with
+  // the entered, read-only report the server returned.
+  const mark = modal.slice(modal.indexOf("const markEntered"), modal.indexOf("/* ---------------- keyboard"));
+  assert.doesNotMatch(mark, /onClose\(\)/);
+});
+
+test("an entered report becomes a fresh read-only sheet, pinned, with the lane refetched", () => {
+  const emitted = code(WORKSTATION);
+  assert.ok(emitted.includes("key={`${report.result.id}-${report.result.state}-${report.signoff ?? \"report\"}`}"));
+  const write = emitted.slice(emitted.indexOf("const writeReport"), emitted.indexOf("const detailForSelection"));
+  assert.ok(write.includes("setReport({ request: confirmed.request, result: confirmed.result });"));
+  assert.ok(write.includes("setDetail(confirmed.request);"));
+  const enter = write.slice(write.indexOf('if (kind === "enter") {'));
+  assert.ok(enter.includes("setJustActedId(confirmed.request.id);"));
+  assert.ok(enter.includes("reportEnteredOutcomeText(confirmed.result, confirmed.request)"));
+  assert.ok(enter.includes("refresh();"));
+  // A refusal replaces nothing on screen, and re-reads when stale.
+  const refused = write.slice(write.indexOf("if (!response.ok || !payload.success) {"), write.indexOf("const confirmed"));
+  assert.doesNotMatch(refused, /setDetail|setReport/);
+  assert.ok(refused.includes("shouldReconcileAfterReport(codeFromPayload(payload))"));
+});
+
+test("the refresh warning covers a failed refresh after report entry too", () => {
+  const emitted = code(WORKSTATION);
+  assert.ok(emitted.includes("setRefreshWarningFor(justActedRef.current);"));
+});
+
+/* ------------------------------------------------------------------ *
+ * Images (Slice 4)
+ * ------------------------------------------------------------------ */
+
+function imageUploadFormSource(): string {
+  const emitted = code(FORMAT);
+  const start = emitted.indexOf("export function imageUploadForm(");
+  assert.ok(start >= 0, "imageUploadForm exists");
+  return emitted.slice(start, emitted.indexOf("\n}\n", start) + 3);
+}
+
+function imagesSectionSource(): string {
+  const modal = code(MODAL);
+  return modal.slice(modal.indexOf("function ImagesSection("));
+}
+
+test("the report sheet has an Images section, separate from the text's mutability", () => {
+  const modal = code(MODAL);
+  assert.ok(modal.includes("<ImagesSection"));
+  assert.ok(modal.includes("editable={imagesEditable}"));
+  // The text's read-only flag never touches the image controls.
+  assert.doesNotMatch(imagesSectionSource(), /readOnly|canAuthor/);
+  assert.ok(
+    code(WORKSTATION).includes("imagesEditable={!report.signoff && imagesEditable(report.result, capabilities)}"),
+  );
+  // images_mutable is the SERVER's; the browser never reads report state for it.
+  const format = code(FORMAT);
+  const helper = format.slice(format.indexOf("export function imagesEditable("));
+  assert.ok(helper.includes("result.images_mutable === true && capabilities?.manage_images === true"));
+});
+
+test("upload offers the tested types and limit, one file, through the BFF", () => {
+  const section = imagesSectionSource();
+  assert.ok(section.includes("Upload image/report"));
+  assert.ok(section.includes("accept={ACCEPTED_IMAGE_TYPES}"));
+  assert.ok(section.includes("{ACCEPTED_IMAGE_LABEL} · {MAX_IMAGE_LABEL}"));
+  assert.doesNotMatch(section, /\bmultiple\b/);
+  const format = code(FORMAT);
+  assert.ok(format.includes('ACCEPTED_IMAGE_TYPES = "image/jpeg,image/png,application/pdf"'));
+  assert.ok(format.includes('ACCEPTED_IMAGE_LABEL = "JPG, PNG or PDF"'));
+  assert.ok(format.includes('MAX_IMAGE_LABEL = "Max file size: 25 MB"'));
+  // The form carries the file and a caption, never a type, size or name field.
+  const form = imageUploadFormSource();
+  assert.ok(form.includes('form.append("file", file, file.name);'));
+  assert.ok(form.includes('form.append("caption", trimmed);'));
+  assert.equal([...form.matchAll(/form\.append\(/g)].length, 2);
+});
+
+test("previews and Open links use the desk's own BFF byte route, never Odoo or the Doctor's", () => {
+  const section = imagesSectionSource();
+  assert.ok(section.includes("const href = imagePath(resultId, image.id);"));
+  assert.equal([...section.matchAll(/src=\{href\}/g)].length, 1);
+  assert.equal([...section.matchAll(/href=\{href\}/g)].length, 1);
+  assert.ok(section.includes('rel="noopener noreferrer"'));
+  // A preview only for JPEG/PNG; a PDF is an item with Open, never embedded.
+  assert.ok(section.includes('{kind === "image" ? ('));
+  assert.doesNotMatch(section, /<iframe|<embed|<object|createObjectURL|FileReader|dangerouslySetInnerHTML/);
+  for (const source of [code(MODAL), code(WORKSTATION), code(FORMAT)]) {
+    assert.doesNotMatch(source, /\/web\/content|\/web\/image|\/api\/doctor|access_token|yoya-emr/);
+  }
+  assert.ok(code(FORMAT).includes("/api/radiology/results/${resultId}/images/${imageId}"));
+});
+
+test("removing a file takes a second click, focused on Cancel, with the tested wording", () => {
+  const modal = code(MODAL);
+  const section = imagesSectionSource();
+  assert.ok(section.includes("{imageRemoveConfirmText(image)}"));
+  assert.ok(section.includes("{IMAGE_REMOVE_SUPPORT_TEXT}"));
+  assert.ok(section.includes('{busy === "remove" ? "Removing…" : "Remove file"}'));
+  assert.ok(section.includes("ref={removeCancelRef}"));
+  assert.ok(modal.includes("if (removeFor !== null) removeCancelRef.current?.focus();"));
+  // The first button only opens the confirmation; only the final one removes.
+  assert.ok(section.includes("onClick={() => onAskRemove(image.id)}"));
+  assert.ok(section.includes("onClick={onConfirmRemove}"));
+  const remove = modal.slice(modal.indexOf("const removeImage"), modal.indexOf("/* ---------------- keyboard"));
+  assert.ok(remove.includes("if (!imagesEditable || removeFor === null || busy !== null) return;"));
+  // Escape backs out of it; no key performs it.
+  const keys = modal.slice(modal.indexOf("function onKeyDown"), modal.indexOf("const trapFocus"));
+  assert.ok(keys.includes("if (removeFor !== null) {\n          if (!isBusy) setRemoveFor(null);"));
+  assert.doesNotMatch(keys, /removeImage|onRemoveImage|uploadImage/);
+  // Upload and remove controls exist only when the image set may change.
+  assert.ok(section.includes("{editable ? (\n        <div"));
+  assert.ok(section.includes("{editable && removeFor === image.id ? ("));
+  assert.ok(section.includes("{editable ? (\n                      <button"));
+});
+
+test("a refused upload or removal keeps the sheet and the confirmed file list", () => {
+  const modal = code(MODAL);
+  const upload = modal.slice(modal.indexOf("const uploadImage"), modal.indexOf("const removeImage"));
+  assert.ok(upload.includes("if (!imagesEditable || !selectedFile || busy !== null) return;"));
+  assert.ok(upload.includes("setImageError(outcome.message);"));
+  assert.doesNotMatch(upload, /onClose|setReport/);
+  // The list rendered is always the report the server last returned.
+  assert.ok(modal.includes("images={result.images}"));
+  const write = code(WORKSTATION).slice(
+    code(WORKSTATION).indexOf("const writeImage"),
+    code(WORKSTATION).indexOf("const detailForSelection"),
+  );
+  const refused = write.slice(write.indexOf("if (!response.ok || !payload.success) {"), write.indexOf("const confirmed"));
+  assert.doesNotMatch(refused, /setDetail|setReport/);
+  assert.ok(refused.includes("shouldReconcileAfterImage(codeFromPayload(payload))"));
+  // Success: the server's report replaces the one on screen, pinned; no lane is set.
+  assert.ok(write.includes("setReport({ request: confirmed.request, result: confirmed.result });"));
+  assert.ok(write.includes("setJustActedId(confirmed.request.id);"));
+  assert.doesNotMatch(write, /setLane|lane:/);
+  // An over-size file is refused locally and never sent.
+  assert.ok(modal.includes("if (imageTooLarge(file)) {"));
+});
+
+test("an entered report is VIEWED from Awaiting validation, where its images stay manageable", () => {
+  const format = code(FORMAT);
+  // Open report creates the draft, so it is only for Awaiting report...
+  assert.ok(format.includes('    detail.lane === "awaiting_report" &&\n    detail.result_conflict === false &&'));
+  // ...and View report opens the report every later lane already holds.
+  assert.ok(format.includes('detail.lane !== "awaiting_report"'));
+  const panel = code(PANEL);
+  assert.ok(panel.includes("const offerView = capabilities?.radiology_desk === true && canViewReport(detail);"));
+});
+
+/* ------------------------------------------------------------------ *
+ * Validation and release (Slice 5)
+ * ------------------------------------------------------------------ */
+
+function signoffStepSource(): string {
+  const modal = code(MODAL);
+  return modal.slice(modal.indexOf("function SignoffStep("));
+}
+
+test("Validate and Release are offered only through the tested helpers and author capabilities", () => {
+  const panel = code(PANEL);
+  assert.ok(panel.includes("const offerValidate = canValidateReport(detail, capabilities);"));
+  assert.ok(panel.includes("const offerRelease = canReleaseReport(detail, capabilities);"));
+  assert.ok(panel.includes('onClick={(event) => onViewReport(detail.id, event.currentTarget, "validate")}'));
+  assert.ok(panel.includes('onClick={(event) => onViewReport(detail.id, event.currentTarget, "release")}'));
+  assert.ok(panel.includes('onClick={(event) => onViewReport(detail.id, event.currentTarget, null)}'));
+  // A technician sees View report, and why there is nothing else.
+  assert.ok(panel.includes("View only: a radiologist validates and releases the report."));
+  const format = code(FORMAT);
+  assert.ok(format.includes('capabilities?.validate_report === true &&'));
+  assert.ok(format.includes('capabilities?.release_report === true &&'));
+  assert.ok(format.includes('detail.lane === "awaiting_validation"'));
+  assert.ok(format.includes('detail.lane === "awaiting_release"'));
+});
+
+test("the sign-off sheet is read-only, text AND images", () => {
+  const ws = code(WORKSTATION);
+  assert.ok(ws.includes("editable={!report.signoff && reportEditable(report.result, capabilities)}"));
+  assert.ok(ws.includes("imagesEditable={!report.signoff && imagesEditable(report.result, capabilities)}"));
+  // View / Validate / Release open from the detail payload: nothing is sent.
+  const view = ws.slice(ws.indexOf("const viewReport"), ws.indexOf("const runSignoff"));
+  assert.doesNotMatch(view, /postRad|fetch\(/);
+  assert.ok(view.includes("setReport({ request: current, result: current.result, signoff });"));
+});
+
+test("both sign-offs take two steps, with the tested wording, focused on Go back", () => {
+  const modal = code(MODAL);
+  const step = signoffStepSource();
+  assert.ok(modal.includes('? "Validate radiology report"'));
+  assert.ok(modal.includes('? "Release radiology report"'));
+  assert.ok(step.includes("{validate ? VALIDATE_REVIEW_TEXT : RELEASE_REVIEW_TEXT}"));
+  assert.ok(step.includes('{validate ? "Validate report…" : "Release report…"}'));
+  assert.ok(step.includes("{validate ? validateConfirmText(request, result) : releaseConfirmText(request, result)}"));
+  assert.ok(step.includes("{releaseIdentityText(request)}"));
+  assert.ok(step.includes("{validate ? VALIDATE_SUPPORT_TEXT : releaseSupportText(request)}"));
+  assert.ok(step.includes('{busy ? "Working…" : validate ? "Confirm validation" : "Confirm release"}'));
+  assert.ok(step.includes("Go back"));
+  assert.ok(step.includes("ref={goBackRef}"));
+  assert.ok(modal.includes('if (signStep === "confirm") goBackRef.current?.focus();'));
+  // Step one only moves on; step two is the ONLY sender.
+  const ask = modal.slice(modal.indexOf("const askToSign"), modal.indexOf("const confirmSign"));
+  assert.doesNotMatch(ask, /onSignoff/);
+  assert.ok(ask.includes('setSignStep("confirm");'));
+  const confirm = modal.slice(modal.indexOf("const confirmSign"), modal.indexOf("const chooseFile"));
+  assert.ok(confirm.includes('if (!signoff || !onSignoff || busy !== null || signStep !== "confirm") return;'));
+  assert.ok(confirm.includes('setSignStep("review");'));
+  assert.doesNotMatch(confirm, /onClose/);
+});
+
+test("no keyboard shortcut validates or releases; Escape goes back", () => {
+  const modal = code(MODAL);
+  const keys = modal.slice(modal.indexOf("function onKeyDown"), modal.indexOf("const trapFocus"));
+  assert.ok(keys.includes('if (signStep === "confirm") {\n          if (!isBusy) setSignStep("review");'));
+  assert.doesNotMatch(keys, /confirmSign|askToSign|onSignoff/);
+  assert.ok(keys.includes('if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {\n        event.preventDefault();\n      }'));
+});
+
+test("a confirmed sign-off closes the sheet, pins the request and refetches the lanes", () => {
+  const ws = code(WORKSTATION);
+  const run = ws.slice(ws.indexOf("const runSignoff"), ws.indexOf("const writeReport"));
+  assert.ok(run.includes("await postRad<RadSignoffResponse>(signoffPath(kind, report.result.id));"));
+  const ok = run.slice(run.indexOf("const confirmed"));
+  for (const line of [
+    "setDetail(confirmed.request);",
+    "setJustActedId(confirmed.request.id);",
+    "text: signoffOutcomeText(kind, confirmed),",
+    "setReport(null);",
+    "refresh();",
+  ]) {
+    assert.ok(ok.includes(line), line);
+  }
+  const refused = run.slice(run.indexOf("if (!response.ok || !payload.success) {"), run.indexOf("const confirmed"));
+  assert.doesNotMatch(refused, /setDetail|setReport|setJustActedId/);
+  assert.ok(refused.includes("shouldReconcileAfterSignoff(codeFromPayload(payload))"));
+  // A failed queue refresh after a confirmed act keeps the confirmed request
+  // and warns -- the same mechanism every action uses.
+  assert.ok(ws.includes("setRefreshWarningFor(justActedRef.current);"));
+});
+
+test("sign-off paths are BFF paths and nothing reaches the Doctor or Odoo from the desk", () => {
+  for (const source of [code(WORKSTATION), code(FORMAT), code(MODAL), code(PANEL)]) {
+    assert.doesNotMatch(source, /\/api\/doctor|yoya-emr|\/web\/content|localhost|:8069|:8171/);
+  }
 });

@@ -20,9 +20,15 @@
 // TYPE-ONLY, and it has to stay that way: TypeScript erases these imports,
 // which is what lets node:test run rad-desk-format.test.ts with no resolver.
 import type {
+  RadDeskCapabilities,
   RadDeskRoles,
+  RadImageMetadata,
+  RadOperationalResult,
   RadQueueRow,
+  RadReportDraftBody,
   RadRequestDetail,
+  RadSignoffKind,
+  RadSignoffResponse,
   RadTransitionKind,
   RadWorklistSummary,
 } from "@/types/rad-desk";
@@ -563,4 +569,514 @@ const RECONCILE_CODES = new Set([
 
 export function shouldReconcileAfterTransition(code: string | null | undefined): boolean {
   return typeof code === "string" && RECONCILE_CODES.has(code);
+}
+
+/* ------------------------------------------------------------------ *
+ * The report (Slice 3)
+ * ------------------------------------------------------------------ */
+
+/** Find or create THE operational report of a request. Bodiless. */
+export function reportPath(requestId: number) {
+  return `/api/radiology/requests/${requestId}/report`;
+}
+
+/** Save a draft report's allow-listed text. */
+export function reportSavePath(resultId: number) {
+  return `/api/radiology/results/${resultId}/save`;
+}
+
+/** Save and mark entered, in one act. */
+export function reportEnterPath(resultId: number) {
+  return `/api/radiology/results/${resultId}/enter`;
+}
+
+/**
+ * May the desk OFFER "Open report" for this request?
+ *
+ * In progress, in Awaiting report, with an active study and no conflict or
+ * other anomaly: the one lane where the server may still have to CREATE the
+ * draft. Every later lane VIEWS the report it already has (canViewReport). An
+ * affordance, never a permission: the endpoint re-checks the request state and
+ * the one-report rule under a row lock.
+ */
+export function canOpenReport(
+  detail:
+    | Pick<RadRequestDetail, "state" | "lane" | "result_conflict" | "anomaly_reason" | "exam_count">
+    | null
+    | undefined,
+): boolean {
+  return (
+    !!detail &&
+    detail.state === "in_progress" &&
+    detail.lane === "awaiting_report" &&
+    detail.result_conflict === false &&
+    detail.anomaly_reason === null &&
+    detail.exam_count > 0
+  );
+}
+
+/**
+ * May THIS user edit THIS report? A draft, and a report-author role. The
+ * technician opens the report and reads it; the server refuses their writes
+ * with 403 whatever the screen shows.
+ */
+export function reportEditable(
+  result: Pick<RadOperationalResult, "state"> | null | undefined,
+  capabilities: Pick<RadDeskCapabilities, "edit_report" | "enter_report"> | null | undefined,
+): boolean {
+  return (
+    !!result &&
+    result.state === "draft" &&
+    capabilities?.edit_report === true &&
+    capabilities?.enter_report === true
+  );
+}
+
+/** What the modal edits: every field as a string, "" for nothing. */
+export type RadReportDraft = {
+  findings: string;
+  impression: string;
+  recommendations: string;
+  lines: { id: number; result_summary: string; notes: string }[];
+};
+
+export function reportDraftFromResult(
+  result: Pick<RadOperationalResult, "findings" | "impression" | "recommendations" | "lines">,
+): RadReportDraft {
+  return {
+    findings: result.findings ?? "",
+    impression: result.impression ?? "",
+    recommendations: result.recommendations ?? "",
+    lines: result.lines.map((line) => ({
+      id: line.id,
+      result_summary: line.result_summary ?? "",
+      notes: line.notes ?? "",
+    })),
+  };
+}
+
+export function reportDraftChanged(a: RadReportDraft, b: RadReportDraft): boolean {
+  if (
+    a.findings !== b.findings ||
+    a.impression !== b.impression ||
+    a.recommendations !== b.recommendations ||
+    a.lines.length !== b.lines.length
+  ) {
+    return true;
+  }
+  return a.lines.some((line, index) => {
+    const other = b.lines[index];
+    return (
+      line.id !== other.id ||
+      line.result_summary !== other.result_summary ||
+      line.notes !== other.notes
+    );
+  });
+}
+
+export function patchReportLine(
+  draft: RadReportDraft,
+  lineId: number,
+  patch: Partial<{ result_summary: string; notes: string }>,
+): RadReportDraft {
+  return {
+    ...draft,
+    lines: draft.lines.map((line) => (line.id === lineId ? { ...line, ...patch } : line)),
+  };
+}
+
+/**
+ * THE ONLY BODY THE REPORT ROUTES ARE SENT. Exactly the allow-listed keys --
+ * findings, impression, recommendations, and per line its id, summary and
+ * notes -- with "" sent as null. Nothing is trimmed: whether whitespace is a
+ * report is the server's entry gate to decide, and the draft is stored as typed.
+ */
+export function reportBody(draft: RadReportDraft): RadReportDraftBody {
+  const orNull = (value: string) => (value === "" ? null : value);
+  return {
+    findings: orNull(draft.findings),
+    impression: orNull(draft.impression),
+    recommendations: orNull(draft.recommendations),
+    lines: draft.lines.map((line) => ({
+      id: line.id,
+      result_summary: orNull(line.result_summary),
+      notes: orNull(line.notes),
+    })),
+  };
+}
+
+/** The serialized body for the one POST site. Built only from reportBody(). */
+export function serializeReportBody(draft: RadReportDraft): string {
+  return JSON.stringify(reportBody(draft));
+}
+
+/** "Mark RADRES0012 as entered?" */
+export function reportEnterConfirmText(result: Pick<RadOperationalResult, "name">): string {
+  return `Mark ${result.name} as entered?`;
+}
+
+export const REPORT_ENTER_SUPPORT_TEXT =
+  "This locks the current report text for review before validation. The ordering clinician will still not see the report until it is released.";
+
+/**
+ * The header context of the report modal, as label/value pairs, from the
+ * server's own payloads. Nothing priced, nothing invented.
+ */
+export function reportContext(
+  detail: Pick<
+    RadRequestDetail,
+    | "patient"
+    | "request_code"
+    | "exams_summary"
+    | "modality_label"
+    | "body_part"
+    | "ordering_physician"
+  >,
+  result: Pick<RadOperationalResult, "name" | "radiologist">,
+): { label: string; value: string }[] {
+  return [
+    { label: "Patient", value: orDash(detail.patient?.name) },
+    { label: "MRN", value: orDash(detail.patient?.mrn) },
+    { label: "Request", value: detail.request_code },
+    { label: "Report", value: result.name },
+    { label: "Exams", value: orDash(detail.exams_summary) },
+    { label: "Modality", value: orDash(detail.modality_label) },
+    { label: "Body part", value: orDash(detail.body_part) },
+    { label: "Ordering doctor", value: orDash(detail.ordering_physician?.name) },
+    // Slice 5: who entered -- and so signs -- the report. Set by the server.
+    { label: "Radiologist", value: orDash(result.radiologist) },
+  ];
+}
+
+/** The confirmation shown for the request whose report was just entered. */
+export function reportEnteredOutcomeText(
+  result: Pick<RadOperationalResult, "name">,
+  request: Pick<RadRequestDetail, "lane_label">,
+): string {
+  return `Report ${result.name} entered. The request is now in ${request.lane_label}.`;
+}
+
+/** The status line under the report editor. */
+export function reportStatusText(state: {
+  readOnly: boolean;
+  busy: "save" | "enter" | null;
+  changed: boolean;
+  savedSinceOpen: boolean;
+}): string {
+  if (state.busy === "save") return "Saving draft…";
+  if (state.busy === "enter") return "Marking entered…";
+  if (state.readOnly) return "Read only.";
+  if (state.changed) return "Unsaved changes.";
+  if (state.savedSinceOpen) return "Draft saved.";
+  return "No changes yet.";
+}
+
+/**
+ * A report refusal's message. The server's sentence is preferred -- the
+ * Radiology API's report routes carry no billing text -- and the fallback is
+ * for a transport failure, where there is no server sentence at all.
+ */
+export function reportErrorMessage(
+  serverMessage: string | null | undefined,
+  kind: "open" | "save" | "enter",
+): string {
+  const trimmed = typeof serverMessage === "string" ? serverMessage.trim() : "";
+  if (trimmed) return trimmed;
+  if (kind === "open") return "The report could not be opened. Nothing was changed.";
+  if (kind === "save") return "The draft could not be saved. Nothing was changed.";
+  return "The report could not be marked entered. Nothing was changed.";
+}
+
+/**
+ * Refusals after which the screen no longer matches the database, so the desk
+ * RE-READS the request instead of leaving a stale button or report on screen.
+ */
+const REPORT_RECONCILE_CODES = new Set([
+  "radiology_request_not_found",
+  "radiology_result_not_found",
+  "radiology_report_not_available",
+  "radiology_request_no_active_study",
+  "radiology_result_ambiguous",
+  "radiology_result_not_editable",
+  "radiology_result_state_conflict",
+]);
+
+export function shouldReconcileAfterReport(code: string | null | undefined): boolean {
+  return typeof code === "string" && REPORT_RECONCILE_CODES.has(code);
+}
+
+/* ------------------------------------------------------------------ *
+ * Images (Slice 4)
+ * ------------------------------------------------------------------ */
+
+/** Upload one file to a report. multipart/form-data. */
+export function imagesPath(resultId: number) {
+  return `/api/radiology/results/${resultId}/images`;
+}
+
+/**
+ * The desk's OWN byte route for one file of one report -- never a
+ * /web/content link, never the Doctor's released-only route. `download` asks
+ * for an attachment disposition; the default opens inline.
+ */
+export function imagePath(resultId: number, imageId: number, download = false) {
+  const base = `/api/radiology/results/${resultId}/images/${imageId}`;
+  return download ? `${base}?disposition=attachment` : base;
+}
+
+/** Remove one file from a report. Bodiless. */
+export function imageRemovePath(resultId: number, imageId: number) {
+  return `/api/radiology/results/${resultId}/images/${imageId}/remove`;
+}
+
+/**
+ * May THIS user change THIS report's images? The SERVER's images_mutable --
+ * derived from the image model's own states, and true for an entered report
+ * whose text is frozen -- and the manage_images capability. The report text's
+ * editability (reportEditable) is a separate question with a separate answer.
+ */
+export function imagesEditable(
+  result: Pick<RadOperationalResult, "images_mutable"> | null | undefined,
+  capabilities: Pick<RadDeskCapabilities, "manage_images"> | null | undefined,
+): boolean {
+  return !!result && result.images_mutable === true && capabilities?.manage_images === true;
+}
+
+/** What the file picker offers. The SERVER still decides by the bytes. */
+export const ACCEPTED_IMAGE_TYPES = "image/jpeg,image/png,application/pdf";
+export const ACCEPTED_IMAGE_LABEL = "JPG, PNG or PDF";
+export const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
+export const MAX_IMAGE_LABEL = "Max file size: 25 MB";
+
+/** A local, advisory size check, so a huge file is not sent at all. */
+export function imageTooLarge(file: Pick<File, "size">): boolean {
+  return file.size > MAX_IMAGE_BYTES;
+}
+
+export const IMAGE_TOO_LARGE_TEXT =
+  "This file is larger than 25 MB, the limit for one radiology file. Choose a smaller export.";
+
+/**
+ * THE ONLY UPLOAD BODY: one file under `file`, and a caption if one was typed.
+ * No type, no size, no name field -- the server reads those from the bytes.
+ */
+export function imageUploadForm(file: File, caption?: string | null): FormData {
+  const form = new FormData();
+  form.append("file", file, file.name);
+  const trimmed = typeof caption === "string" ? caption.trim() : "";
+  if (trimmed) form.append("caption", trimmed);
+  return form;
+}
+
+/** How a file is shown: a preview for JPEG/PNG, an Open item for a PDF. */
+export function imageKind(
+  image: Pick<RadImageMetadata, "mimetype">,
+): "image" | "pdf" | "other" {
+  if (image.mimetype === "image/jpeg" || image.mimetype === "image/png") return "image";
+  if (image.mimetype === "application/pdf") return "pdf";
+  return "other";
+}
+
+export function imageTypeLabel(image: Pick<RadImageMetadata, "mimetype">): string {
+  if (image.mimetype === "image/jpeg") return "JPEG";
+  if (image.mimetype === "image/png") return "PNG";
+  if (image.mimetype === "application/pdf") return "PDF";
+  return "File";
+}
+
+/** "Remove axial.png from this radiology report?" */
+export function imageRemoveConfirmText(image: Pick<RadImageMetadata, "filename">): string {
+  return `Remove ${image.filename} from this radiology report?`;
+}
+
+export const IMAGE_REMOVE_SUPPORT_TEXT =
+  "This removes the uploaded file from the report. This action is unavailable after validation.";
+
+/** An image refusal's message: the server's sentence, else a fallback. */
+export function imageErrorMessage(
+  serverMessage: string | null | undefined,
+  kind: "upload" | "remove",
+): string {
+  const trimmed = typeof serverMessage === "string" ? serverMessage.trim() : "";
+  if (trimmed) return trimmed;
+  return kind === "upload"
+    ? "The file could not be uploaded. Nothing was changed."
+    : "The file could not be removed. Nothing was changed.";
+}
+
+/** Image refusals after which the report on screen is stale and is re-read. */
+const IMAGE_RECONCILE_CODES = new Set([
+  "radiology_result_not_found",
+  "radiology_image_not_found",
+  "radiology_image_not_editable",
+]);
+
+export function shouldReconcileAfterImage(code: string | null | undefined): boolean {
+  return typeof code === "string" && IMAGE_RECONCILE_CODES.has(code);
+}
+
+/* ------------------------------------------------------------------ *
+ * Validation and release (Slice 5)
+ * ------------------------------------------------------------------ */
+
+export function reportValidatePath(resultId: number) {
+  return `/api/radiology/results/${resultId}/validate`;
+}
+
+export function reportReleasePath(resultId: number) {
+  return `/api/radiology/results/${resultId}/release`;
+}
+
+/** The only two sign-off paths. */
+export function signoffPath(kind: RadSignoffKind, resultId: number) {
+  return kind === "validate" ? reportValidatePath(resultId) : reportReleasePath(resultId);
+}
+
+type SignoffFacts = Pick<
+  RadRequestDetail,
+  "state" | "lane" | "result_conflict" | "anomaly_reason" | "result"
+>;
+
+function signable(detail: SignoffFacts | null | undefined): detail is SignoffFacts {
+  return (
+    !!detail &&
+    detail.state === "in_progress" &&
+    detail.result !== null &&
+    detail.result_conflict === false &&
+    detail.anomaly_reason === null
+  );
+}
+
+/**
+ * "View report": the report the request ALREADY has, read from the detail
+ * payload -- no request is sent. Every lane past Awaiting report, including
+ * Completed; never on a conflict, where no report is authoritative.
+ */
+export function canViewReport(
+  detail: Pick<RadRequestDetail, "lane" | "result" | "result_conflict"> | null | undefined,
+): boolean {
+  return (
+    !!detail &&
+    detail.result !== null &&
+    detail.result_conflict === false &&
+    detail.lane !== "awaiting_report"
+  );
+}
+
+/**
+ * "Validate report": an in-progress study in Awaiting validation -- the
+ * server's lane for an ENTERED report -- and a report-author role. Never read
+ * from the report's own state here: the lane already says it.
+ */
+export function canValidateReport(
+  detail: SignoffFacts | null | undefined,
+  capabilities: Pick<RadDeskCapabilities, "validate_report"> | null | undefined,
+): boolean {
+  return (
+    capabilities?.validate_report === true &&
+    signable(detail) &&
+    detail.lane === "awaiting_validation"
+  );
+}
+
+/** "Release report": Awaiting release -- a VALIDATED report -- and an author. */
+export function canReleaseReport(
+  detail: SignoffFacts | null | undefined,
+  capabilities: Pick<RadDeskCapabilities, "release_report"> | null | undefined,
+): boolean {
+  return (
+    capabilities?.release_report === true &&
+    signable(detail) &&
+    detail.lane === "awaiting_release"
+  );
+}
+
+type SignoffCopyFacts = Pick<
+  RadRequestDetail,
+  "patient" | "first_exam" | "exam_count" | "ordering_physician" | "request_code"
+>;
+
+function patientLabel(detail: Pick<RadRequestDetail, "patient">): string {
+  const name = detail.patient?.name ?? "this patient";
+  const mrn = detail.patient?.mrn;
+  return mrn ? `${name} (${mrn})` : name;
+}
+
+export const VALIDATE_REVIEW_TEXT =
+  "Review the report and all attached imaging before validation. Validation freezes the report and uploaded files for final release.";
+
+/** "Validate RADRES0075 for Bezabeh Ketema (HMS11832) — Brain CT Scan?" */
+export function validateConfirmText(
+  detail: SignoffCopyFacts,
+  result: Pick<RadOperationalResult, "name">,
+): string {
+  return `Validate ${result.name} for ${patientLabel(detail)} — ${studyPhrase(detail)}?`;
+}
+
+export const VALIDATE_SUPPORT_TEXT =
+  "This cannot be undone from the Radiology Desk. The ordering clinician will still not see the report until it is released.";
+
+export const RELEASE_REVIEW_TEXT =
+  "Review the validated report before release. Releasing publishes the report and imaging to the ordering clinician immediately.";
+
+/** "Release RADRES0075 to Dr. Hana Bekele?" */
+export function releaseConfirmText(
+  detail: SignoffCopyFacts,
+  result: Pick<RadOperationalResult, "name">,
+): string {
+  const doctor = detail.ordering_physician?.name ?? "the ordering clinician";
+  return `Release ${result.name} to ${doctor}?`;
+}
+
+/** "Bezabeh Ketema (HMS11832) · Brain CT Scan" */
+export function releaseIdentityText(detail: SignoffCopyFacts): string {
+  return `${patientLabel(detail)} · ${studyPhrase(detail)}`;
+}
+
+export function releaseSupportText(detail: Pick<RadRequestDetail, "request_code">): string {
+  return `The report and attached images become visible on the Doctor Desk immediately. ${detail.request_code} will complete when all ordered studies are released.`;
+}
+
+/**
+ * What the desk says after a CONFIRMED sign-off, from the server's payload.
+ * A release that did not complete the request says so, with the server's own
+ * review sentence -- never a guess about why.
+ */
+export function signoffOutcomeText(
+  kind: RadSignoffKind,
+  response: Pick<RadSignoffResponse, "request_completed"> & {
+    request: Pick<RadRequestDetail, "lane_label" | "review_message">;
+  },
+): string {
+  if (kind === "validate") {
+    return `Validated · The request is now in ${response.request.lane_label}.`;
+  }
+  if (response.request_completed) return "Released · Request completed";
+  const blocker = response.request.review_message?.trim();
+  return blocker ? `Released · Request still in progress. ${blocker}` : "Released · Request still in progress";
+}
+
+/** A sign-off refusal: the server's fixed sentence, else a fallback. */
+export function signoffErrorMessage(
+  serverMessage: string | null | undefined,
+  kind: RadSignoffKind,
+): string {
+  const trimmed = typeof serverMessage === "string" ? serverMessage.trim() : "";
+  if (trimmed) return trimmed;
+  return kind === "validate"
+    ? "The radiology report could not be validated. Nothing was changed."
+    : "The radiology report could not be released. Nothing was changed.";
+}
+
+const SIGNOFF_RECONCILE_CODES = new Set([
+  "radiology_result_not_found",
+  "radiology_result_not_validatable",
+  "radiology_result_not_releasable",
+  "radiology_result_ambiguous",
+  "radiology_result_state_conflict",
+]);
+
+/** Sign-off refusals after which the screen is stale and is re-read. */
+export function shouldReconcileAfterSignoff(code: string | null | undefined): boolean {
+  return typeof code === "string" && SIGNOFF_RECONCILE_CODES.has(code);
 }

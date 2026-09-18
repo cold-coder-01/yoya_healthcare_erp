@@ -10,10 +10,19 @@
  * NOT reuse any Doctor-specific loader: the Doctor Desk resolves visits and
  * consultations through a doctor's own scope, and none of that applies here.
  *
- * TWO WRITE ROUTES (Slice 2): schedule and start. Both are BODILESS -- the
- * request is identified by the URL and nothing else is accepted -- so there is
- * still no body reader here, and still no binary stream helper, because this
- * desk serves no image bytes.
+ * TWO BODILESS WRITE ROUTES (Slice 2): schedule and start -- the request is
+ * identified by the URL and nothing else is accepted.
+ *
+ * THREE REPORT ROUTES (Slice 3). Opening the report is bodiless too. Save and
+ * enter carry the report text, so `readJsonObject` arrives here with them, as
+ * it did for the Laboratory Desk's result entry. Those two routes are
+ * PASS-THROUGHS: which keys are writable is the Radiology API's allow-list,
+ * which refuses every other key with a 400.
+ *
+ * IMAGES (Slice 4). One multipart upload, one byte stream and one bodiless
+ * remove. The upload form is REBUILT here from the one file and an optional
+ * caption; the bytes are streamed back through streamOdooBinary's header
+ * allow-list, so no Odoo cookie, URL or banner reaches the browser.
  */
 import "server-only";
 
@@ -22,10 +31,20 @@ import {
   errorResponse,
   forwardOdooResult,
   handleRouteError,
+  postOdooMultipart as postOdooMultipartWithLabel,
+  readJsonObject,
   requireOdooSession,
+  streamOdooBinary,
 } from "@/app/api/reception/_utils";
 
-export { errorResponse, forwardOdooResult, handleRouteError, requireOdooSession };
+export {
+  errorResponse,
+  forwardOdooResult,
+  handleRouteError,
+  readJsonObject,
+  requireOdooSession,
+  streamOdooBinary,
+};
 
 /**
  * How this desk names the upstream service in fallback wording, so an HTML 404
@@ -63,6 +82,33 @@ export function postOdooApi<T>(sessionId: string, path: string) {
   );
 }
 
+/**
+ * A POST WITH A BODY, bound to the same label. Used ONLY by the report save and
+ * enter routes, which forward the browser's JSON object unchanged; the
+ * Radiology API decides which of its keys are honoured.
+ */
+export function postOdooApiWithBody<T>(
+  sessionId: string,
+  path: string,
+  body: Record<string, unknown>,
+) {
+  return callOdooApiWithLabel<T>(
+    sessionId,
+    path,
+    "POST",
+    body,
+    RADIOLOGY_SERVICE_LABEL,
+  );
+}
+
+/** A multipart POST, bound to the same label. Used ONLY by the image upload. */
+export function postOdooMultipart<T>(sessionId: string, path: string, form: FormData) {
+  return postOdooMultipartWithLabel<T>(sessionId, path, form, RADIOLOGY_SERVICE_LABEL);
+}
+
+/** The model's ceiling, restated only to refuse a huge body before forwarding it. */
+export const RADIOLOGY_IMAGE_MAX_BYTES = 25 * 1024 * 1024;
+
 /** Every Radiology Desk route hangs off this one Odoo prefix. */
 export const RADIOLOGY_API = "/yoya-emr/api/v1/radiology";
 
@@ -84,4 +130,32 @@ export function parseRequestId(raw: string) {
     };
   }
   return { ok: true as const, value: requestId };
+}
+
+/** Parse the `[resultId]` segment. Existence and access are Odoo's decisions. */
+export function parseResultId(raw: string) {
+  const resultId = Number(raw);
+  if (!Number.isInteger(resultId) || resultId <= 0) {
+    return {
+      ok: false as const,
+      response: errorResponse(
+        "invalid_result_id",
+        "Radiology report ID is invalid.",
+        400,
+      ),
+    };
+  }
+  return { ok: true as const, value: resultId };
+}
+
+/** Parse the `[imageId]` segment. Existence and ownership are Odoo's decisions. */
+export function parseImageId(raw: string) {
+  const imageId = Number(raw);
+  if (!Number.isInteger(imageId) || imageId <= 0) {
+    return {
+      ok: false as const,
+      response: errorResponse("radiology_image_not_found", "Image not found.", 404),
+    };
+  }
+  return { ok: true as const, value: imageId };
 }

@@ -41,6 +41,10 @@ from odoo.exceptions import AccessError, UserError, ValidationError
 from odoo.tests import tagged
 from odoo.tools import mute_logger
 
+from odoo.addons.hospital_radiology.models.radiology_result import (
+    _result_workflow_capability,
+)
+
 from .test_doctor_diagnosis_api import DiagnosisCase
 
 CATALOGUE = "/yoya-emr/api/v1/doctor/catalogue/radiology-exams"
@@ -1572,14 +1576,17 @@ class TestRadiologyAccess(RadiologyCase):
             password=self.other_password,
         )
         stored = self._requests_of(self._consultation_for(appointment))
-        result = self.env["hospital.radiology.result"].sudo().create(
-            {
-                "request_id": stored.id,
-                "patient_id": stored.patient_id.id,
-                "physician_id": stored.physician_id.id,
-                "impression": "Confidential.",
-            }
-        )
+        # A report on a request that has not started: a legacy shape since
+        # Radiology Slice 3, arranged through the result workflow capability.
+        with _result_workflow_capability():
+            result = self.env["hospital.radiology.result"].sudo().create(
+                {
+                    "request_id": stored.id,
+                    "patient_id": stored.patient_id.id,
+                    "physician_id": stored.physician_id.id,
+                    "impression": "Confidential.",
+                }
+            )
 
         visible = (
             self.env["hospital.radiology.result"]
@@ -1593,13 +1600,16 @@ class TestRadiologyAccess(RadiologyCase):
         appointment, _e = self._in_consultation_visit(doctor=self.doctor)
         self._order(appointment)
         stored = self._requests_of(self._consultation_for(appointment))
-        result = self.env["hospital.radiology.result"].sudo().create(
-            {
-                "request_id": stored.id,
-                "patient_id": stored.patient_id.id,
-                "physician_id": stored.physician_id.id,
-            }
-        )
+        # A report on a request that has not started: a legacy shape since
+        # Radiology Slice 3, arranged through the result workflow capability.
+        with _result_workflow_capability():
+            result = self.env["hospital.radiology.result"].sudo().create(
+                {
+                    "request_id": stored.id,
+                    "patient_id": stored.patient_id.id,
+                    "physician_id": stored.physician_id.id,
+                }
+            )
 
         visible = (
             self.env["hospital.radiology.result"]

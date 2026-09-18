@@ -218,6 +218,47 @@ export async function callOdooApi<T>(
 }
 
 /**
+ * POST a multipart/form-data body to Odoo and read its JSON envelope.
+ *
+ * The form is built SERVER-SIDE by the calling route from fields it has
+ * checked; fetch sets the boundary. The session cookie travels only on this
+ * server-to-server request, exactly as in callOdooApi.
+ */
+export async function postOdooMultipart<T>(
+  sessionId: string,
+  path: string,
+  form: FormData,
+  serviceLabel: string = DEFAULT_SERVICE_LABEL,
+) {
+  const baseUrl = getOdooBaseUrl();
+
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      method: "POST",
+      headers: { Cookie: `session_id=${sessionId}` },
+      body: form,
+      cache: "no-store",
+    });
+  } catch {
+    throw new OdooClientError(
+      "odoo_unreachable",
+      "Unable to reach Odoo.",
+      502,
+    );
+  }
+
+  return {
+    status: response.status,
+    body: normalizeEnvelope<T>(
+      await readJson(response),
+      response.status,
+      serviceLabel,
+    ),
+  };
+}
+
+/**
  * Headers a proxied binary response is allowed to carry to the browser.
  *
  * AN ALLOWLIST, NOT A DENYLIST. Everything Odoo sends that is not named here

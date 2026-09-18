@@ -11,6 +11,9 @@ Radiology follows the same ownership split as laboratory:
 """
 
 from odoo import api, fields, models
+from odoo.addons.hospital_radiology.models.radiology_result import (
+    _result_workflow_capability,
+)
 from odoo.exceptions import UserError, ValidationError
 
 
@@ -413,7 +416,11 @@ class HospitalRadiologyResultBilling(models.Model):
         request = self.request_id
         candidates = request.line_ids.filtered(lambda l: l.exam_id == result_line.exam_id and l.state != "cancelled")
         if len(candidates) == 1:
-            result_line.sudo().write({"request_line_id": candidates.id})
+            # Healing a legacy line with no request line, on a VALIDATED report
+            # whose lines are frozen: the one line write the result workflow
+            # capability admits (Radiology Slice 3).
+            with _result_workflow_capability():
+                result_line.sudo().write({"request_line_id": candidates.id})
             return candidates
         if not candidates:
             raise UserError("Result line '%s' does not correspond to any active examination on request %s." % (result_line.exam_id.display_name, request.display_name))

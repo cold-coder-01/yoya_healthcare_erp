@@ -428,11 +428,12 @@ def serialize_result_line(line):
 def serialize_image_metadata(image):
     """One attached clinical file, as METADATA ONLY.
 
-    NO BYTES AND NO URL, in Slice 1 at all. `file` is never read, and no
-    /web/content path, attachment id or access token is built: the id is the
-    hospital.radiology.image id, and a byte endpoint for this desk is a later
-    slice with its own security argument. The mimetype and size are the values
-    the model derived from the file's own bytes at upload.
+    NO BYTES AND NO URL. `file` is never read, and no /web/content path,
+    attachment id or access token is built: the id is the
+    hospital.radiology.image id, and the bytes are reached only through the
+    desk's own byte route (Slice 4), which checks this image belongs to the
+    report. The mimetype and size are the values the model derived from the
+    file's own bytes at upload.
     """
     return {
         "id": image.id,
@@ -446,6 +447,7 @@ def serialize_image_metadata(image):
         "uploaded_by": image.uploaded_by_id.name or None,
         "uploaded_at": datetime_value(image.uploaded_at),
         "sequence": image.sequence,
+        "active": image.active,
     }
 
 
@@ -467,6 +469,12 @@ def serialize_operational_result(result):
             "recommendations": _text(result.recommendations),
             "lines": [serialize_result_line(line) for line in result.line_ids],
             "images": [serialize_image_metadata(image) for image in images],
+            # Radiology Slice 4. Whether the IMAGE SET may still change, from
+            # the image model's own list of states -- so the browser never
+            # derives it from the report's state. Separate from the text:
+            # an entered report's narrative is frozen while its images are not.
+            "images_mutable": result.state
+            in result.env["hospital.radiology.image"].MUTABLE_RESULT_STATES,
         }
     )
     return payload

@@ -404,6 +404,22 @@ def may_rad_desk(env):
     return _in_any(env, RAD_DESK_GROUPS)
 
 
+# THE REPORT AUTHORS (Radiology Slice 3): who may write a report's text and mark
+# it entered. The Radiology Technician opens and reads the report -- the
+# container imaging will hang on -- but does not author it. The same tuple as
+# hospital_radiology's REPORT_AUTHOR_GROUPS, which enforces it on the model.
+RAD_REPORT_AUTHOR_GROUPS = (
+    GROUP_RADIOLOGIST,
+    GROUP_MANAGER,
+    GROUP_SYSADMIN,
+)
+
+
+def may_author_rad_report(env):
+    """May this user write a radiology report and mark it entered?"""
+    return _in_any(env, RAD_REPORT_AUTHOR_GROUPS)
+
+
 def rad_desk_role_flags(env):
     """The Radiology Desk's own role header: which of ITS roles the user holds.
 
@@ -432,15 +448,32 @@ def rad_desk_capability_flags(env):
     for the reason lab_desk_capability_flags gives: a flag with no endpoint
     behind it is an invitation to build a button that has nothing to call.
 
+    SLICE 3 adds the report: `open_report` for every desk role, and
+    `edit_report` / `enter_report` for the report authors only (Radiologist,
+    Manager, System Administrator).
+
+    SLICE 4 adds `manage_images` -- upload, view and remove a file on a draft or
+    entered report -- for every desk role.
+
+    SLICE 5 adds `validate_report` and `release_report`, for the report authors
+    only: the technician views a report but never signs or publishes it.
+
     These say which ACTS the role may attempt. Whether ONE request may be
-    scheduled or started is the request's own lane, re-checked under a row lock
-    by the endpoint on every call.
+    scheduled, started or reported is the request's own lane, re-checked under
+    a row lock by the endpoint on every call.
     """
     allowed = may_rad_desk(env)
+    author = allowed and may_author_rad_report(env)
     return {
         "radiology_desk": allowed,
         "schedule_study": allowed,
         "start_exam": allowed,
+        "open_report": allowed,
+        "edit_report": author,
+        "enter_report": author,
+        "manage_images": allowed,
+        "validate_report": author,
+        "release_report": author,
     }
 
 

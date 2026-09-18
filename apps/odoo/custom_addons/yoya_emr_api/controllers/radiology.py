@@ -1,19 +1,27 @@
-"""Radiology Desk API: the imaging department's queue, one request, and the two
-transitions the desk may perform.
+"""Radiology Desk API: the imaging department's queue, one request, the two
+request transitions, and report drafting and entry.
 
     GET  /yoya-emr/api/v1/radiology/session
     GET  /yoya-emr/api/v1/radiology/worklist
     GET  /yoya-emr/api/v1/radiology/requests/<id>
     POST /yoya-emr/api/v1/radiology/requests/<id>/schedule  action_schedule()
     POST /yoya-emr/api/v1/radiology/requests/<id>/start     action_mark_in_progress()
+    POST /yoya-emr/api/v1/radiology/requests/<id>/report    find or create THE report
+    POST /yoya-emr/api/v1/radiology/results/<id>/save       write allow-listed text
+    POST /yoya-emr/api/v1/radiology/results/<id>/enter      save + action_mark_entered()
+    POST /yoya-emr/api/v1/radiology/results/<id>/images     upload ONE file
+    GET  /yoya-emr/api/v1/radiology/results/<id>/images/<image_id>         its bytes
+    POST /yoya-emr/api/v1/radiology/results/<id>/images/<image_id>/remove  unlink it
+    POST /yoya-emr/api/v1/radiology/results/<id>/validate   action_validate()
+    POST /yoya-emr/api/v1/radiology/results/<id>/release    action_release()
 
-EXACTLY TWO WRITES (Slice 2), AND THE CONTROLLER DECIDES NOTHING ABOUT WORKFLOW.
-Each resolves the request through the caller's own record rules, locks its row,
-re-checks the DESK POLICY under the lock, and calls ONE authoritative model
-method inside one savepoint. No state is written here -- the request model now
-refuses a direct state write from every channel -- and nothing calls sudo().
-Reporting, images, validation, release, cancellation and stock consumption are
-model methods this module still does not call and routes it does not register.
+THE CONTROLLER DECIDES NOTHING ABOUT WORKFLOW. Each write resolves its record
+through the caller's own record rules, locks the row, re-checks the DESK POLICY
+under the lock, and calls authoritative model methods inside one savepoint. No
+state is written here -- the request and result models refuse a direct state
+write from every channel -- and nothing calls sudo(). Cancellation, reset,
+amendment and stock consumption are model methods this module still does not
+call and routes it does not register.
 
 THREE INDEPENDENT CONTROLS, IN THIS ORDER
 -----------------------------------------
@@ -37,14 +45,17 @@ request state, the operational result's state and hospital_billing's
 filter and the lane counts, so the three can never disagree. Nothing derived is
 written back to Odoo.
 """
+import base64
 import functools
 import logging
+import os
 
 from odoo import http
 from odoo.exceptions import AccessError, UserError, ValidationError
 from odoo.http import request
 from odoo.osv import expression
 from odoo.service.model import PG_CONCURRENCY_EXCEPTIONS_TO_RETRY
+from odoo.tools.mimetypes import guess_mimetype
 
 from ..services.api_response import (
     ApiError,
@@ -52,6 +63,7 @@ from ..services.api_response import (
     error_response,
     parse_date,
     parse_int_param,
+    read_json_body,
     success_response,
 )
 from ..services.rad_desk_serializers import (
@@ -59,13 +71,17 @@ from ..services.rad_desk_serializers import (
     RAD_DESK_ANOMALY_STATES,
     RAD_DESK_LANE_STATES,
     RAD_DESK_LANES,
+    operational_results,
     rad_desk_lane,
     selection_options,
+    serialize_image_metadata,
+    serialize_operational_result,
     serialize_request_detail,
     serialize_session,
     serialize_worklist,
 )
 from ..services.reception_scope import (
+    may_author_rad_report,
     may_rad_desk,
     rad_desk_capability_flags,
     rad_desk_role_flags,
@@ -573,6 +589,606 @@ def _run_transition(env, record, action, failure_code, failure_message):
             raise TransitionResponseError(failure_code, failure_message) from error
 
 
+# ---------------------------------------------------------------------------
+# Report drafting and entry (Slice 3)
+# ---------------------------------------------------------------------------
+# A report is opened, and written, only while its study is In progress.
+REPORT_REQUEST_STATE = "in_progress"
+
+# THE WRITE ALLOW-LIST. Everything else on a report -- request, patient,
+# ordering physician, reporting radiologist, date, state, archive flag, images,
+# the exam, the ordered study, the contrast flag, the sequence -- is derived by
+# the model or is workflow, and is REFUSED as input rather than silently
+# dropped, so a client that sends it learns at once it is not honoured.
+# contrast_used is not here: it is copied from the order, and nothing in the
+# current workflow asks a radiologist to correct it.
+EDITABLE_REPORT_FIELDS = ("findings", "impression", "recommendations")
+EDITABLE_REPORT_LINE_FIELDS = ("result_summary", "notes")
+
+REPORT_NOT_AVAILABLE_MESSAGE = (
+    "A radiology report is written only while the study is In progress. "
+    "Request %s is %s. Nothing has been changed."
+)
+REPORT_AMBIGUOUS_MESSAGE = (
+    "Request %s has %s active radiology reports, so the Radiology Desk cannot "
+    "tell which one to use. Nothing has been changed. Ask a hospital manager to "
+    "review this request."
+)
+REPORT_NOT_EDITABLE_MESSAGE = (
+    "Radiology report %s is %s and can no longer be edited from the Radiology "
+    "Desk. Nothing has been changed."
+)
+REPORT_STATE_CONFLICT_MESSAGE = (
+    "Radiology report %s changed while this action was being processed and is "
+    "now %s. Nothing has been changed by this action. Refresh and check the "
+    "report."
+)
+REPORT_AUTHOR_REQUIRED_MESSAGE = (
+    "Only a Radiologist, Hospital Manager or Hospital System Administrator can "
+    "write or enter a radiology report. Nothing has been changed."
+)
+REPORT_OPEN_RESPONSE_FAILED_MESSAGE = (
+    "The radiology report could not be opened because the confirmation could "
+    "not be produced. Nothing was changed. Please retry."
+)
+REPORT_SAVE_RESPONSE_FAILED_MESSAGE = (
+    "The radiology report was not saved because the confirmation could not be "
+    "produced. Nothing was changed. Please retry."
+)
+REPORT_ENTER_RESPONSE_FAILED_MESSAGE = (
+    "The radiology report was not marked entered because the confirmation "
+    "could not be produced. Nothing was changed. Please retry."
+)
+
+
+def _require_report_author(env):
+    """The second gate of the two report WRITES. Checked before any record."""
+    if not may_author_rad_report(env):
+        raise ApiError(
+            "radiology_report_author_required", REPORT_AUTHOR_REQUIRED_MESSAGE, 403
+        )
+
+
+def _load_result(env, result_id):
+    """Resolve one report through the CALLER'S OWN record rules.
+
+    search(), not browse().exists(), for the reason _load_request gives. An
+    archived report is unreachable too.
+    """
+    if result_id <= 0:
+        raise ApiError("invalid_result_id", "Radiology report ID is invalid.", 400)
+    result = env["hospital.radiology.result"].search([("id", "=", result_id)], limit=1)
+    if not result:
+        raise ApiError(
+            "radiology_result_not_found", "Radiology report not found.", 404
+        )
+    return result
+
+
+def _lock_result_row(env, result):
+    env.flush_all()
+    env.cr.execute(
+        "SELECT id FROM hospital_radiology_result WHERE id = %s FOR UPDATE",
+        (result.id,),
+    )
+    result.invalidate_recordset()
+
+
+def _assert_report_available(record):
+    """Desk policy for every report route: the study is In progress and has at
+    least one active study to report on."""
+    if record.state != REPORT_REQUEST_STATE:
+        raise ApiError(
+            "radiology_report_not_available",
+            REPORT_NOT_AVAILABLE_MESSAGE % (record.name, _state_label(record)),
+            422,
+        )
+    if not record.line_ids.filtered(lambda line: line.state != "cancelled"):
+        raise ApiError(
+            "radiology_request_no_active_study",
+            NO_ACTIVE_STUDY_MESSAGE % (record.name, "reported"),
+            422,
+        )
+
+
+def _assert_single_report(record, results):
+    """Refuse to guess when a request carries more than one active report."""
+    if len(results) > 1:
+        raise ApiError(
+            "radiology_result_ambiguous",
+            REPORT_AMBIGUOUS_MESSAGE % (record.name, len(results)),
+            409,
+        )
+
+
+def _open_operational_report(env, record):
+    """Find THE one operational report of an in-progress request, under the
+    request's row lock. Returns it, or an empty recordset when one may be
+    created. Every refusal is raised before anything is written.
+
+    WHY THE LOCK IS NOT ENOUGH, and why _create_operational_report touches the
+    row: see laboratory._open_operational_result. Odoo runs every transaction at
+    REPEATABLE READ with the snapshot taken at its first query, so a second
+    click waiting on this lock would, once it got it, still see no report and
+    create another. The creator's no-op UPDATE turns that stale snapshot into a
+    serialization failure, rad_endpoint re-raises it, Odoo replays the request,
+    and the replay finds the first report.
+    """
+    _lock_row(env, record)
+    _assert_report_available(record)
+    results = operational_results(record)
+    _assert_single_report(record, results)
+    return results
+
+
+def _create_operational_report(env, record):
+    """Create the report, after marking the locked request row as modified.
+
+    Only ever called by the lock holder after _open_operational_report found no
+    report. A plain ORM create: the model assigns the RADRES sequence, derives
+    patient and ordering physician from the request, builds one line per active
+    study, and records NO radiologist -- that is set when a report author marks
+    it entered.
+    """
+    env.cr.execute(
+        "UPDATE hospital_radiology_request SET write_date = write_date "
+        "WHERE id = %s",
+        (record.id,),
+    )
+    return env["hospital.radiology.result"].create({"request_id": record.id})
+
+
+def _text_value(field_name, value):
+    """A string, or null to clear. Stored as typed, never trimmed: whether
+    whitespace counts as a report is action_mark_entered's decision."""
+    if value is None or value == "":
+        return False
+    if not isinstance(value, str):
+        raise ApiError(
+            "invalid_field", "'%s' must be a string or null." % field_name, 400
+        )
+    return value
+
+
+def _check_report_payload_shape(body):
+    """Refuse any key outside the allow-list before a record is touched."""
+    allowed = set(EDITABLE_REPORT_FIELDS) | {"lines"}
+    unknown = sorted(key for key in body if key not in allowed)
+    if unknown:
+        raise ApiError(
+            "radiology_report_field_not_allowed",
+            "These report fields cannot be written from the Radiology Desk: %s."
+            % ", ".join(unknown),
+            400,
+        )
+    lines = body.get("lines", [])
+    if lines is None:
+        lines = []
+    if not isinstance(lines, list):
+        raise ApiError("invalid_field", "'lines' must be a list.", 400)
+    line_allowed = set(EDITABLE_REPORT_LINE_FIELDS) | {"id"}
+    for entry in lines:
+        if not isinstance(entry, dict):
+            raise ApiError(
+                "invalid_field", "Each entry in 'lines' must be an object.", 400
+            )
+        unknown = sorted(key for key in entry if key not in line_allowed)
+        if unknown:
+            raise ApiError(
+                "radiology_report_field_not_allowed",
+                "These report line fields cannot be written from the Radiology "
+                "Desk: %s." % ", ".join(unknown),
+                400,
+            )
+        line_id = entry.get("id")
+        if isinstance(line_id, bool) or not isinstance(line_id, int):
+            raise ApiError(
+                "invalid_field", "Each report line needs its integer 'id'.", 400
+            )
+    return lines
+
+
+def _report_write_values(result, body):
+    """Translate an allow-listed body into ONE parent write.
+
+    Lines are written through the PARENT as (1, id, vals) commands, so the
+    report's own write() -- its freeze, its authorship check and its audit entry
+    -- sees them. Every line id must belong to THIS report; a foreign id is
+    refused, never ignored.
+    """
+    lines = _check_report_payload_shape(body)
+    values = {}
+    for field_name in EDITABLE_REPORT_FIELDS:
+        if field_name in body:
+            values[field_name] = _text_value(field_name, body[field_name])
+    own_line_ids = set(result.line_ids.ids)
+    seen = set()
+    commands = []
+    for entry in lines:
+        line_id = entry["id"]
+        if line_id not in own_line_ids:
+            raise ApiError(
+                "radiology_result_line_not_found",
+                "Report line %s does not belong to report %s." % (line_id, result.name),
+                400,
+            )
+        if line_id in seen:
+            raise ApiError(
+                "invalid_field", "Report line %s appears more than once." % line_id, 400
+            )
+        seen.add(line_id)
+        line_values = {
+            field_name: _text_value(field_name, entry[field_name])
+            for field_name in EDITABLE_REPORT_LINE_FIELDS
+            if field_name in entry
+        }
+        if line_values:
+            commands.append((1, line_id, line_values))
+    if commands:
+        values["line_ids"] = commands
+    return values
+
+
+def _editable_report(env, result, seen_state):
+    """Lock, then apply the desk's entry policy. Writes nothing.
+
+    LOCK ORDER: REQUEST, THEN REPORT -- the order the open route takes, so two
+    desk actions on one study cannot deadlock. The report lock serializes save
+    against enter: the later request waits, finds the row modified by the
+    committed change, and is replayed by Odoo against the entered report, which
+    this function then refuses.
+    """
+    record = result.request_id
+    _lock_row(env, record)
+    _lock_result_row(env, result)
+    if result.state != seen_state:
+        raise ApiError(
+            "radiology_result_state_conflict",
+            REPORT_STATE_CONFLICT_MESSAGE % (result.name, _state_label(result)),
+            409,
+        )
+    _assert_report_available(record)
+    _assert_single_report(record, operational_results(record))
+    if result.state != "draft":
+        raise ApiError(
+            "radiology_result_not_editable",
+            REPORT_NOT_EDITABLE_MESSAGE % (result.name, _state_label(result)),
+            409,
+        )
+
+
+def _report_payload(result):
+    return {
+        "result": serialize_operational_result(result),
+        "request": serialize_request_detail(result.request_id),
+    }
+
+
+def _run_report_action(env, result, action, failure_message):
+    """Run a report mutation and build its response inside ONE savepoint.
+
+    The same contract as _run_transition: a model refusal leaves nothing
+    half-written, and a failure while serializing leaves no committed change
+    behind a message saying it failed.
+    """
+    with env.cr.savepoint():
+        action()
+        try:
+            env.invalidate_all()
+            return _report_payload(result)
+        except Exception as error:
+            _logger.exception(
+                "Radiology report response failed for result=%s uid=%s; "
+                "rolling the change back",
+                result.id,
+                env.uid,
+            )
+            raise TransitionResponseError(
+                "radiology_report_response_failed", failure_message
+            ) from error
+
+
+# ---------------------------------------------------------------------------
+# Images (Slice 4)
+# ---------------------------------------------------------------------------
+# THE MODEL IS THE AUTHORITY. hospital.radiology.image sniffs the bytes, caps
+# the size, derives mimetype and size, records the uploader, forces private
+# storage and freezes the set from `validated` onward -- under sudo too. These
+# routes add the desk's gate, a row lock and one savepoint, and pre-check the
+# file with the MODEL'S OWN constants only so each refusal can carry its own
+# code; the model re-checks everything on create.
+#
+# NOTHING ABOUT THE FILE IS TAKEN FROM THE CLIENT except the bytes, the name it
+# is displayed under (sanitized), and an optional caption. The browser's
+# Content-Type, a claimed size, an image_type, a result id in the body -- any
+# other form field is refused, not ignored.
+IMAGE_FORM_FIELDS = ("caption",)
+IMAGE_CAPTION_MAX = 200
+IMAGE_FILENAME_MAX = 200
+
+IMAGE_NOT_EDITABLE_MESSAGE = (
+    "Radiology report %s is %s, so its images can no longer be changed. "
+    "Nothing has been changed."
+)
+IMAGE_NOT_FOUND_MESSAGE = "Image not found."
+IMAGE_ONE_FILE_MESSAGE = "Send exactly one file, in the 'file' field."
+IMAGE_EMPTY_MESSAGE = "The file is empty. Nothing has been uploaded."
+IMAGE_TOO_LARGE_MESSAGE = (
+    "This file is larger than %d MB, the limit for one radiology file. Nothing "
+    "has been uploaded."
+)
+IMAGE_UNSUPPORTED_MESSAGE = (
+    "This file is not a JPEG, PNG or PDF. The file's content decides this, not "
+    "its name. Nothing has been uploaded."
+)
+IMAGE_UPLOAD_RESPONSE_FAILED_MESSAGE = (
+    "The file was not uploaded because the confirmation could not be produced. "
+    "Nothing was changed. Please retry."
+)
+IMAGE_REMOVE_RESPONSE_FAILED_MESSAGE = (
+    "The file was not removed because the confirmation could not be produced. "
+    "Nothing was changed. Please retry."
+)
+
+
+def _safe_filename(raw):
+    """The name a file is stored and displayed under.
+
+    The basename only -- a browser may send a full client path -- with control
+    characters, quotes and path separators removed rather than escaped, and a
+    bounded length. It is a LABEL: nothing about the file's type is read from
+    it.
+    """
+    name = (raw or "").replace("\\", "/").rsplit("/", 1)[-1]
+    forbidden = set('"\r\n\t<>')
+    cleaned = "".join(
+        character for character in name
+        if character.isprintable() and character not in forbidden
+    ).strip()
+    return cleaned[:IMAGE_FILENAME_MAX] or "radiology-file"
+
+
+def _read_upload(env):
+    """(raw bytes, sniffed mimetype, safe filename, caption) from the request.
+
+    Read with a hard ceiling of MAX_FILE_SIZE + 1 bytes, so an oversized upload
+    is refused without the whole of it being held in memory.
+    """
+    httprequest = request.httprequest
+    unknown = sorted(
+        key for key in httprequest.form.keys() if key not in IMAGE_FORM_FIELDS
+    )
+    if unknown:
+        raise ApiError(
+            "radiology_image_field_not_allowed",
+            "These fields cannot be sent with a radiology file: %s. The type and "
+            "size are read from the file itself." % ", ".join(unknown),
+            400,
+        )
+    others = sorted(key for key in httprequest.files.keys() if key != "file")
+    files = httprequest.files.getlist("file")
+    if others or len(files) != 1:
+        raise ApiError("radiology_image_invalid_file", IMAGE_ONE_FILE_MESSAGE, 400)
+
+    Image = env["hospital.radiology.image"]
+    storage = files[0]
+    raw = storage.stream.read(Image.MAX_FILE_SIZE + 1)
+    if not raw:
+        raise ApiError("radiology_image_invalid_file", IMAGE_EMPTY_MESSAGE, 400)
+    if len(raw) > Image.MAX_FILE_SIZE:
+        raise ApiError(
+            "radiology_image_too_large",
+            IMAGE_TOO_LARGE_MESSAGE % (Image.MAX_FILE_SIZE // (1024 * 1024)),
+            413,
+        )
+    mimetype = guess_mimetype(raw)
+    if mimetype not in Image.ALLOWED_MIMETYPES:
+        raise ApiError(
+            "radiology_image_unsupported_type", IMAGE_UNSUPPORTED_MESSAGE, 415
+        )
+
+    caption = httprequest.form.get("caption")
+    if caption is not None:
+        caption = caption.strip()
+        if len(caption) > IMAGE_CAPTION_MAX:
+            raise ApiError(
+                "invalid_field",
+                "'caption' must be at most %d characters." % IMAGE_CAPTION_MAX,
+                400,
+            )
+    return raw, mimetype, _safe_filename(storage.filename), caption or None
+
+
+def _load_image(env, result, image_id):
+    """ONE image of ONE report, through the caller's own record rules.
+
+    The result AND the image id must match, and archived images are absent, so
+    a guessed id, another report's image and an archived file all answer the
+    same 404.
+    """
+    if image_id <= 0:
+        raise ApiError("radiology_image_not_found", IMAGE_NOT_FOUND_MESSAGE, 404)
+    image = env["hospital.radiology.image"].search(
+        [("id", "=", image_id), ("result_id", "=", result.id), ("active", "=", True)],
+        limit=1,
+    )
+    if not image:
+        raise ApiError("radiology_image_not_found", IMAGE_NOT_FOUND_MESSAGE, 404)
+    return image
+
+
+def _mutable_images(env, result):
+    """Lock the request, then the report -- the Slice 3 lock order -- and
+    re-check under the lock that the image set may still change."""
+    _lock_row(env, result.request_id)
+    _lock_result_row(env, result)
+    Image = env["hospital.radiology.image"]
+    if result.state not in Image.MUTABLE_RESULT_STATES:
+        raise ApiError(
+            "radiology_image_not_editable",
+            IMAGE_NOT_EDITABLE_MESSAGE % (result.name, _state_label(result)),
+            409,
+        )
+
+
+def _run_image_action(env, result, action, failure_message):
+    """An image mutation and its response in ONE savepoint.
+
+    The image row, its backing ir.attachment and its audit row are all written
+    inside it, so a failure while building the confirmation leaves none of
+    them behind -- and a removal that cannot be confirmed is undone.
+    """
+    with env.cr.savepoint():
+        outcome = action()
+        try:
+            env.invalidate_all()
+            payload = _report_payload(result)
+            if outcome is not None:
+                payload["image"] = serialize_image_metadata(outcome)
+            return payload
+        except Exception as error:
+            _logger.exception(
+                "Radiology image response failed for result=%s uid=%s; "
+                "rolling the change back",
+                result.id,
+                env.uid,
+            )
+            raise TransitionResponseError(
+                "radiology_image_response_failed", failure_message
+            ) from error
+
+
+# ---------------------------------------------------------------------------
+# Validation and release (Slice 5)
+# ---------------------------------------------------------------------------
+# THE MODEL DOES THE WORK. action_validate() and action_release() -- with
+# hospital_billing's overrides -- re-check that the study has started and is
+# financially cleared, deliver the charge at release, and complete the request
+# through _sync_completion_from_results(). Nothing here restates any of that.
+# The desk adds the author gate, the two row locks, the one-report rule, a
+# completeness pre-check whose sentence carries no money, and one savepoint.
+#
+# EVERY REFUSAL FROM THE ACTION ITSELF IS A FIXED SENTENCE. hospital_billing's
+# clearance refusal names the patient-payable amount and currency, and its
+# integrity refusals name charges; none of it reaches this desk, for any role.
+# The original is logged by type only.
+REPORT_TRANSITION_REQUEST_STATE = "in_progress"
+
+REPORT_NOT_VALIDATABLE_MESSAGE = (
+    "Only an entered radiology report of a study in progress can be validated. "
+    "Report %s is %s and request %s is %s. Nothing has been changed."
+)
+REPORT_NOT_RELEASABLE_MESSAGE = (
+    "Only a validated radiology report of a study in progress can be released. "
+    "Report %s is %s and request %s is %s. Nothing has been changed."
+)
+REPORT_VALIDATION_BLOCKED_MESSAGE = (
+    "The radiology report could not be validated because financial clearance "
+    "has not been confirmed. Nothing was changed. Ask a hospital manager to "
+    "review this request."
+)
+REPORT_RELEASE_BLOCKED_MESSAGE = (
+    "The radiology report could not be released. Nothing was changed. Ask a "
+    "hospital manager to review this request."
+)
+REPORT_VALIDATE_RESPONSE_FAILED_MESSAGE = (
+    "The radiology report was not validated because the confirmation could not "
+    "be produced. Nothing was changed. Please retry."
+)
+REPORT_RELEASE_RESPONSE_FAILED_MESSAGE = (
+    "The radiology report was not released because the confirmation could not "
+    "be produced. Nothing was changed. Please retry."
+)
+
+
+def _transitionable_report(env, result, seen_state, *, expected_state,
+                           not_allowed_code, not_allowed_message):
+    """Lock, then apply the desk's validation / release policy. Writes nothing.
+
+    LOCK ORDER: REQUEST, THEN REPORT -- the order every report route takes.
+    Under the locks, in order:
+
+      1. the report moved since it was loaded     -> 409 state conflict
+      2. wrong report state or request state      -> 409 not validatable/releasable
+      3. more than one active report, or this one
+         is not the request's operational report  -> 409 ambiguous
+      4. the report is no longer complete          -> 422 incomplete (model's words)
+    """
+    record = result.request_id
+    _lock_row(env, record)
+    _lock_result_row(env, result)
+    if result.state != seen_state:
+        raise ApiError(
+            "radiology_result_state_conflict",
+            REPORT_STATE_CONFLICT_MESSAGE % (result.name, _state_label(result)),
+            409,
+        )
+    if result.state != expected_state or record.state != REPORT_TRANSITION_REQUEST_STATE:
+        raise ApiError(
+            not_allowed_code,
+            not_allowed_message
+            % (result.name, _state_label(result), record.name, _state_label(record)),
+            409,
+        )
+    results = operational_results(record)
+    _assert_single_report(record, results)
+    if results != result:
+        raise ApiError(
+            "radiology_result_ambiguous",
+            REPORT_AMBIGUOUS_MESSAGE % (record.name, len(results)),
+            409,
+        )
+    # The model's own completeness rule, asked BEFORE the action so its
+    # sentence -- which carries no money -- can be shown; the action re-checks.
+    problems = result._entry_problems()
+    if problems:
+        raise ApiError(
+            "radiology_report_incomplete",
+            "Radiology report %s is not complete: %s." % (result.name, "; ".join(problems)),
+            422,
+        )
+
+
+def _run_report_transition(env, result, action, *, blocked_code, blocked_message,
+                           failure_message):
+    """ONE authoritative model method and its response, in ONE savepoint.
+
+    The savepoint covers the state change and its audit row and -- at release
+    -- hospital_billing's charge delivery and the request's completion. Any
+    refusal from the model rolls all of it back and becomes the fixed,
+    money-free sentence; a failure while building the response rolls it back
+    too and says nothing was changed.
+    """
+    try:
+        with env.cr.savepoint():
+            action()
+            try:
+                env.invalidate_all()
+                payload = _report_payload(result)
+                payload["request_completed"] = (
+                    result.request_id.state == "completed"
+                )
+                return payload
+            except Exception as error:
+                _logger.exception(
+                    "Radiology report transition response failed for result=%s "
+                    "uid=%s; rolling the transition back",
+                    result.id,
+                    env.uid,
+                )
+                raise TransitionResponseError(
+                    "radiology_result_transition_response_failed", failure_message
+                ) from error
+    except (TransitionResponseError, AccessError, *PG_CONCURRENCY_EXCEPTIONS_TO_RETRY):
+        raise
+    except Exception as error:  # noqa: BLE001 -- mapped to a fixed sentence
+        _logger.warning(
+            "Radiology report transition refused for result=%s uid=%s: %s",
+            result.id, env.uid, type(error).__name__,
+        )
+        raise ApiError(blocked_code, blocked_message, 422) from error
+
+
 class YoyaEmrRadiologyController(http.Controller):
 
     # ------------------------------------------------------------------
@@ -850,3 +1466,398 @@ class YoyaEmrRadiologyController(http.Controller):
         return success_response(
             {"request": payload, "capabilities": rad_desk_capability_flags(env)}
         )
+
+    # ------------------------------------------------------------------
+    # 6. Report: find or create the operational report (Slice 3)
+    # ------------------------------------------------------------------
+    @http.route(
+        "%s/requests/<int:request_id>/report" % RAD_API,
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @rad_endpoint
+    def radiology_report_open(self, request_id, **params):
+        """Return the request's ONE operational report, creating it if absent.
+
+        What "Open report" calls, for every desk role: the technician opens the
+        report container too. Idempotent: the first call creates a draft, every
+        later call returns that same record -- draft to continue, entered or
+        later to read. The body is ignored: nothing about a report is chosen by
+        the client at creation.
+
+        REFUSALS, each raised before anything is written:
+
+          radiology_report_not_available     422  request is not in_progress
+          radiology_request_no_active_study  422  nothing left to report on
+          radiology_result_ambiguous         409  more than one active report
+        """
+        env = request.env
+        _require_radiology_desk(env)
+        record = _load_request(env, request_id)
+        existing = _open_operational_report(env, record)
+        capabilities = rad_desk_capability_flags(env)
+
+        if existing:
+            payload = _report_payload(existing)
+            payload.update({"created": False, "capabilities": capabilities})
+            return success_response(payload)
+
+        try:
+            with env.cr.savepoint():
+                created = _create_operational_report(env, record)
+                try:
+                    env.invalidate_all()
+                    payload = _report_payload(created)
+                except Exception as error:
+                    _logger.exception(
+                        "Radiology report create response failed for request=%s "
+                        "uid=%s; rolling the creation back",
+                        request_id,
+                        env.uid,
+                    )
+                    raise TransitionResponseError(
+                        "radiology_report_response_failed",
+                        REPORT_OPEN_RESPONSE_FAILED_MESSAGE,
+                    ) from error
+        except (TransitionResponseError, AccessError, *PG_CONCURRENCY_EXCEPTIONS_TO_RETRY):
+            raise
+        except (UserError, ValidationError) as error:
+            # The model's own creation guards (request state, one operational
+            # report, patient match). Rolled back by the savepoint; the result
+            # model carries no billing text.
+            raise ApiError("radiology_report_not_available", str(error), 422) from error
+
+        payload.update({"created": True, "capabilities": capabilities})
+        return success_response(payload)
+
+    # ------------------------------------------------------------------
+    # 7. Report: save a draft (Slice 3)
+    # ------------------------------------------------------------------
+    @http.route(
+        "%s/results/<int:result_id>/save" % RAD_API,
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @rad_endpoint
+    def radiology_report_save(self, result_id, **params):
+        """Persist allow-listed report text on a DRAFT report. No state moves.
+
+        Body (every key optional):
+
+            {"findings": str|null, "impression": str|null,
+             "recommendations": str|null,
+             "lines": [{"id": int, "result_summary": str|null, "notes": str|null}]}
+
+        Any other key is a 400, not a silent drop. INCOMPLETE DRAFTS SAVE: a
+        draft is unfinished by definition, and completeness is the entry gate's
+        decision, not this route's.
+        """
+        env = request.env
+        _require_radiology_desk(env)
+        _require_report_author(env)
+        body = read_json_body()
+        _check_report_payload_shape(body)
+
+        result = _load_result(env, result_id)
+        seen_state = result.state
+        _editable_report(env, result, seen_state)
+        values = _report_write_values(result, body)
+
+        def save():
+            if values:
+                result.write(values)
+
+        try:
+            payload = _run_report_action(
+                env, result, save, REPORT_SAVE_RESPONSE_FAILED_MESSAGE
+            )
+        except (TransitionResponseError, AccessError, *PG_CONCURRENCY_EXCEPTIONS_TO_RETRY):
+            raise
+        except (UserError, ValidationError) as error:
+            raise ApiError("radiology_result_not_editable", str(error), 409) from error
+
+        payload["capabilities"] = rad_desk_capability_flags(env)
+        return success_response(payload)
+
+    # ------------------------------------------------------------------
+    # 8. Report: save and mark entered, atomically (Slice 3)
+    # ------------------------------------------------------------------
+    @http.route(
+        "%s/results/<int:result_id>/enter" % RAD_API,
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @rad_endpoint
+    def radiology_report_enter(self, result_id, **params):
+        """Write the latest text, then action_mark_entered(). ONE savepoint.
+
+        One act to the radiologist, so one request: either the report is entered
+        with exactly the text on screen, or nothing has changed and the draft is
+        as it was before the click. The body is the /save shape and may be
+        empty.
+
+        The completeness rule is not restated here: action_mark_entered()
+        decides it (findings or impression non-blank; every line linked to a
+        study of this request, none twice) and its refusal is forwarded as
+        radiology_report_incomplete. The same method records the entering author
+        as the reporting radiologist. No money is involved: hospital_billing
+        overrides validate and release, not entry.
+        """
+        env = request.env
+        _require_radiology_desk(env)
+        _require_report_author(env)
+        body = read_json_body()
+        _check_report_payload_shape(body)
+
+        result = _load_result(env, result_id)
+        seen_state = result.state
+        _editable_report(env, result, seen_state)
+        values = _report_write_values(result, body)
+
+        def save_and_enter():
+            if values:
+                result.write(values)
+            result.action_mark_entered()
+
+        try:
+            payload = _run_report_action(
+                env, result, save_and_enter, REPORT_ENTER_RESPONSE_FAILED_MESSAGE
+            )
+        except (TransitionResponseError, AccessError, *PG_CONCURRENCY_EXCEPTIONS_TO_RETRY):
+            raise
+        except ValidationError as error:
+            raise ApiError("radiology_report_incomplete", str(error), 422) from error
+        except UserError as error:
+            raise ApiError("radiology_result_not_editable", str(error), 409) from error
+
+        payload["capabilities"] = rad_desk_capability_flags(env)
+        return success_response(payload)
+
+    # ------------------------------------------------------------------
+    # 9. Images: upload one file (Slice 4)
+    # ------------------------------------------------------------------
+    @http.route(
+        "%s/results/<int:result_id>/images" % RAD_API,
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @rad_endpoint
+    def radiology_image_upload(self, result_id, **params):
+        """Attach ONE file to a draft or entered report. multipart/form-data.
+
+        Form: `file` (exactly one) and an optional `caption`. Anything else is
+        refused. The bytes decide the type: JPEG, PNG or PDF, sniffed; the
+        size is counted here and capped at the model's 25 MB. image_type is
+        derived too -- "report" for a PDF, "image" otherwise.
+
+        REFUSALS, each before anything is written:
+
+          radiology_image_invalid_file      400  no file, two files, empty
+          radiology_image_field_not_allowed 400  any other form field
+          radiology_image_too_large         413  over 25 MB
+          radiology_image_unsupported_type  415  not JPEG, PNG or PDF by content
+          radiology_result_not_found        404  missing, hidden or archived
+          radiology_image_not_editable      409  report validated or later
+        """
+        env = request.env
+        _require_radiology_desk(env)
+        result = _load_result(env, result_id)
+        raw, mimetype, filename, caption = _read_upload(env)
+        _mutable_images(env, result)
+
+        values = {
+            "result_id": result.id,
+            "name": os.path.splitext(filename)[0] or filename,
+            "filename": filename,
+            "file": base64.b64encode(raw),
+            "image_type": "report" if mimetype == "application/pdf" else "image",
+        }
+        if caption:
+            values["caption"] = caption
+
+        def upload():
+            return env["hospital.radiology.image"].create(values)
+
+        try:
+            payload = _run_image_action(
+                env, result, upload, IMAGE_UPLOAD_RESPONSE_FAILED_MESSAGE
+            )
+        except (TransitionResponseError, AccessError, *PG_CONCURRENCY_EXCEPTIONS_TO_RETRY):
+            raise
+        except ValidationError as error:
+            # The model's own inspection, re-run on create. Money-free.
+            raise ApiError("radiology_image_invalid_file", str(error), 400) from error
+        except UserError as error:
+            # The freeze, reached if the report moved on concurrently.
+            raise ApiError("radiology_image_not_editable", str(error), 409) from error
+
+        payload["capabilities"] = rad_desk_capability_flags(env)
+        return success_response(payload)
+
+    # ------------------------------------------------------------------
+    # 10. Images: one file's BYTES (Slice 4)
+    # ------------------------------------------------------------------
+    @http.route(
+        "%s/results/<int:result_id>/images/<int:image_id>" % RAD_API,
+        type="http", auth="user", methods=["GET"], csrf=False,
+    )
+    @rad_endpoint
+    def radiology_image_content(self, result_id, image_id, **params):
+        """The bytes of one image of one report, for the Radiology Desk.
+
+        A DESK ROUTE, NOT THE DOCTOR'S. The Doctor's loader serves RELEASED
+        images only and scopes them to a visit; the desk works on draft and
+        entered reports, so it has its own route with its own gate.
+
+        THE ID IS A hospital.radiology.image ID, never an ir.attachment id, and
+        it must belong to THIS report. No sudo: the search and the stream run
+        as the caller, so the record rules and the attachment's own access
+        check both apply.
+
+        EVERY MISS IS THE SAME 404: a missing, hidden or archived report, an
+        image of another report, an archived image, a guessed id.
+
+        NEVER CACHED: `private, no-store`, and the type is the one the model
+        sniffed at upload, never re-guessed.
+        """
+        env = request.env
+        _require_radiology_desk(env)
+        result = env["hospital.radiology.result"].search(
+            [("id", "=", result_id)], limit=1
+        ) if result_id > 0 else env["hospital.radiology.result"]
+        if not result:
+            raise ApiError("radiology_image_not_found", IMAGE_NOT_FOUND_MESSAGE, 404)
+        image = _load_image(env, result, image_id)
+
+        as_attachment = params.get("disposition") == "attachment"
+        stream = env["ir.binary"]._get_stream_from(
+            image,
+            "file",
+            filename=_safe_filename(image.filename),
+            mimetype=image.mimetype or None,
+        )
+        response = stream.get_response(as_attachment=as_attachment)
+        response.headers["Cache-Control"] = "private, no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
+
+    # ------------------------------------------------------------------
+    # 11. Images: remove one file (Slice 4)
+    # ------------------------------------------------------------------
+    @http.route(
+        "%s/results/<int:result_id>/images/<int:image_id>/remove" % RAD_API,
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @rad_endpoint
+    def radiology_image_remove(self, result_id, image_id, **params):
+        """Remove a wrong upload from a draft or entered report. Bodiless.
+
+        A REAL UNLINK, the model's own removal path and the one the Odoo form's
+        image list already uses; the backing attachment goes with it. The
+        model logs a BLOCKED removal and lets a permitted one pass unlogged --
+        this repository's convention (see hospital.radiology.image.unlink).
+
+        REFUSALS: radiology_image_not_found 404 (not this report's, archived, or
+        already removed -- so a second click is safe), radiology_image_not_editable
+        409 (report validated or later).
+        """
+        env = request.env
+        _require_radiology_desk(env)
+        result = _load_result(env, result_id)
+        _mutable_images(env, result)
+        image = _load_image(env, result, image_id)
+
+        def remove():
+            image.unlink()
+
+        try:
+            payload = _run_image_action(
+                env, result, remove, IMAGE_REMOVE_RESPONSE_FAILED_MESSAGE
+            )
+        except (TransitionResponseError, AccessError, *PG_CONCURRENCY_EXCEPTIONS_TO_RETRY):
+            raise
+        except (UserError, ValidationError) as error:
+            raise ApiError("radiology_image_not_editable", str(error), 409) from error
+
+        payload["capabilities"] = rad_desk_capability_flags(env)
+        return success_response(payload)
+
+    # ------------------------------------------------------------------
+    # 12. Report: validate (Slice 5)
+    # ------------------------------------------------------------------
+    @http.route(
+        "%s/results/<int:result_id>/validate" % RAD_API,
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @rad_endpoint
+    def radiology_report_validate(self, result_id, **params):
+        """entered -> validated, through action_validate(). Bodiless.
+
+        hospital_billing's override re-checks that the study was started and is
+        financially cleared; the model re-checks completeness. Validation
+        delivers nothing and completes nothing: the request stays in progress
+        and the report moves to Awaiting release. From here the image set is
+        frozen by the image model itself.
+
+        REFUSALS: radiology_report_author_required 403, radiology_result_not_found
+        404, radiology_result_state_conflict 409, radiology_result_not_validatable
+        409, radiology_result_ambiguous 409, radiology_report_incomplete 422,
+        radiology_report_validation_blocked 422 (fixed, money-free).
+        """
+        env = request.env
+        _require_radiology_desk(env)
+        _require_report_author(env)
+        result = _load_result(env, result_id)
+        _transitionable_report(
+            env, result, result.state,
+            expected_state="entered",
+            not_allowed_code="radiology_result_not_validatable",
+            not_allowed_message=REPORT_NOT_VALIDATABLE_MESSAGE,
+        )
+        payload = _run_report_transition(
+            env, result, result.action_validate,
+            blocked_code="radiology_report_validation_blocked",
+            blocked_message=REPORT_VALIDATION_BLOCKED_MESSAGE,
+            failure_message=REPORT_VALIDATE_RESPONSE_FAILED_MESSAGE,
+        )
+        payload["capabilities"] = rad_desk_capability_flags(env)
+        return success_response(payload)
+
+    # ------------------------------------------------------------------
+    # 13. Report: release (Slice 5)
+    # ------------------------------------------------------------------
+    @http.route(
+        "%s/results/<int:result_id>/release" % RAD_API,
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @rad_endpoint
+    def radiology_report_release(self, result_id, **params):
+        """validated -> released, through action_release(). Bodiless.
+
+        THE CLINICAL HANDOFF. hospital_billing's override re-checks clearance,
+        resolves each report line to its ordered study, delivers each charge
+        once, and runs the request's completion rule -- which completes the
+        request when every active study has a released report. The Doctor Desk
+        shows the report and its images from this moment, through its own
+        released-only serializers; nothing here touches them.
+
+        `request_completed` in the response says which of the two outcomes
+        happened, read from the request the release left behind.
+
+        REFUSALS: as validate, with radiology_result_not_releasable and
+        radiology_report_release_blocked 422 (fixed, money-free).
+        """
+        env = request.env
+        _require_radiology_desk(env)
+        _require_report_author(env)
+        result = _load_result(env, result_id)
+        _transitionable_report(
+            env, result, result.state,
+            expected_state="validated",
+            not_allowed_code="radiology_result_not_releasable",
+            not_allowed_message=REPORT_NOT_RELEASABLE_MESSAGE,
+        )
+        payload = _run_report_transition(
+            env, result, result.action_release,
+            blocked_code="radiology_report_release_blocked",
+            blocked_message=REPORT_RELEASE_BLOCKED_MESSAGE,
+            failure_message=REPORT_RELEASE_RESPONSE_FAILED_MESSAGE,
+        )
+        payload["capabilities"] = rad_desk_capability_flags(env)
+        return success_response(payload)

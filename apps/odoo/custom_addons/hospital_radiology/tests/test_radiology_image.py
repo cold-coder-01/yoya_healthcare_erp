@@ -37,6 +37,8 @@ from odoo import fields
 from odoo.exceptions import UserError, ValidationError
 from odoo.tests import TransactionCase, tagged
 
+from ..models.radiology_result import _result_workflow_capability
+
 # Real file signatures. guess_mimetype reads the leading bytes, so these have to
 # be the actual magic numbers rather than plausible-looking filler.
 PNG = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
@@ -68,6 +70,11 @@ class TestRadiologyImage(TransactionCase):
         )
 
     def _result(self, state="draft"):
+        """Radiology Slice 3: the report model refuses a direct state write, and a report on a request that has not started. This fixture arranges that legacy shape through the result workflow capability -- a server-side ContextVar, never a forged context."""
+        with _result_workflow_capability():
+            return self._arrange_result(state)
+
+    def _arrange_result(self, state="draft"):
         """A radiology result in `state`, with one ordered exam behind it."""
         request = self.env["hospital.radiology.request"].sudo().create({
             "patient_id": self.patient.id,
@@ -285,13 +292,15 @@ class TestRadiologyImage(TransactionCase):
         """A result carrying an image, then advanced into a frozen state."""
         result = self._result("entered")
         image = self._image(result)
-        if state == "cancelled":
-            result.sudo().write({"state": "cancelled"})
-        else:
-            for step in ("validated", "released"):
-                result.sudo().write({"state": step})
-                if step == state:
-                    break
+        # Radiology Slice 3: a fixture state write, through the capability.
+        with _result_workflow_capability():
+            if state == "cancelled":
+                result.sudo().write({"state": "cancelled"})
+            else:
+                for step in ("validated", "released"):
+                    result.sudo().write({"state": step})
+                    if step == state:
+                        break
         self.assertEqual(result.state, state)
         return result, image
 

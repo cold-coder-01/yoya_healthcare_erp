@@ -9,9 +9,27 @@ import {
   activeSelection,
   deskRoleLabel,
   detailIsLoading,
+  imageErrorMessage,
+  imageRemovePath,
+  imageUploadForm,
+  imagesEditable,
+  imagesPath,
   laneStatuses,
   matchesSearch,
+  reportEditable,
+  reportEnterPath,
+  reportEnteredOutcomeText,
+  reportErrorMessage,
+  reportPath,
+  reportSavePath,
   requestPath,
+  serializeReportBody,
+  shouldReconcileAfterImage,
+  shouldReconcileAfterSignoff,
+  signoffErrorMessage,
+  signoffOutcomeText,
+  signoffPath,
+  shouldReconcileAfterReport,
   shouldReconcileAfterTransition,
   transitionErrorMessage,
   transitionOutcomeText,
@@ -19,14 +37,20 @@ import {
   visibleDetail,
   worklistPath,
 } from "@/lib/rad-desk-format";
+import type { RadReportDraft } from "@/lib/rad-desk-format";
 import type {
   ApiEnvelope,
   RadDeskCapabilities,
   RadDeskRoles,
+  RadImageResponse,
   RadModalityOption,
+  RadOperationalResult,
   RadQueueRow,
+  RadReportResponse,
   RadRequestDetail,
   RadRequestResponse,
+  RadSignoffKind,
+  RadSignoffResponse,
   RadSessionResponse,
   RadTransitionKind,
   RadTransitionResponse,
@@ -36,18 +60,23 @@ import type {
 
 import RadFilters from "./rad-filters";
 import RadQueue from "./rad-queue";
+import RadReportModal from "./rad-report-modal";
+import type { RadImageOutcome, RadReportOutcome } from "./rad-report-modal";
 import RadRequestPanel from "./rad-request-panel";
 
 /**
- * THE ONE POST SITE ON THIS DESK. Schedule and Start both go through here to
- * the BFF, bodiless, so there is exactly one place a write request is built and
- * none of them can ever address Odoo.
+ * THE ONE POST SITE ON THIS DESK. Schedule, Start, Open report and Remove file
+ * go through here bodiless; Save draft and Mark entered send the one body
+ * serializeReportBody() builds; Upload sends the one form imageUploadForm()
+ * builds (the browser sets its multipart boundary, so no Content-Type is set
+ * for it). So there is exactly one place a write request is built, and none of
+ * them can ever address Odoo.
  */
-async function postRad<T>(path: string) {
+async function postRad<T>(path: string, body: string | FormData = "{}") {
   const response = await fetch(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: "{}",
+    headers: typeof body === "string" ? { "Content-Type": "application/json" } : undefined,
+    body,
     cache: "no-store",
   });
   const payload = (await response.json()) as ApiEnvelope<T>;
@@ -59,8 +88,8 @@ async function postRad<T>(path: string) {
  *
  * QUEUE LEFT, REQUEST DETAIL RIGHT, one screen. Every read is a GET to
  * /api/radiology/*; the only writes are Schedule study and Start exam (Slice
- * 2), both through `postRad`, both gated upstream by may_rad_desk and re-checked
- * under a row lock.
+ * 2) and Open report, Save draft and Mark entered (Slice 3), all through
+ * `postRad`, all gated upstream and re-checked under a row lock.
  *
  * THE AUTHORITATIVE PAYLOAD WINS. After a transition the panel shows the request
  * the server re-serialized AFTER it, never a state guessed from the click; the
@@ -334,6 +363,204 @@ export default function RadWorkstation() {
     [pendingId, refresh],
   );
 
+  /* ---------------- the report (Slice 3) ---------------- */
+  /*
+    The open report sheet: the request and report as the SERVER last returned
+    them. The sheet copies the report once and owns its draft; replacing
+    `report` after a save does not remount it (same id and state), while the
+    entered report the server returns does -- as a read-only sheet.
+  */
+  const [report, setReport] = useState<{
+    request: RadRequestDetail;
+    result: RadOperationalResult;
+    /** Slice 5: the sheet was opened to validate or release. */
+    signoff?: RadSignoffKind | null;
+  } | null>(null);
+  const [reportOpener, setReportOpener] = useState<HTMLElement | null>(null);
+  const [reportPendingId, setReportPendingId] = useState<number | null>(null);
+
+  /** Open report: the server finds or creates THE one draft. */
+  const openReport = useCallback(
+    async (requestId: number, opener: HTMLElement) => {
+      if (pendingId !== null || reportPendingId !== null) return;
+      setReportPendingId(requestId);
+      setActionErrorFor(null);
+      setOutcomeFor(null);
+      try {
+        const { response, payload } = await postRad<RadReportResponse>(reportPath(requestId));
+        if (!response.ok || !payload.success) {
+          setActionErrorFor({
+            requestId,
+            message: reportErrorMessage(messageFromPayload(payload, ""), "open"),
+          });
+          if (shouldReconcileAfterReport(codeFromPayload(payload))) refresh();
+          return;
+        }
+        setDetail(payload.data.request);
+        setDetailStaleFor(null);
+        setReportOpener(opener);
+        setReport({ request: payload.data.request, result: payload.data.result });
+        // A newly created draft changes the queue row's report column.
+        if (payload.data.created) refresh();
+      } catch {
+        setActionErrorFor({
+          requestId,
+          message: "Unable to reach the radiology service. The report was not opened.",
+        });
+        refresh();
+      } finally {
+        setReportPendingId(null);
+      }
+    },
+    [pendingId, refresh, reportPendingId],
+  );
+
+  /**
+   * View / Validate / Release: open the sheet on the report the request
+   * ALREADY has, straight from the server's last detail payload -- nothing is
+   * sent. Validate and release put the sheet in its read-only sign-off mode.
+   */
+  const viewReport = useCallback(
+    (requestId: number, opener: HTMLElement, signoff: RadSignoffKind | null = null) => {
+      const current = detailRef.current;
+      if (!current || current.id !== requestId || !current.result) return;
+      setActionErrorFor(null);
+      setOutcomeFor(null);
+      setReportOpener(opener);
+      setReport({ request: current, result: current.result, signoff });
+    },
+    [],
+  );
+
+  /**
+   * Validate / Release, from the sheet's final confirmation. On the server's
+   * word the sheet closes, the request it returned is shown and PINNED -- it
+   * leaves its lane -- and the queue refetches so the lanes and counts move.
+   * A refusal changes nothing on screen and keeps the sheet open.
+   */
+  const runSignoff = useCallback(
+    async (kind: RadSignoffKind): Promise<RadImageOutcome> => {
+      if (!report) return { ok: false, message: signoffErrorMessage(null, kind) };
+      try {
+        const { response, payload } = await postRad<RadSignoffResponse>(signoffPath(kind, report.result.id));
+        if (!response.ok || !payload.success) {
+          if (shouldReconcileAfterSignoff(codeFromPayload(payload))) refresh();
+          return { ok: false, message: signoffErrorMessage(messageFromPayload(payload, ""), kind) };
+        }
+        const confirmed = payload.data;
+        setDetail(confirmed.request);
+        setDetailStaleFor(null);
+        setJustActedId(confirmed.request.id);
+        setOutcomeFor({
+          requestId: confirmed.request.id,
+          text: signoffOutcomeText(kind, confirmed),
+        });
+        setReport(null);
+        refresh();
+        return { ok: true };
+      } catch {
+        refresh();
+        return {
+          ok: false,
+          message:
+            "Unable to confirm with the radiology service. The request is being re-read; check its lane before trying again.",
+        };
+      }
+    },
+    [refresh, report],
+  );
+
+  /**
+   * Save draft / Mark entered. Resolves ok ONLY on the server's confirmation.
+   * A lost response is not reported as "nothing changed": the request is
+   * re-read, and the sheet says to check the report.
+   */
+  const writeReport = useCallback(
+    async (kind: "save" | "enter", draft: RadReportDraft): Promise<RadReportOutcome> => {
+      if (!report) return { ok: false, message: reportErrorMessage(null, kind) };
+      const resultId = report.result.id;
+      try {
+        const { response, payload } = await postRad<RadReportResponse>(
+          kind === "save" ? reportSavePath(resultId) : reportEnterPath(resultId),
+          serializeReportBody(draft),
+        );
+        if (!response.ok || !payload.success) {
+          if (shouldReconcileAfterReport(codeFromPayload(payload))) refresh();
+          return {
+            ok: false,
+            message: reportErrorMessage(messageFromPayload(payload, ""), kind),
+          };
+        }
+        const confirmed = payload.data;
+        setDetail(confirmed.request);
+        setDetailStaleFor(null);
+        setReport({ request: confirmed.request, result: confirmed.result });
+        if (kind === "enter") {
+          // The lane moves (Awaiting report -> Awaiting validation): pin the
+          // request so it stays on screen, say what happened, refetch counts.
+          setJustActedId(confirmed.request.id);
+          setOutcomeFor({
+            requestId: confirmed.request.id,
+            text: reportEnteredOutcomeText(confirmed.result, confirmed.request),
+          });
+          refresh();
+        }
+        return { ok: true, result: confirmed.result };
+      } catch {
+        refresh();
+        return {
+          ok: false,
+          message:
+            "Unable to confirm with the radiology service. The request is being re-read; check the report before trying again.",
+        };
+      }
+    },
+    [refresh, report],
+  );
+
+  /**
+   * Upload / remove a file. The server's report replaces the one on screen --
+   * so the file list is always the confirmed one -- and the request stays
+   * pinned; no lane moves, but the queue refetches so its image count follows.
+   */
+  const writeImage = useCallback(
+    async (
+      kind: "upload" | "remove",
+      target: { file: File; caption: string } | { imageId: number },
+    ): Promise<RadImageOutcome> => {
+      if (!report) return { ok: false, message: imageErrorMessage(null, kind) };
+      const resultId = report.result.id;
+      try {
+        let sent;
+        if ("file" in target) {
+          sent = await postRad<RadImageResponse>(imagesPath(resultId), imageUploadForm(target.file, target.caption));
+        } else {
+          sent = await postRad<RadImageResponse>(imageRemovePath(resultId, target.imageId));
+        }
+        const { response, payload } = sent;
+        if (!response.ok || !payload.success) {
+          if (shouldReconcileAfterImage(codeFromPayload(payload))) refresh();
+          return { ok: false, message: imageErrorMessage(messageFromPayload(payload, ""), kind) };
+        }
+        const confirmed = payload.data;
+        setDetail(confirmed.request);
+        setDetailStaleFor(null);
+        setReport({ request: confirmed.request, result: confirmed.result });
+        setJustActedId(confirmed.request.id);
+        refresh();
+        return { ok: true };
+      } catch {
+        refresh();
+        return {
+          ok: false,
+          message:
+            "Unable to confirm with the radiology service. The request is being re-read; check the files before trying again.",
+        };
+      }
+    },
+    [refresh, report],
+  );
+
   const detailForSelection = visibleDetail(detail, activeId, justActedId);
   const panelIsLoading = detailIsLoading(activeId, detailLoading, detailForSelection);
 
@@ -408,8 +635,34 @@ export default function RadWorkstation() {
           }
           onSchedule={(requestId) => runTransition("schedule", requestId)}
           onStart={(requestId) => runTransition("start", requestId)}
+          reportPending={
+            reportPendingId !== null &&
+            detailForSelection !== null &&
+            reportPendingId === detailForSelection.id
+          }
+          onOpenReport={(requestId, opener) => void openReport(requestId, opener)}
+          onViewReport={(requestId, opener, signoff) => viewReport(requestId, opener, signoff)}
         />
       </div>
+
+      {report ? (
+        <RadReportModal
+          key={`${report.result.id}-${report.result.state}-${report.signoff ?? "report"}`}
+          request={report.request}
+          result={report.result}
+          editable={!report.signoff && reportEditable(report.result, capabilities)}
+          canAuthor={capabilities?.edit_report === true}
+          imagesEditable={!report.signoff && imagesEditable(report.result, capabilities)}
+          signoff={report.signoff ?? null}
+          onSignoff={report.signoff ? () => runSignoff(report.signoff as RadSignoffKind) : undefined}
+          onUploadImage={(file, caption) => writeImage("upload", { file, caption })}
+          onRemoveImage={(imageId) => writeImage("remove", { imageId })}
+          returnFocus={reportOpener}
+          onSaveDraft={(draft) => writeReport("save", draft)}
+          onMarkEntered={(draft) => writeReport("enter", draft)}
+          onClose={() => setReport(null)}
+        />
+      ) : null}
     </div>
   );
 }

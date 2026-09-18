@@ -150,18 +150,23 @@ class TestRadiologyRolesDriveTheExistingWorkflow(RadiologyRolesCase):
         image.unlink()
         self.assertFalse(image.exists())
 
-    def test_radiologist_cannot_add_imaging(self):
+    def test_radiologist_attaches_and_removes_imaging_on_an_open_result(self):
+        """Radiology Slice 4 role policy: the radiologist may attach imaging
+        and remove a wrong upload while the report is open, as the technician
+        may. (Slice 0A had withheld it; the image freeze is unchanged.)"""
         request = self._scheduled_and_started()
         result = self.env["hospital.radiology.result"].with_user(self.radiologist).create(
             {"request_id": request.id}
         )
-        with self.assertRaises(AccessError):
-            self.env["hospital.radiology.image"].with_user(self.radiologist).create({
-                "result_id": result.id,
-                "name": "Axial",
-                "filename": "axial.png",
-                "file": PNG,
-            })
+        image = self.env["hospital.radiology.image"].with_user(self.radiologist).create({
+            "result_id": result.id,
+            "name": "Axial",
+            "filename": "axial.png",
+            "file": PNG,
+        })
+        self.assertEqual(image.uploaded_by_id, self.radiologist)
+        image.unlink()
+        self.assertFalse(image.exists())
 
     def test_lab_technician_alone_can_no_longer_schedule_or_start(self):
         appointment, encounter = self._in_consultation_visit(doctor=self.doctor)
