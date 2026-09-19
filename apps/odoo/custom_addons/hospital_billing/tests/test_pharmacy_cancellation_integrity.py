@@ -317,7 +317,13 @@ class TestPharmacyCancellationIntegrity(TransactionCase):
     def test_flagged_partial_with_no_delivery_is_still_cancellable(self):
         """The stuck-record path, closed.
 
-        action_mark_partial() moves ready -> partial WITHOUT delivering anything,
+        Before Pharmacy Slice 0, action_mark_partial() moved ready -> partial
+        WITHOUT delivering anything, and such LEGACY records still exist. The
+        method now refuses (see test_mark_partial_cannot_fabricate_delivery), so
+        the legacy shape is reproduced through the dispense's own private
+        state writer -- the in-process capability, never a context flag.
+
+        So `partial` does not by itself mean medication changed hands.
         so `partial` does not by itself mean medication changed hands. A guard
         that refused the state outright would make such a record impossible to
         cancel forever: the charges would be cancelled, the state guard would
@@ -327,7 +333,7 @@ class TestPharmacyCancellationIntegrity(TransactionCase):
         """
         _prescription, dispense, _appointment, _encounter = self._prescription(qty=10.0)
         charges = self._ready(dispense, 10.0)
-        dispense.sudo().action_mark_partial()
+        dispense.sudo()._write_state("partial")
         self.assertEqual(dispense.state, "partial")
         self.assertEqual(
             sum(dispense.line_ids.mapped("billing_delivered_quantity")),
@@ -341,6 +347,20 @@ class TestPharmacyCancellationIntegrity(TransactionCase):
         self.assertEqual(dispense.state, "cancelled")
         self.assertEqual(set(charges.mapped("charge_state")), {"cancelled"})
         self.assertEqual(dispense.unified_amount_due_for_clearance, 0.0)
+
+    def test_mark_partial_cannot_fabricate_delivery(self):
+        """Pharmacy Slice 0: `partial` is a delivery fact. From `ready`, with
+        nothing handed over, the button refuses and nothing moves -- not the
+        state, not a charge, not a delivered quantity."""
+        _prescription, dispense, _appointment, _encounter = self._prescription(qty=10.0)
+        charges = self._ready(dispense, 10.0)
+        before = [(c.charge_state, c.qty_delivered) for c in charges]
+        with self.assertRaisesRegex(UserError, "cannot be marked Partially Dispensed"):
+            dispense.sudo().action_mark_partial()
+        self.env.invalidate_all()
+        self.assertEqual(dispense.state, "ready")
+        self.assertEqual([(c.charge_state, c.qty_delivered) for c in charges], before)
+        self.assertEqual(sum(dispense.line_ids.mapped("billing_delivered_quantity")), 0.0)
 
     def test_charge_cleanup_is_idempotent(self):
         """7. A repeated cancellation neither double-cancels nor resurrects."""

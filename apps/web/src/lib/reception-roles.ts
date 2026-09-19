@@ -67,6 +67,12 @@ export type ReceptionRoles = {
    */
   radiology_technician: boolean;
   radiologist: boolean;
+  /**
+   * Membership of hospital_management.group_hospital_pharmacist (Pharmacy
+   * Desk). NARROW, like lab_technician: nothing implies the group, so a
+   * manager and an admin read FALSE.
+   */
+  pharmacist: boolean;
 };
 
 export const RECEPTION_ROUTE = "/reception";
@@ -77,6 +83,7 @@ export const INSURANCE_CREDIT_ROUTE = "/insurance-credit";
 export const DOCTOR_ROUTE = "/doctor";
 export const LABORATORY_ROUTE = "/laboratory";
 export const RADIOLOGY_ROUTE = "/radiology";
+export const PHARMACY_ROUTE = "/pharmacy";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -101,6 +108,7 @@ export function parseReceptionRoles(value: unknown): ReceptionRoles | null {
     "lab_technician",
     "radiology_technician",
     "radiologist",
+    "pharmacist",
   ];
   if (!known.some((key) => key in value)) {
     return null;
@@ -121,6 +129,7 @@ export function parseReceptionRoles(value: unknown): ReceptionRoles | null {
     lab_technician: flag("lab_technician"),
     radiology_technician: flag("radiology_technician"),
     radiologist: flag("radiologist"),
+    pharmacist: flag("pharmacist"),
   };
 }
 
@@ -322,7 +331,33 @@ export function landingRouteForRoles(roles: ReceptionRoles | null): string {
   if (roles?.radiology_technician === true || roles?.radiologist === true) {
     return RADIOLOGY_ROUTE;
   }
+  // BELOW radiology, for the same no-regression reason: a user who holds both
+  // keeps the landing page they have today. A pure Pharmacist holds none of the
+  // roles above and would otherwise fall through to /triage.
+  //
+  // A LANDING ROUTE IS NOT A PERMISSION. /pharmacy/* is gated server-side by
+  // may_pharmacy_desk(); anyone who reaches /pharmacy without a desk role sees
+  // the desk's own "not your workstation" banner and 403 on every data call.
+  if (roles?.pharmacist === true) {
+    return PHARMACY_ROUTE;
+  }
   return CLINICAL_ROUTE;
+}
+
+/**
+ * Pharmacy Desk visibility.
+ *
+ * Mirrors the server's PHARMACY_DESK_GROUPS (yoya_emr_api reception_scope):
+ * Pharmacist, Manager, System Administrator. Doctor, Nurse, Receptionist,
+ * Cashier, Accountant and every other role are absent, as they are from the
+ * server tuple. This decides what is OFFERED; the server decides what is
+ * allowed.
+ */
+export function canUsePharmacyDesk(roles: ReceptionRoles | null): boolean {
+  if (!roles) {
+    return false;
+  }
+  return roles.pharmacist || roles.manager || roles.system_administrator;
 }
 
 /**

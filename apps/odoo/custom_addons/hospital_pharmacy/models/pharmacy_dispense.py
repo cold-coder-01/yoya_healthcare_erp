@@ -2,6 +2,44 @@ from odoo import api, fields, models
 from odoo.exceptions import AccessError, UserError
 from odoo.tools import float_compare
 
+from .pharmacy_authority import (
+    DISPENSE_IDENTITY_FIELDS,
+    DISPENSE_INTENT_EDITABLE_STATES,
+    DISPENSE_LINE_IDENTITY_FIELDS,
+    PRESCRIPTION_EDITABLE_STATES,
+    PRESCRIPTION_LINE_LOCKED_FIELDS,
+    PRESCRIPTION_LOCKED_FIELDS,
+    QTY_PRECISION_DIGITS,
+    dispense_composition_capability,
+    dispense_workflow_capability,
+    has_dispense_composition_capability,
+    has_dispense_workflow_capability,
+    has_prescription_workflow_capability,
+    m2o_id,
+    prescription_workflow_capability,
+    same_value,
+)
+
+DISPENSE_STATE_WRITE_REFUSED = (
+    "Pharmacy dispense %s cannot be moved from '%s' to '%s' by editing its "
+    "state. Use the dispense's workflow actions (Mark Ready, Validate Dispense, "
+    "Cancel, Reset to Draft), which run the billing, clearance and stock checks "
+    "that transition requires. Nothing was changed."
+)
+DISPENSE_IDENTITY_WRITE_REFUSED = (
+    "Pharmacy dispense %s: '%s' records who and what this dispense is for and "
+    "cannot be changed after the dispense is created. Nothing was changed."
+)
+PRESCRIPTION_STATE_WRITE_REFUSED = (
+    "Prescription %s cannot be moved from '%s' to '%s' by editing its state. "
+    "Use the prescription's workflow actions. Nothing was changed."
+)
+PRESCRIPTION_LOCKED_REFUSED = (
+    "Prescription %s is %s and has been sent to pharmacy, so its clinical "
+    "content ('%s') can no longer be edited. Cancel it and write a new "
+    "prescription instead. Nothing was changed."
+)
+
 
 # WHO MAY OPERATE A DISPENSE. Pharmacy is the department that owns the counter,
 # and Manager/System Administrator keep the override they hold on every other
@@ -113,11 +151,27 @@ class HospitalPharmacyDispense(models.Model):
     def create(self, vals_list):
         sequence = self.env["ir.sequence"]
         for vals in vals_list:
+            # A dispense is BORN draft. Creating one directly in any later state
+            # would skip Mark Ready, clearance, charge delivery and stock
+            # consumption at once, so it is refused on every channel -- sudo and
+            # RPC alike -- unless _write_state()'s capability is raised.
+            requested_state = vals.get("state")
+            if (
+                requested_state
+                and requested_state != "draft"
+                and not has_dispense_workflow_capability()
+            ):
+                raise UserError(
+                    "A pharmacy dispense is created as a draft and moved through "
+                    "its workflow actions. It cannot be created directly in state "
+                    "'%s'." % requested_state
+                )
             if not vals.get("name") or vals.get("name") == "New":
                 vals["name"] = (
                     sequence.next_by_code("hospital.pharmacy.dispense.sequence") or "New"
                 )
         records = super().create(vals_list)
+        records._check_identity_matches_prescription()
         for record in records:
             record._create_audit_log(
                 action_type="create",
@@ -129,6 +183,7 @@ class HospitalPharmacyDispense(models.Model):
         return records
 
     def write(self, vals):
+        self._assert_authoritative_write(vals)
         tracked_vals = {
             key: value
             for key, value in vals.items()
@@ -153,6 +208,51 @@ class HospitalPharmacyDispense(models.Model):
                     new_value=record._audit_summary(tracked_vals.keys()),
                 )
         return result
+
+    def _assert_authoritative_write(self, vals):
+        """STATE AND IDENTITY AUTHORITY. Runs before super() and looks at
+        neither the context nor sudo.
+
+        `state` changes only inside _write_state(), i.e. only through the
+        workflow actions that run the checks each transition needs. The identity
+        fields are written once, at creation, and never relinked: moving a
+        dispense to another prescription or patient would carry its charges,
+        its delivered quantities and its consumed stock to someone else's
+        record. Writing the value a record already has is not a change and is
+        allowed, so a form that echoes the current values does not break.
+        """
+        if "state" in vals and not has_dispense_workflow_capability():
+            for record in self:
+                if vals["state"] != record.state:
+                    raise UserError(
+                        DISPENSE_STATE_WRITE_REFUSED
+                        % (record.display_name, record.state, vals["state"])
+                    )
+        for field_name in DISPENSE_IDENTITY_FIELDS:
+            if field_name not in vals:
+                continue
+            for record in self:
+                if not same_value(record, field_name, vals[field_name]):
+                    raise UserError(
+                        DISPENSE_IDENTITY_WRITE_REFUSED
+                        % (record.display_name, record._fields[field_name].string)
+                    )
+
+    def _check_identity_matches_prescription(self):
+        """A dispense filed against a prescription belongs to that prescription's
+        patient. Checked at creation, the only moment identity can be set.
+
+        sudo() ON THE PRESCRIPTION READ, narrowly: this is a property of the data,
+        not of what the creating user may read, and it only ever refuses.
+        """
+        for record in self:
+            prescription = record.prescription_id.sudo()
+            if prescription and prescription.patient_id != record.patient_id:
+                raise UserError(
+                    "Pharmacy dispense %s is for a different patient than "
+                    "prescription %s. A dispense must belong to its "
+                    "prescription's patient." % (record.display_name, prescription.name)
+                )
 
     def unlink(self):
         if not self.env.user.has_group(
@@ -212,9 +312,36 @@ class HospitalPharmacyDispense(models.Model):
             record._write_state("ready")
 
     def action_mark_partial(self):
+        """REFUSED FROM `ready`. Partially Dispensed is a DELIVERY fact.
+
+        This used to move ready -> partial while handing over nothing at all: no
+        charge delivered, no stock consumed. The record then claimed medication
+        had changed hands when none had, and every consumer that reads `partial`
+        as "the patient holds some of this" -- the prescription cancellation
+        guard, the Doctor Desk's "Partially dispensed" status -- was told
+        something false.
+
+        THE SMALLEST CORRECTION: the method no longer moves state. `partial` is
+        now produced in exactly one place, action_mark_dispensed(), and only
+        when that validation really delivered an increment (hospital_billing
+        records billing_delivered_quantity and hospital_inventory records
+        inventory_consumed_quantity in the same transaction). The method is kept
+        -- rather than deleted -- so an existing caller gets a sentence that
+        says what to do instead of an AttributeError.
+
+        Authorization is still asserted FIRST, so a non-operator is refused as an
+        authorization failure exactly as before. Records not in `ready` are left
+        untouched, as they always were.
+        """
         self._assert_pharmacy_operator("mark a pharmacy dispense partially dispensed")
         for record in self.filtered(lambda r: r.state == "ready"):
-            record._write_state("partial")
+            raise UserError(
+                "Pharmacy dispense %s cannot be marked Partially Dispensed by hand. "
+                "Enter the quantity actually handed over and use Validate "
+                "Dispense: the dispense becomes Partially Dispensed automatically "
+                "when less than the prescribed quantity is delivered. Nothing was "
+                "changed." % record.name
+            )
 
     def action_mark_dispensed(self):
         """Validate quantities and set the final state automatically.
@@ -278,14 +405,15 @@ class HospitalPharmacyDispense(models.Model):
         reference to money or stock, so the invariant holds in an installation
         carrying neither hospital_billing nor hospital_inventory.
 
-        `partial` IS DELIBERATELY NOT REFUSED HERE, and the reason is that in
-        THIS module the state is ambiguous. action_mark_dispensed() sets it when
-        some medication really was handed over, but action_mark_partial() also
-        sets it straight from `ready` while delivering nothing at all. Refusing
-        on the state alone would make a dispense a pharmacist merely FLAGGED as
-        partial impossible to cancel ever again: hospital_billing would cancel
-        its charges, this method would then raise, and the whole transaction
-        would roll back every time it was tried.
+        `partial` IS DELIBERATELY NOT REFUSED HERE, and the reason is that the
+        state is ambiguous IN EXISTING DATA. action_mark_dispensed() sets it
+        when some medication really was handed over; before Pharmacy Slice 0,
+        action_mark_partial() also set it straight from `ready` while
+        delivering nothing at all, and such records still exist. Refusing on the
+        state alone would make a dispense a pharmacist merely FLAGGED as partial
+        impossible to cancel ever again: hospital_billing would cancel its
+        charges, this method would then raise, and the whole transaction would
+        roll back every time it was tried.
 
         So each layer refuses on evidence it actually owns. hospital_billing
         refuses a dispense whose CHARGES record delivered quantity, and
@@ -341,8 +469,13 @@ class HospitalPharmacyDispense(models.Model):
             record._write_state("draft")
 
     def _write_state(self, new_state):
+        """THE controlled path for a dispense state change. Private, so not
+        callable over RPC; the capability covers this one write only."""
         old_state = self.state
-        self.with_context(skip_dispense_write_audit=True).write({"state": new_state})
+        with dispense_workflow_capability():
+            self.with_context(skip_dispense_write_audit=True).write(
+                {"state": new_state}
+            )
         self._create_audit_log(
             action_type="state_change",
             description="Pharmacy dispense state changed.",
@@ -399,6 +532,147 @@ class HospitalPharmacyDispenseLine(models.Model):
     route = fields.Char()
     instruction = fields.Text()
     sequence = fields.Integer(default=10)
+
+    # ------------------------------------------------------------------
+    # Authority (Pharmacy Slice 0)
+    # ------------------------------------------------------------------
+    # THREE DIFFERENT WRITERS TOUCH A DISPENSE LINE, and this model tells them
+    # apart instead of trusting any of them wholesale:
+    #
+    #   1. the pharmacist's PREPARATION INTENT -- `dispensed_quantity`, the
+    #      cumulative quantity they intend to have handed over. An ordinary,
+    #      direct write, validated here against the prescribed quantity and the
+    #      delivery high-water marks.
+    #   2. hospital_billing's DELIVERY high-water -- `charge_line_id` and
+    #      `billing_delivered_quantity`. Guarded in hospital_billing, which owns
+    #      them, by its own non-forgeable capability.
+    #   3. hospital_inventory's CONSUMPTION high-water --
+    #      `inventory_consumed_quantity`. Guarded in hospital_inventory the same
+    #      way.
+    #
+    # What the line IS -- its dispense, its medicine, its prescribed quantity --
+    # is frozen on any prescription-linked dispense and on any dispense that has
+    # left draft. A manual (prescription-less) draft dispense keeps its fully
+    # editable lines, which is what its form has always promised.
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        # Checked AFTER super(): the ACL refusal a doctor meets on this model
+        # must still arrive as the AccessError it has always been, and the
+        # parent's state is only reliably readable once the row exists. A
+        # refusal here rolls the whole transaction back.
+        lines = super().create(vals_list)
+        lines._check_line_creation_allowed()
+        lines._check_intended_quantity()
+        return lines
+
+    def write(self, vals):
+        self._assert_line_identity_write(vals)
+        intent_changing = "dispensed_quantity" in vals and any(
+            not same_value(line, "dispensed_quantity", vals["dispensed_quantity"])
+            for line in self
+        )
+        if intent_changing:
+            for line in self:
+                state = line.dispense_id.sudo().state
+                if state not in DISPENSE_INTENT_EDITABLE_STATES:
+                    raise UserError(
+                        "The intended quantity of %s on pharmacy dispense %s cannot "
+                        "change: the dispense is %s. Nothing was changed."
+                        % (
+                            line.medicine_id.display_name,
+                            line.dispense_id.sudo().name,
+                            state,
+                        )
+                    )
+        result = super().write(vals)
+        if intent_changing or "prescribed_quantity" in vals:
+            self._check_intended_quantity()
+        return result
+
+    def _check_line_creation_allowed(self):
+        """Lines are composed from the prescription, or added to a manual draft.
+
+        A prescription-linked dispense receives its lines ONLY from
+        _get_or_create_pharmacy_dispense(), which raises the composition
+        capability around the one create it performs. Anything else would put a
+        medicine in front of the pharmacist that no prescriber ordered. A
+        dispense that has left draft accepts no new line at all: charges,
+        clearance and delivery have been computed over the lines it had.
+        """
+        if has_dispense_composition_capability():
+            return
+        for line in self:
+            dispense = line.dispense_id.sudo()
+            if dispense.state != "draft":
+                raise UserError(
+                    "Medicine lines cannot be added to pharmacy dispense %s: it "
+                    "is %s. Nothing was changed." % (dispense.name, dispense.state)
+                )
+            if dispense.prescription_id:
+                raise UserError(
+                    "Medicine lines cannot be added to pharmacy dispense %s by "
+                    "hand: its lines come from prescription %s. Ask the "
+                    "prescriber for a new prescription. Nothing was changed."
+                    % (dispense.name, dispense.prescription_id.name)
+                )
+
+    def _assert_line_identity_write(self, vals):
+        for field_name in DISPENSE_LINE_IDENTITY_FIELDS:
+            if field_name not in vals:
+                continue
+            for line in self:
+                if same_value(line, field_name, vals[field_name]):
+                    continue
+                dispense = line.dispense_id.sudo()
+                frozen = (
+                    field_name == "dispense_id"
+                    or dispense.prescription_id
+                    or dispense.state != "draft"
+                )
+                if frozen:
+                    raise UserError(
+                        "'%s' of %s on pharmacy dispense %s cannot be changed: it "
+                        "comes from the prescription or the dispense has left "
+                        "draft. Nothing was changed."
+                        % (
+                            line._fields[field_name].string,
+                            line.medicine_id.display_name,
+                            dispense.name,
+                        )
+                    )
+
+    def _dispense_intent_floor(self):
+        """The least cumulative quantity this line may intend: what has already
+        been delivered. Zero here; hospital_billing and hospital_inventory raise
+        it to their own high-water marks, so an intent can never be lowered
+        beneath medication the patient already holds."""
+        self.ensure_one()
+        return 0.0
+
+    def _check_intended_quantity(self):
+        """0 <= high-water <= intended <= prescribed, per line."""
+        for line in self:
+            intended = line.dispensed_quantity or 0.0
+            prescribed = line.prescribed_quantity or 0.0
+            name = line.medicine_id.display_name
+            if float_compare(intended, 0.0, precision_digits=QTY_PRECISION_DIGITS) < 0:
+                raise UserError(
+                    "The intended quantity of %s cannot be negative. Nothing was "
+                    "changed." % name
+                )
+            if float_compare(intended, prescribed, precision_digits=QTY_PRECISION_DIGITS) > 0:
+                raise UserError(
+                    "The intended quantity of %s (%s) exceeds the prescribed "
+                    "quantity (%s). Nothing was changed." % (name, intended, prescribed)
+                )
+            floor = line._dispense_intent_floor()
+            if float_compare(intended, floor, precision_digits=QTY_PRECISION_DIGITS) < 0:
+                raise UserError(
+                    "The intended quantity of %s (%s) cannot be lower than the "
+                    "quantity already handed over (%s). Intended quantities are "
+                    "cumulative. Nothing was changed." % (name, intended, floor)
+                )
 
     def unlink(self):
         if not self.env.user.has_group(
@@ -546,19 +820,124 @@ class HospitalPrescriptionPharmacy(models.Model):
             )
         if dispenses:
             return dispenses[0]
-        return self.env["hospital.pharmacy.dispense"].sudo().create(
-            self._prepare_pharmacy_dispense_vals()
-        )
+        vals = self._prepare_pharmacy_dispense_vals()
+        # NO PHARMACIST AT COMPOSITION (Pharmacy Slice 0). pharmacist_id defaults
+        # to env.user, and composition runs inside the PRESCRIBER's transaction,
+        # so every composed dispense used to name the confirming doctor as its
+        # pharmacist -- a false provenance fact that reports then printed as
+        # "Dispensed by". Nobody has worked the dispense yet; it says so.
+        vals["pharmacist_id"] = False
+        # The composition capability opens exactly one thing: creating the lines
+        # of THIS prescription-linked dispense, from values derived above.
+        with dispense_composition_capability():
+            return self.env["hospital.pharmacy.dispense"].sudo().create(vals)
+
+    # ------------------------------------------------------------------
+    # Authority (Pharmacy Slice 0)
+    # ------------------------------------------------------------------
+    def _has_pharmacy_dispense(self):
+        """Whether pharmacy has received this prescription. An unscoped
+        existence test, for the reason _get_existing_pharmacy_dispense()
+        documents; nothing is returned to the caller."""
+        self.ensure_one()
+        return bool(self.id and self._get_existing_pharmacy_dispense())
+
+    def _clinical_content_locked(self):
+        """The prescription's clinical content is frozen once it has left draft
+        OR once a dispense has been composed from it.
+
+        The second half is what makes Reset to Draft safe to keep. Resetting a
+        cancelled prescription and re-confirming it returns the EXISTING
+        dispense rather than composing a new one, so editing the medicines in
+        between would leave the pharmacy filling lines the prescriber had since
+        rewritten. The reset still works; the content simply stays what the
+        pharmacy received.
+        """
+        self.ensure_one()
+        return self.state not in PRESCRIPTION_EDITABLE_STATES or self._has_pharmacy_dispense()
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        # A prescription is BORN draft: confirmation is what composes its
+        # dispense, and creating one already confirmed would skip that.
+        for vals in vals_list:
+            requested_state = vals.get("state")
+            if (
+                requested_state
+                and requested_state != "draft"
+                and not has_prescription_workflow_capability()
+            ):
+                raise UserError(
+                    "A prescription is created as a draft and confirmed through "
+                    "its workflow. It cannot be created directly in state '%s'."
+                    % requested_state
+                )
+        return super().create(vals_list)
+
+    def write(self, vals):
+        if "state" in vals and not has_prescription_workflow_capability():
+            for prescription in self:
+                if vals["state"] != prescription.state:
+                    raise UserError(
+                        PRESCRIPTION_STATE_WRITE_REFUSED
+                        % (prescription.display_name, prescription.state, vals["state"])
+                    )
+        locked = [name for name in PRESCRIPTION_LOCKED_FIELDS if name in vals]
+        if locked:
+            for prescription in self:
+                changed = [
+                    name for name in locked
+                    if name in prescription._fields
+                    and not same_value(prescription, name, vals[name])
+                ]
+                if changed and prescription._clinical_content_locked():
+                    raise UserError(
+                        PRESCRIPTION_LOCKED_REFUSED
+                        % (
+                            prescription.display_name,
+                            prescription.state,
+                            prescription._fields[changed[0]].string,
+                        )
+                    )
+        return super().write(vals)
 
     def action_confirm(self):
         drafts = self.filtered(lambda record: record.state == "draft")
         for prescription in drafts:
             if not prescription._get_existing_pharmacy_dispense():
                 prescription._prepare_pharmacy_dispense_vals()
-        result = super().action_confirm()
+        with prescription_workflow_capability():
+            result = super().action_confirm()
         for prescription in self.filtered(lambda record: record.state == "confirmed"):
             prescription._get_or_create_pharmacy_dispense()
         return result
+
+    def action_mark_dispensed(self):
+        """The prescription header may say `dispensed` only when pharmacy has.
+
+        THE CONTRADICTION THIS CLOSES. The base button moved the header to
+        `dispensed` on nothing but a click, which is how the UAT database came
+        to hold a prescription marked dispensed whose dispense is only partial.
+        The dispense is the authority on delivery; the header may follow it and
+        may not run ahead of it. Nothing in the runtime calls this method -- the
+        Doctor Desk derives its status from the dispense -- so this only
+        constrains the Odoo form button.
+        """
+        for prescription in self.filtered(lambda record: record.state == "confirmed"):
+            dispenses = prescription._get_existing_pharmacy_dispense()
+            if len(dispenses) != 1 or dispenses.state != "dispensed":
+                raise UserError(
+                    "Prescription %s cannot be marked dispensed: its pharmacy "
+                    "dispense has not been fully dispensed. The prescription "
+                    "follows the pharmacy's Validate Dispense, not the other way "
+                    "round. Nothing was changed." % prescription.name
+                )
+        with prescription_workflow_capability():
+            return super().action_mark_dispensed()
+
+    def action_reset_to_draft(self):
+        with prescription_workflow_capability():
+            return super().action_reset_to_draft()
 
     def action_cancel(self):
         """Withdrawing a prescription withdraws its dispense. ONE ACT.
@@ -643,7 +1022,8 @@ class HospitalPrescriptionPharmacy(models.Model):
                 # this method is making, and it should not be able to disappear
                 # because a helper's implementation changed.
                 dispense.sudo().action_cancel()
-        return super().action_cancel()
+        with prescription_workflow_capability():
+            return super().action_cancel()
 
     def action_view_pharmacy_dispense(self):
         self.ensure_one()
@@ -691,6 +1071,74 @@ class HospitalPrescriptionLinePharmacy(models.Model):
         domain=[("active", "=", True)],
         help="Medicine selected from the pharmacy catalog.",
     )
+
+    # ------------------------------------------------------------------
+    # Authority (Pharmacy Slice 0)
+    # ------------------------------------------------------------------
+    # A prescribed medicine is frozen with its prescription: once the
+    # prescription has left draft or pharmacy has received it, no line may be
+    # added, removed or rewritten -- by the form, by RPC or by sudo() code. The
+    # dispense was composed from these values; changing them afterwards would
+    # leave the pharmacy filling an order that no longer exists.
+
+    @staticmethod
+    def _locked_prescription(prescription):
+        prescription = prescription.sudo()
+        return bool(prescription) and prescription._clinical_content_locked()
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        Prescription = self.env["hospital.prescription"]
+        for vals in vals_list:
+            parent = Prescription.browse(m2o_id(vals.get("prescription_id")))
+            if self._locked_prescription(parent):
+                raise UserError(
+                    PRESCRIPTION_LOCKED_REFUSED
+                    % (parent.sudo().display_name, parent.sudo().state, "Medicine Lines")
+                )
+        return super().create(vals_list)
+
+    def write(self, vals):
+        locked = [name for name in PRESCRIPTION_LINE_LOCKED_FIELDS if name in vals]
+        if locked:
+            for line in self:
+                changed = [
+                    name for name in locked if not same_value(line, name, vals[name])
+                ]
+                if not changed:
+                    continue
+                if self._locked_prescription(line.prescription_id):
+                    raise UserError(
+                        PRESCRIPTION_LOCKED_REFUSED
+                        % (
+                            line.prescription_id.sudo().display_name,
+                            line.prescription_id.sudo().state,
+                            line._fields[changed[0]].string,
+                        )
+                    )
+                if "prescription_id" in changed:
+                    target = self.env["hospital.prescription"].browse(
+                        m2o_id(vals["prescription_id"])
+                    )
+                    if self._locked_prescription(target):
+                        raise UserError(
+                            PRESCRIPTION_LOCKED_REFUSED
+                            % (target.sudo().display_name, target.sudo().state, "Medicine Lines")
+                        )
+        return super().write(vals)
+
+    def unlink(self):
+        for line in self:
+            if self._locked_prescription(line.prescription_id):
+                raise UserError(
+                    PRESCRIPTION_LOCKED_REFUSED
+                    % (
+                        line.prescription_id.sudo().display_name,
+                        line.prescription_id.sudo().state,
+                        "Medicine Lines",
+                    )
+                )
+        return super().unlink()
 
     @api.onchange("medicine_id")
     def _onchange_medicine_id(self):

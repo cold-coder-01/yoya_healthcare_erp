@@ -8,11 +8,13 @@ import {
   LABORATORY_ROUTE,
   CLINICAL_ROUTE,
   FRONT_DESK_ROUTE,
+  PHARMACY_ROUTE,
   RADIOLOGY_ROUTE,
   RECEPTION_ROUTE,
   canUseCashier,
   canUseDoctorDesk,
   canUseInsuranceCredit,
+  canUsePharmacyDesk,
   canUseRadiologyDesk,
   landingRouteForRoles,
   parseReceptionRoles,
@@ -47,6 +49,7 @@ function roles(overrides: Partial<ReceptionRoles> = {}): ReceptionRoles {
     lab_technician: false,
     radiology_technician: false,
     radiologist: false,
+    pharmacist: false,
     ...overrides,
   };
 }
@@ -436,4 +439,41 @@ test("the radiology flags are parsed strictly", () => {
   assert.equal(parseReceptionRoles({ radiologist: "yes" })?.radiologist, false);
   assert.equal(parseReceptionRoles({ radiology_technician: 1 })?.radiology_technician, false);
   assert.equal(RADIOLOGY_ROUTE, "/radiology");
+});
+
+/* ------------------------------------------------------------------ *
+ * Pharmacy Desk routing
+ * ------------------------------------------------------------------ */
+
+test("a pure pharmacist lands on the pharmacy desk", () => {
+  assert.equal(landingRouteForRoles(roles({ pharmacist: true })), PHARMACY_ROUTE);
+  assert.equal(PHARMACY_ROUTE, "/pharmacy");
+});
+
+test("existing landing pages win over the pharmacist flag", () => {
+  assert.equal(landingRouteForRoles(roles({ doctor: true, pharmacist: true })), DOCTOR_ROUTE);
+  assert.equal(landingRouteForRoles(roles({ lab_technician: true, pharmacist: true })), LABORATORY_ROUTE);
+  assert.equal(landingRouteForRoles(roles({ radiologist: true, pharmacist: true })), RADIOLOGY_ROUTE);
+  assert.equal(landingRouteForRoles(managerRoles({ pharmacist: true })), RECEPTION_ROUTE);
+  assert.equal(landingRouteForRoles(roles({})), CLINICAL_ROUTE);
+});
+
+test("canUsePharmacyDesk mirrors the server's PHARMACY_DESK_GROUPS", () => {
+  assert.equal(canUsePharmacyDesk(roles({ pharmacist: true })), true);
+  assert.equal(canUsePharmacyDesk(roles({ manager: true })), true);
+  assert.equal(canUsePharmacyDesk(roles({ system_administrator: true })), true);
+  for (const denied of [
+    { doctor: true }, { receptionist: true }, { front_desk_nurse: true },
+    { cashier: true }, { accountant: true }, { lab_technician: true },
+    { radiologist: true }, { insurance_officer: true }, {},
+  ]) {
+    assert.equal(canUsePharmacyDesk(roles(denied)), false, JSON.stringify(denied));
+  }
+  assert.equal(canUsePharmacyDesk(null), false);
+});
+
+test("the pharmacist flag is parsed strictly", () => {
+  assert.equal(parseReceptionRoles({ pharmacist: true })?.pharmacist, true);
+  assert.equal(parseReceptionRoles({ receptionist: true })?.pharmacist, false);
+  assert.equal(parseReceptionRoles({ pharmacist: "yes" })?.pharmacist, false);
 });

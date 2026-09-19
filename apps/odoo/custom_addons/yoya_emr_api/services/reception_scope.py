@@ -35,6 +35,9 @@ GROUP_INSURANCE_OFFICER = "hospital_billing.group_hospital_insurance_officer"
 # module through yoya_clinical_bridge, which depends on it explicitly.
 GROUP_RADIOLOGY_TECHNICIAN = "hospital_radiology.group_hospital_radiology_technician"
 GROUP_RADIOLOGIST = "hospital_radiology.group_hospital_radiologist"
+# Owned by hospital_management. hospital_pharmacy's PHARMACY_OPERATOR_GROUPS is
+# built on it; yoya_emr_api reaches that module through yoya_clinical_bridge.
+GROUP_PHARMACIST = "hospital_management.group_hospital_pharmacist"
 
 # Who may run the guided registration workflow at all.
 #
@@ -175,6 +178,15 @@ def role_flags(env):
         # role, and would otherwise fall through to /triage.
         "radiology_technician": user.has_group(GROUP_RADIOLOGY_TECHNICIAN),
         "radiologist": user.has_group(GROUP_RADIOLOGIST),
+        # Added with the Pharmacy Desk, NARROW like lab_technician: nothing
+        # implies group_hospital_pharmacist (manager implies receptionist,
+        # doctor and nurse only), so a manager and an admin read FALSE.
+        #
+        # REPORTING ONLY. Every /pharmacy/* endpoint decides for itself through
+        # may_pharmacy_desk(). What it fixes is the landing route: a pure
+        # Pharmacist holds no reception-side, doctor, laboratory or radiology
+        # role, and would otherwise fall through to /triage.
+        "pharmacist": user.has_group(GROUP_PHARMACIST),
     }
 
 
@@ -474,6 +486,64 @@ def rad_desk_capability_flags(env):
         "manage_images": allowed,
         "validate_report": author,
         "release_report": author,
+    }
+
+
+# Who may OPEN the Pharmacy Desk (a read gate).
+#
+# THE COUNTER ROLE AND OVERSIGHT, which is exactly hospital_pharmacy's
+# PHARMACY_OPERATOR_GROUPS -- the tuple _assert_pharmacy_operator() enforces on
+# every dispense transition. Restated rather than imported for the reason every
+# desk gate here is: the desk READ gate and the model's WRITE gate are different
+# questions that happen to share an answer today, and a test asserts they still
+# agree, so a change on either side surfaces instead of silently widening.
+#
+# THIS GATE IS NARROWER THAN THE ORM, deliberately:
+#
+#   * Receptionist, Nurse, Accountant and the DPO hold a read ACL on the
+#     dispense and its lines with no record rule narrowing it. That is known
+#     debt; this desk does not inherit it, so they get 403 here.
+#   * The DOCTOR reads the dispenses of their own prescriptions. Their
+#     medication surface is the Doctor Desk's Orders tab; the counter's queue is
+#     not a second one.
+#   * The CASHIER takes the money for a dispense but does not work the counter.
+#
+# Authorization is group membership, never "can read the model".
+PHARMACY_DESK_GROUPS = (GROUP_PHARMACIST, GROUP_MANAGER, GROUP_SYSADMIN)
+
+
+def may_pharmacy_desk(env):
+    """May this user open the Pharmacy Desk and read its worklist?"""
+    return _in_any(env, PHARMACY_DESK_GROUPS)
+
+
+def pharmacy_desk_role_flags(env):
+    """The Pharmacy Desk's own role header: which of ITS roles the user holds.
+
+    Only the three groups the gate knows about -- no other group, no group id,
+    and no statement about any other workstation. `manager` and `system_admin`
+    are membership as has_group reports it, so an admin reads TRUE for both.
+    """
+    user = env.user
+    return {
+        "pharmacist": user.has_group(GROUP_PHARMACIST),
+        "manager": user.has_group(GROUP_MANAGER),
+        "system_admin": user.has_group(GROUP_SYSADMIN),
+    }
+
+
+def pharmacy_desk_capability_flags(env):
+    """What the Pharmacy Desk may do. Every flag mirrors a server-side guard.
+
+    SLICE 1 IS READ-ONLY, and this reports exactly that: `pharmacy_desk` and
+    nothing else. Preparing, validating and cancelling a dispense are ABSENT
+    rather than present-and-False, for the reason lab_desk_capability_flags
+    gives -- a flag with no endpoint behind it is an invitation to build a
+    button that has nothing to call. They arrive with the slices that implement
+    them.
+    """
+    return {
+        "pharmacy_desk": may_pharmacy_desk(env),
     }
 
 

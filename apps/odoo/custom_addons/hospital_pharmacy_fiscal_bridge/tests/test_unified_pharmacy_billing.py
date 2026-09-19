@@ -219,7 +219,9 @@ class TestUnifiedPharmacyBilling(TransactionCase):
         self.assertFalse(dispense.unified_billing_enabled)
         # Bypass Mark Ready here: legacy compatibility being asserted is fiscal
         # transaction creation against a patient bill, not unified charge prep.
-        dispense.with_context(skip_dispense_write_audit=True).write({"state": "ready"})
+        # Since Pharmacy Slice 0 a direct state write is refused on every channel;
+        # the private state writer is the in-process equivalent of the old bypass.
+        dispense._write_state("ready")
         action = dispense.action_prepare_fiscal_payment()
         transaction = self.env["hospital.fiscal.transaction"].sudo().browse(action["res_id"])
         self.assertTrue(transaction.bill_id)

@@ -1,0 +1,252 @@
+"use client";
+
+import { useEffect, useRef } from "react";
+
+import { formatHospitalDate } from "@/lib/clinical-format";
+import {
+  ageSexLabel,
+  isUrgentPriority,
+  lineProgressLabel,
+  orDash,
+} from "@/lib/pharmacy-desk-format";
+import type { PharmacyQueueRow } from "@/types/pharmacy-desk";
+
+import { PharmacyLanePill, PharmacyPriorityPill } from "./pharmacy-status-pill";
+
+/**
+ * ONE grid template for the header and every row, so the two cannot drift.
+ *
+ * Left to right, what a pharmacist scans: whose medication and which, how many
+ * lines are fully supplied, when it was sent, how urgent, where it stands. The
+ * patient owns the free space; dispense code, chart number, prescription and
+ * prescriber sit beneath in a quieter register. The clearance and stock flags
+ * are TEXT, not colour.
+ */
+const GRID = "grid grid-cols-[minmax(0,1fr)_50px_62px_40px_52px] items-center gap-x-2";
+
+function QueueRow({
+  row,
+  selected,
+  onSelect,
+}: {
+  row: PharmacyQueueRow;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const ref = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (selected) {
+      ref.current?.scrollIntoView({ block: "nearest" });
+    }
+  }, [selected]);
+
+  return (
+    <li>
+      <button
+        ref={ref}
+        type="button"
+        onClick={onSelect}
+        aria-pressed={selected}
+        // Roving tabindex: the list is one tab stop, arrow keys move within it.
+        tabIndex={selected ? 0 : -1}
+        className={`${GRID} relative min-h-[60px] w-full border-b border-slate-100 py-1.5 pl-3 pr-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-600 ${
+          selected ? "bg-violet-50/60" : "bg-white hover:bg-slate-50"
+        }`}
+      >
+        <span
+          aria-hidden
+          className={`absolute inset-y-0 left-0 w-[3px] ${selected ? "bg-violet-600" : "bg-transparent"}`}
+        />
+
+        <span className="flex min-w-0 flex-col gap-0.5">
+          <span className="flex min-w-0 items-center gap-1.5">
+            {isUrgentPriority(row.priority) ? (
+              <span
+                className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-600"
+                title={`Priority: ${row.priority_label}`}
+              />
+            ) : null}
+            <span className="truncate cl-strong font-bold leading-tight text-slate-900">
+              {row.patient?.name ?? "—"}
+            </span>
+            {row.billing_blocked ? (
+              <span className="shrink-0 rounded border border-amber-300 bg-amber-50 px-1 cl-micro font-bold text-amber-900">
+                CLEARANCE
+              </span>
+            ) : null}
+            {row.stock_short ? (
+              <span className="shrink-0 rounded border border-orange-300 bg-orange-50 px-1 cl-micro font-bold text-orange-900">
+                STOCK
+              </span>
+            ) : null}
+          </span>
+          <span className="flex min-w-0 items-center gap-1 cl-meta leading-tight text-slate-500">
+            <span className="shrink-0 font-mono font-semibold text-slate-600">{row.dispense_code}</span>
+            <span aria-hidden className="shrink-0 text-slate-300">
+              ·
+            </span>
+            <span className="shrink-0 font-mono">{row.patient?.mrn ?? "—"}</span>
+            <span aria-hidden className="shrink-0 text-slate-300">
+              ·
+            </span>
+            <span className="truncate">{orDash(row.medicines_summary)}</span>
+          </span>
+          <span className="truncate cl-meta leading-tight text-slate-400">
+            {row.prescription?.code ?? "No prescription"} ·{" "}
+            {row.prescriber?.name ?? "No prescriber"}
+          </span>
+        </span>
+
+        <span className="cl-meta tabular-nums text-slate-600" title="Lines fully supplied">
+          {lineProgressLabel(row)}
+        </span>
+
+        <span className="flex flex-col items-start gap-0.5 cl-meta leading-tight text-slate-600">
+          <span className="tabular-nums">{formatHospitalDate(row.dispense_date, "—")}</span>
+          <span className="tabular-nums text-slate-400">{ageSexLabel(row.patient)}</span>
+        </span>
+
+        <span className="flex justify-start">
+          <PharmacyPriorityPill priority={row.priority} label={row.priority_label} compact />
+        </span>
+
+        <span className="flex justify-end">
+          <PharmacyLanePill lane={row.lane} label={row.lane_label} compact />
+        </span>
+      </button>
+    </li>
+  );
+}
+
+export default function PharmacyQueue({
+  rows,
+  selectedId,
+  loading,
+  error,
+  truncated,
+  onSelect,
+}: {
+  rows: PharmacyQueueRow[];
+  selectedId: number | null;
+  loading: boolean;
+  error: string | null;
+  truncated: boolean;
+  onSelect: (dispenseId: number) => void;
+}) {
+  const listRef = useRef<HTMLUListElement>(null);
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLUListElement>) {
+    const keys = ["ArrowDown", "ArrowUp", "Home", "End"];
+    if (!keys.includes(event.key) || rows.length === 0) return;
+    event.preventDefault();
+
+    const current = rows.findIndex((row) => row.id === selectedId);
+    let next = current;
+    if (event.key === "ArrowDown")
+      next = current < 0 ? 0 : Math.min(current + 1, rows.length - 1);
+    if (event.key === "ArrowUp") next = current < 0 ? 0 : Math.max(current - 1, 0);
+    if (event.key === "Home") next = 0;
+    if (event.key === "End") next = rows.length - 1;
+
+    const target = rows[next];
+    if (target) {
+      onSelect(target.id);
+      requestAnimationFrame(() => {
+        listRef.current
+          ?.querySelector<HTMLButtonElement>('button[aria-pressed="true"]')
+          ?.focus();
+      });
+    }
+  }
+
+  return (
+    <section className="flex min-h-[340px] min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm min-[1100px]:min-h-0">
+      <header className="flex h-9 shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50 px-3">
+        <h2 className="flex items-baseline gap-1.5 cl-secondary font-bold uppercase tracking-[0.08em] text-slate-700">
+          Dispensing Queue
+          <span className="rounded bg-slate-200 px-1.5 py-px cl-meta tabular-nums text-slate-700">
+            {rows.length}
+          </span>
+        </h2>
+        {loading ? <span className="cl-meta tabular-nums text-slate-500">Updating…</span> : null}
+      </header>
+
+      <div
+        className={`${GRID} shrink-0 border-b border-slate-200 bg-slate-50 py-1 pl-3 pr-2 cl-micro font-bold uppercase tracking-[0.06em] text-slate-400`}
+      >
+        <span>Patient · Dispense · Medicines · Rx · Doctor</span>
+        <span>Lines</span>
+        <span>Sent</span>
+        <span>Pri</span>
+        <span className="text-right">Lane</span>
+      </div>
+
+      {error ? (
+        <div role="alert" className="border-b border-red-200 bg-red-50 px-3 py-2 cl-body text-red-800">
+          {error}
+        </div>
+      ) : null}
+      {truncated ? (
+        <div className="border-b border-amber-200 bg-amber-50 px-3 py-1.5 cl-secondary text-amber-900">
+          Queue limit reached. More matching dispenses may exist. Narrow the date or search.
+        </div>
+      ) : null}
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {loading && rows.length === 0 ? (
+          <div aria-label="Loading dispensing queue">
+            {Array.from({ length: 10 }, (_, index) => (
+              <div key={index} className="flex min-h-[60px] items-center gap-2 border-b border-slate-100 px-3">
+                <div className="flex flex-1 flex-col gap-1.5">
+                  <div className="h-2.5 w-2/5 animate-pulse rounded bg-slate-200" />
+                  <div className="h-2 w-3/5 animate-pulse rounded bg-slate-100" />
+                </div>
+                <div className="h-4 w-10 animate-pulse rounded bg-slate-100" />
+              </div>
+            ))}
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="flex h-full min-h-32 flex-col items-center justify-center gap-1 px-6 text-center">
+            <p className="cl-body font-semibold text-slate-600">No dispenses here</p>
+            <p className="cl-secondary text-slate-500">
+              {error
+                ? "The queue could not be loaded."
+                : "Nothing matches the current lane and filters."}
+            </p>
+          </div>
+        ) : (
+          <ul
+            ref={listRef}
+            onKeyDown={handleKeyDown}
+            aria-label="Pharmacy dispensing queue. Use arrow keys to move between dispenses."
+          >
+            {rows.map((row) => (
+              <QueueRow
+                key={row.id}
+                row={row}
+                selected={selectedId === row.id}
+                onSelect={() => onSelect(row.id)}
+              />
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <footer className="flex h-7 shrink-0 items-center gap-2 border-t border-slate-200 bg-slate-50 px-3 cl-meta text-slate-500">
+        <span className="tabular-nums">
+          {rows.length} {rows.length === 1 ? "dispense" : "dispenses"}
+        </span>
+        <span aria-hidden className="text-slate-300">
+          ·
+        </span>
+        <span className="flex items-center gap-1">
+          <kbd className="rounded border border-slate-200 bg-white px-1 font-mono cl-micro text-slate-500">
+            ↑↓
+          </kbd>
+          to move
+        </span>
+      </footer>
+    </section>
+  );
+}
