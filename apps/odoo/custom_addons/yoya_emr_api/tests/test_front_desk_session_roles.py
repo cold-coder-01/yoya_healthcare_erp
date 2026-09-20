@@ -63,6 +63,9 @@ EXPECTED_ROLE_KEYS = {
     # to /radiology with them.
     "radiology_technician",
     "radiologist",
+    # Added with the Pharmacy Desk. NARROW: nothing implies the pharmacist
+    # group, so a manager and an admin read FALSE.
+    "pharmacist",
 }
 
 G_RADIOLOGY_TECHNICIAN = "hospital_radiology.group_hospital_radiology_technician"

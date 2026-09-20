@@ -4,6 +4,10 @@ from odoo import fields
 from odoo.exceptions import UserError
 from odoo.tests import TransactionCase, tagged
 
+from odoo.addons.hospital_pharmacy.models.pharmacy_authority import (
+    prescription_workflow_capability,
+)
+
 
 @tagged("post_install", "-at_install", "pharmacy_prescription_handoff")
 class TestPharmacyPrescriptionHandoff(TransactionCase):
@@ -143,7 +147,11 @@ class TestPharmacyPrescriptionHandoff(TransactionCase):
 
     def test_already_confirmed_missing_dispense_can_be_recovered_by_safe_action(self):
         prescription, encounter = self._prescription(qty=3.0)
-        prescription.with_context(skip_prescription_write_audit=True).write({"state": "confirmed"})
+        # A LEGACY shape: confirmed with no dispense. Since Pharmacy Slice 0 a
+        # direct state write is refused on every channel, so the shape is
+        # reproduced through the in-process workflow capability.
+        with prescription_workflow_capability():
+            prescription.with_context(skip_prescription_write_audit=True).write({"state": "confirmed"})
         self.assertEqual(prescription.pharmacy_dispense_count, 0)
         action = prescription.action_view_pharmacy_dispense()
         dispense = self.env["hospital.pharmacy.dispense"].sudo().browse(action["res_id"])

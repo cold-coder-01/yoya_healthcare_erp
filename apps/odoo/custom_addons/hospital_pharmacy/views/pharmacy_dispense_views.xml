@@ -156,13 +156,17 @@
                                 <i class="fa fa-info-circle"/> DISPENSE INFORMATION
                             </div>
                             <group class="pharmacy_compact_group">
+                                <!-- Identity is set once, at creation: the model
+                                     refuses any later relink (Pharmacy Slice 0). -->
                                 <field
                                     name="appointment_id"
                                     domain="[('patient_id', '=', patient_id)]"
+                                    readonly="id"
                                 />
                                 <field
                                     name="prescription_id"
                                     domain="[('patient_id', '=', patient_id)]"
+                                    readonly="id"
                                 />
                                 <field name="dispense_date"/>
                                 <field name="priority"/>
@@ -176,9 +180,9 @@
                                 <i class="fa fa-clipboard"/> DISPENSE SUMMARY
                             </div>
                             <group class="pharmacy_compact_group">
-                                <field name="patient_id"/>
-                                <field name="physician_id"/>
-                                <field name="pharmacist_id"/>
+                                <field name="patient_id" readonly="id"/>
+                                <field name="physician_id" readonly="id"/>
+                                <field name="pharmacist_id" readonly="id"/>
                                 <field name="state" widget="badge"
                                     decoration-success="state == 'dispensed'"
                                     decoration-info="state == 'ready'"
@@ -195,19 +199,23 @@
                     <!-- ── Notebook ───────────────────────────── -->
                     <notebook>
                         <page string="Medicines" name="medicines">
-                            <field name="line_ids">
+                            <field name="line_ids" readonly="state in ('dispensed', 'cancelled')">
                                 <!-- Doctor-prescribed data is locked when the dispense
                                      comes from a prescription; manual dispenses stay
-                                     fully editable. -->
+                                     fully editable while in draft. The intended
+                                     quantity closes once the dispense is dispensed
+                                     or cancelled. The model enforces all of this;
+                                     these attributes only stop the form offering
+                                     an edit it would refuse. -->
                                 <list editable="bottom">
                                     <field name="sequence" widget="handle"/>
-                                    <field name="medicine_id" readonly="parent.prescription_id"/>
+                                    <field name="medicine_id" readonly="parent.prescription_id or parent.state != 'draft'"/>
                                     <field name="dosage" readonly="parent.prescription_id"/>
                                     <field name="frequency" readonly="parent.prescription_id"/>
                                     <field name="duration" readonly="parent.prescription_id"/>
                                     <field name="route" readonly="parent.prescription_id"/>
-                                    <field name="prescribed_quantity" string="Prescribed Qty" readonly="parent.prescription_id"/>
-                                    <field name="dispensed_quantity" string="Dispensed Qty"/>
+                                    <field name="prescribed_quantity" string="Prescribed Qty" readonly="parent.prescription_id or parent.state != 'draft'"/>
+                                    <field name="dispensed_quantity" string="Intended Qty (cumulative)" readonly="parent.state in ('dispensed', 'cancelled')"/>
                                     <field name="instruction" readonly="parent.prescription_id"/>
                                 </list>
                             </field>

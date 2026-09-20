@@ -24,3 +24,5 @@ from . import test_radiology_desk_transitions
 from . import test_radiology_desk_report
 from . import test_radiology_desk_images
 from . import test_radiology_desk_signoff
+from . import test_pharmacy_desk_api
+from . import test_pharmacy_desk_mutations_api

@@ -121,6 +121,34 @@ def correlate_dispense_lines(prescription, dispense):
     return matched
 
 
+def delivered_quantity(dispense_line):
+    """What the patient has actually RECEIVED on one dispense line.
+
+    WHY NOT dispensed_quantity (Pharmacy Slice 2). That field is the
+    pharmacist's CUMULATIVE INTENT for the next validation. Once the Pharmacy
+    Desk can prepare a second increment -- intent 10 after 4 were handed over --
+    reading it here would tell the prescriber 10 were supplied while the patient
+    holds 4. The delivery high-water marks are the evidence: the greater of what
+    billing recorded as delivered and what stock recorded as consumed (they
+    agree whenever both exist).
+
+    LEGACY FALLBACK, AND ONLY THIS ONE. Dispenses fully dispensed before the
+    high-water marks existed carry no evidence at all; for exactly those the
+    old reading -- the intent, which validation then equalled -- is kept, so a
+    historical "dispensed" row does not suddenly report nothing supplied.
+    Nothing else is inferred.
+    """
+    evidence = max(
+        getattr(dispense_line, "billing_delivered_quantity", 0.0) or 0.0,
+        getattr(dispense_line, "inventory_consumed_quantity", 0.0) or 0.0,
+    )
+    if evidence > 0.0005:
+        return evidence
+    if dispense_line.dispense_id.state == "dispensed":
+        return dispense_line.dispensed_quantity or 0.0
+    return 0.0
+
+
 def serialize_medicine(medicine):
     """One catalogue entry. Clinical and reference fields only.
 
@@ -160,7 +188,7 @@ def serialize_prescribed_medicine(line, dispense_line):
     medicine = line.medicine_id
     prescribed = line.quantity or 0.0
     if dispense_line is not None:
-        dispensed = dispense_line.dispensed_quantity or 0.0
+        dispensed = delivered_quantity(dispense_line)
         remaining = max(prescribed - dispensed, 0.0)
     else:
         dispensed = None

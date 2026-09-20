@@ -66,6 +66,25 @@
                 <attribute name="column_invisible">1</attribute>
                 <attribute name="required">0</attribute>
             </xpath>
+
+            <!-- Clinical content freezes once the prescription leaves draft or
+                 pharmacy has received it (Pharmacy Slice 0). The model refuses
+                 the write on every channel; this only stops the form offering it. -->
+            <xpath expr="//field[@name='patient_id']" position="attributes">
+                <attribute name="readonly">state != 'draft' or pharmacy_dispense_count</attribute>
+            </xpath>
+            <xpath expr="//field[@name='physician_id']" position="attributes">
+                <attribute name="readonly">state != 'draft' or pharmacy_dispense_count</attribute>
+            </xpath>
+            <xpath expr="//field[@name='appointment_id']" position="attributes">
+                <attribute name="readonly">state != 'draft' or pharmacy_dispense_count</attribute>
+            </xpath>
+            <xpath expr="//field[@name='diagnosis_id']" position="attributes">
+                <attribute name="readonly">state != 'draft' or pharmacy_dispense_count</attribute>
+            </xpath>
+            <xpath expr="//field[@name='line_ids']" position="attributes">
+                <attribute name="readonly">state != 'draft' or pharmacy_dispense_count</attribute>
+            </xpath>
         </field>
     </record>
 </odoo>

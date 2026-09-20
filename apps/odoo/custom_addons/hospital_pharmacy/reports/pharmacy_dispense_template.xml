@@ -172,7 +172,10 @@
                             <table style="width: 100%;">
                                 <tr>
                                     <td style="width: 50%;">
-                                        <p style="margin: 0;">Dispensed by: <span t-field="doc.pharmacist_id.name"/></p>
+                                        <!-- Written by hand, like "Received by". pharmacist_id is not delivery
+                                             provenance (Pharmacy Slice 0): on composed dispenses it
+                                             used to name the prescribing doctor. -->
+                                        <p style="margin: 0;">Dispensed by: ___________________________</p>
                                         <p style="margin: 24px 0 0 0; border-top: 1px solid #333; width: 200px;">Pharmacist Signature</p>
                                     </td>
                                     <td style="width: 50%; text-align: right;">

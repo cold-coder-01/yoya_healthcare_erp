@@ -5,6 +5,13 @@ from odoo import fields
 from odoo.exceptions import AccessError, UserError
 from odoo.tests import TransactionCase, tagged
 
+from odoo.addons.hospital_billing.models.pharmacy_billing import _billing_line_capability
+from odoo.addons.hospital_inventory.models.pharmacy_inventory import _inventory_line_capability
+from odoo.addons.hospital_pharmacy.models.pharmacy_authority import (
+    dispense_composition_capability,
+    dispense_workflow_capability,
+)
+
 
 @tagged("post_install", "-at_install", "unified_pharmacy_accounting_bridge")
 class TestUnifiedPharmacyAccountingBridge(TransactionCase):
@@ -111,14 +118,18 @@ class TestUnifiedPharmacyAccountingBridge(TransactionCase):
         appointment = self.env["hospital.appointment"].sudo().create({"patient_id": patient.id, "doctor_id": doctor.id, "appointment_date": fields.Datetime.now(), "state": "confirmed"})
         encounter = self.env["hospital.encounter"].sudo().create({"patient_id": patient.id, "appointment_id": appointment.id, "encounter_type": "outpatient", "state": "active", "company_id": self.company.id})
         account = self.env["hospital.billing.account"].sudo().create({"encounter_id": encounter.id, "payer_type": "self_pay"})
-        dispense = self.env["hospital.pharmacy.dispense"].sudo().create({
-            "patient_id": patient.id,
-            "physician_id": doctor.id,
-            "appointment_id": appointment.id,
-            "encounter_id": encounter.id,
-            "state": "dispensed",
-            "line_ids": [(0, 0, {"medicine_id": self.medicine.id, "prescribed_quantity": 2.0, "dispensed_quantity": delivered})],
-        })
+        # A delivered dispense built directly, which is the point of this
+        # accounting fixture. Since Pharmacy Slice 0 state and high-water marks
+        # move only under their in-process capabilities, so they are raised here.
+        with dispense_workflow_capability(), dispense_composition_capability():
+            dispense = self.env["hospital.pharmacy.dispense"].sudo().create({
+                "patient_id": patient.id,
+                "physician_id": doctor.id,
+                "appointment_id": appointment.id,
+                "encounter_id": encounter.id,
+                "state": "dispensed",
+                "line_ids": [(0, 0, {"medicine_id": self.medicine.id, "prescribed_quantity": 2.0, "dispensed_quantity": delivered})],
+            })
         line = dispense.line_ids[:1]
         charge = self.env["hospital.charge.line"].sudo().create({
             "billing_account_id": account.id,
@@ -141,7 +152,8 @@ class TestUnifiedPharmacyAccountingBridge(TransactionCase):
             "source_event": "pharmacy_dispense",
             "source_key": "bridge:%s" % suffix,
         })
-        line.sudo().write({"charge_line_id": charge.id, "billing_delivered_quantity": delivered, "inventory_consumed_quantity": delivered})
+        with _billing_line_capability(), _inventory_line_capability():
+            line.sudo().write({"charge_line_id": charge.id, "billing_delivered_quantity": delivered, "inventory_consumed_quantity": delivered})
         for amount in receipts:
             receipt = self.env["hospital.charge.receipt"].sudo().create({"payment_method": "cash", "received_at": fields.Datetime.now(), "received_by_id": self.accountant.id, "state": "draft", "intake_token": uuid.uuid4().hex})
             self.env["hospital.charge.receipt.allocation"].sudo().create({"receipt_id": receipt.id, "charge_line_id": charge.id, "amount": amount})
