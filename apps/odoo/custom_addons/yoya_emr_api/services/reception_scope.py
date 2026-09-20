@@ -535,15 +535,21 @@ def pharmacy_desk_role_flags(env):
 def pharmacy_desk_capability_flags(env):
     """What the Pharmacy Desk may do. Every flag mirrors a server-side guard.
 
-    SLICE 1 IS READ-ONLY, and this reports exactly that: `pharmacy_desk` and
-    nothing else. Preparing, validating and cancelling a dispense are ABSENT
-    rather than present-and-False, for the reason lab_desk_capability_flags
-    gives -- a flag with no endpoint behind it is an invitation to build a
-    button that has nothing to call. They arrive with the slices that implement
-    them.
+    SLICE 1 was read-only. SLICE 2 adds exactly the two mutations it
+    implements, `prepare_dispense` and `validate_dispense`, for every desk role
+    (no separation of duties yet). Cancellation, returns and substitution are
+    still ABSENT rather than present-and-False, for the reason
+    lab_desk_capability_flags gives.
+
+    These say which ACTS the role may attempt. Whether ONE dispense may be
+    prepared or validated is its own `can_prepare` / `can_validate`, and the
+    model re-checks both under its locks on every call.
     """
+    allowed = may_pharmacy_desk(env)
     return {
-        "pharmacy_desk": may_pharmacy_desk(env),
+        "pharmacy_desk": allowed,
+        "prepare_dispense": allowed,
+        "validate_dispense": allowed,
     }
 
 

@@ -13,6 +13,9 @@ from odoo.tools import float_compare
 from odoo.addons.hospital_pharmacy.models.pharmacy_dispense import (
     DISPENSE_CANCELLABLE_STATES,
 )
+from odoo.addons.hospital_pharmacy.models.pharmacy_authority import (
+    PharmacyWorkflowError,
+)
 
 from .charge_line import (
     AMOUNT_TOLERANCE,
@@ -280,6 +283,154 @@ class HospitalPharmacyDispenseBilling(models.Model):
     def _compute_billing_blocked(self):
         for dispense in self:
             dispense.billing_blocked = dispense._pharmacy_desk_billing_facts()["billing_blocked"]
+
+    # ------------------------------------------------------------------
+    # Pharmacy Desk mutations (Pharmacy Slice 2): the billing hooks
+    # ------------------------------------------------------------------
+    def _desk_lock_billing_scope(self):
+        """Lock steps 4-7, in this order:
+
+          4. the appointment, ONLY when no encounter exists yet and one may be
+             created from it (two first-Prepares must not race to create two)
+          5. the encounter
+          6. the billing account's responsibility advisory lock -- the SAME
+             serialization point cashier receipts and sponsor authorizations
+             take, so clearance cannot change between our check and our delivery
+          7. this dispense's Pharmacy charge lines, ordered by id, FOR UPDATE
+        """
+        super()._desk_lock_billing_scope()
+        cr = self.env.cr
+        dispense = self.sudo()
+        encounter = dispense.encounter_id
+        if not encounter and dispense.appointment_id:
+            cr.execute(
+                "SELECT id FROM hospital_appointment WHERE id = %s FOR UPDATE",
+                (dispense.appointment_id.id,),
+            )
+            encounter = self.env["hospital.encounter"].sudo().search(
+                [("appointment_id", "=", dispense.appointment_id.id)], order="id desc", limit=1
+            )
+        if encounter:
+            cr.execute(
+                "SELECT id FROM hospital_encounter WHERE id = %s FOR UPDATE",
+                (encounter.id,),
+            )
+            if encounter.billing_account_id:
+                self.env["hospital.billing.account"]._lock_responsibility_scope(
+                    encounter.billing_account_id.id
+                )
+        charge_ids = sorted(dispense._pharmacy_charges().ids)
+        if charge_ids:
+            cr.execute(
+                "SELECT id FROM hospital_charge_line WHERE id IN %s ORDER BY id FOR UPDATE",
+                (tuple(charge_ids),),
+            )
+
+    def _desk_assert_mappings(self, lines):
+        """Every line about to be supplied bills through a valid Pharmacy
+        service -- the same domain _assert_billable() is restated as."""
+        super()._desk_assert_mappings(lines)
+        dispense = self.sudo()
+        if not (dispense.encounter_id or dispense.appointment_id):
+            raise PharmacyWorkflowError("pharmacy_billing_mapping_missing")
+        company = dispense.encounter_id.company_id or self.env.company
+        Medicine = self.env["hospital.pharmacy.medicine"].sudo()
+        medicines = lines.sudo().mapped("medicine_id")
+        billable = Medicine.search(
+            [("id", "in", medicines.ids)] + Medicine._doctor_orderable_billing_domain(company=company)
+        )
+        if medicines - billable:
+            raise PharmacyWorkflowError("pharmacy_billing_mapping_missing")
+
+    def _desk_sync_billing(self):
+        """Every EXISTING charge bills exactly its line's intended quantity.
+
+        THE STALE-CHARGE GAP THIS CLOSES. _ensure_pharmacy_billing() only ever
+        visits lines with a positive intent, so a line brought back to zero kept
+        its old positive charge: the patient went on owing for medication the
+        pharmacist no longer intended to hand over. Here every line is visited:
+
+            increase / decrease (never below delivered) / positive -> 0
+                -> the live charge's qty_requested follows the intent
+            zero -> positive, no charge yet
+                -> created by _ensure_pharmacy_billing() inside action_mark_ready()
+
+        A zeroed charge is NOT cancelled: a cancelled charge can never be
+        revived for the same source key, and the pharmacist may raise the
+        intent again later.
+
+        A charge that cannot follow -- cancelled, reversed or already invoiced,
+        or refused by the charge model's own ceilings (e.g. money already taken
+        for more than the new quantity) -- is a fixed pharmacy_charge_conflict,
+        and the caller's savepoint rolls the intent back with it.
+        """
+        super()._desk_sync_billing()
+        dispense = self.sudo()
+        for line in dispense.line_ids:
+            target = line.dispensed_quantity or 0.0
+            charge = line.charge_line_id or dispense._line_charge(line)
+            if not charge:
+                continue
+            charge = charge.sudo()
+            frozen = charge.charge_state in FROZEN_CHARGE_STATES
+            invoiced = charge.invoice_state != "not_invoiced"
+            if float_compare(charge.qty_requested, target, precision_digits=3) == 0:
+                if frozen and target > QTY_TOLERANCE:
+                    raise PharmacyWorkflowError("pharmacy_charge_conflict")
+                continue
+            if frozen or invoiced:
+                raise PharmacyWorkflowError("pharmacy_charge_conflict")
+            if charge.qty_delivered > target + QTY_TOLERANCE:
+                raise PharmacyWorkflowError("pharmacy_charge_conflict")
+            try:
+                charge.with_context(pharmacy_quantity_sync=True).write({"qty_requested": target})
+                charge.flush_recordset()
+            except (UserError, ValidationError):
+                raise PharmacyWorkflowError("pharmacy_charge_conflict") from None
+            if not line.charge_line_id:
+                with _billing_line_capability():
+                    line.write({"charge_line_id": charge.id})
+
+    def _desk_assert_validate_billing(self):
+        """Before anything is delivered: the charges are exactly what Prepare
+        left, and the patient is cleared -- decided under the responsibility
+        lock taken in _desk_lock_billing_scope(), on locked charge rows.
+
+        Returns only fixed codes. check_financial_clearance()'s own reason text
+        names amounts and is never read here.
+        """
+        super()._desk_assert_validate_billing()
+        dispense = self.sudo()
+        encounter = dispense.encounter_id
+        if not encounter:
+            raise PharmacyWorkflowError("pharmacy_billing_mapping_missing")
+        charges = dispense._pharmacy_charges()
+        live = charges.filtered(lambda c: c.charge_state not in FROZEN_CHARGE_STATES)
+        for line in dispense.line_ids:
+            target = line.dispensed_quantity or 0.0
+            line_live = live.filtered(lambda c, line=line: c.source_line_id == line.id)
+            if target > QTY_TOLERANCE:
+                if len(line_live) != 1:
+                    raise PharmacyWorkflowError("pharmacy_charge_conflict")
+                if line.charge_line_id and line.charge_line_id != line_live:
+                    raise PharmacyWorkflowError("pharmacy_charge_conflict")
+                if float_compare(line_live.qty_requested, target, precision_digits=3) != 0:
+                    raise PharmacyWorkflowError("pharmacy_charge_conflict")
+            elif any(c.qty_requested > QTY_TOLERANCE for c in line_live):
+                raise PharmacyWorkflowError("pharmacy_charge_conflict")
+        clearance = self.env["hospital.billing.engine"].sudo().check_financial_clearance(
+            encounter, persist=False, charges=live
+        )
+        if not clearance["cleared"]:
+            raise PharmacyWorkflowError("pharmacy_billing_blocked")
+
+    def _desk_assert_delivered(self, lines):
+        super()._desk_assert_delivered(lines)
+        for line in lines.sudo():
+            if float_compare(
+                line.billing_delivered_quantity, line.dispensed_quantity, precision_digits=3
+            ) != 0:
+                raise PharmacyWorkflowError("pharmacy_mutation_response_failed")
 
     def _pharmacy_desk_billing_facts(self):
         """Every billing fact the Pharmacy Desk needs, AS BOOLEANS. Pure read.
@@ -756,6 +907,27 @@ class HospitalPharmacyDispenseLineBilling(models.Model):
 
     def _dispense_intent_floor(self):
         return max(super()._dispense_intent_floor(), self.billing_delivered_quantity or 0.0)
+
+    def _desk_line_consistent(self):
+        """Billing's evidence rule: with unified billing the billing and stock
+        high-water marks move in ONE transaction and must agree, and a delivery
+        must have a charge behind it; without an encounter billing never
+        records delivery at all."""
+        if not super()._desk_line_consistent():
+            return False
+        line = self.sudo()
+        billed = line.billing_delivered_quantity or 0.0
+        if not line.dispense_id.encounter_id:
+            return billed <= QTY_TOLERANCE
+        if "inventory_consumed_quantity" in line._fields and float_compare(
+            billed, line.inventory_consumed_quantity or 0.0, precision_digits=3
+        ) != 0:
+            return False
+        if billed > QTY_TOLERANCE and not (
+            line.charge_line_id or line.dispense_id._line_charge(line)
+        ):
+            return False
+        return True
 
 
 class HospitalChargePaymentWizardPharmacy(models.TransientModel):

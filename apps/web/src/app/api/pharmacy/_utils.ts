@@ -1,13 +1,18 @@
 /**
- * Shared bits for the Pharmacy Desk BFF routes. READ ONLY (Pharmacy Slice 1).
+ * Shared bits for the Pharmacy Desk BFF routes.
  *
  * `server-only` keeps these -- and the Odoo session cookie they read -- out of
  * every client bundle. The browser never holds an Odoo session and never has a
  * reachable Odoo URL; it talks to /api/pharmacy/* and nothing else.
  *
  * The generic helpers are imported from the reception BFF rather than copied,
- * the pattern radiology/_utils.ts and laboratory/_utils.ts follow. No write
- * helper is exported: this desk has no mutation route yet.
+ * the pattern radiology/_utils.ts and laboratory/_utils.ts follow.
+ *
+ * TWO MUTATION ROUTES (Slice 2): prepare and validate. Unlike the Radiology
+ * report save, they are NOT pass-throughs: the body is REBUILT here from the
+ * allowed fields only (pickPrepareBody / pickValidateBody), so no stray key a
+ * browser adds -- a state, a price, a batch -- is ever forwarded. The values
+ * themselves are validated by Odoo, whose fixed error codes come back as-is.
  */
 import "server-only";
 
@@ -53,3 +58,33 @@ export function parseDispenseId(raw: string) {
   }
   return { ok: true as const, value: dispenseId };
 }
+
+/** A POST with a body, bound to the same label. Used ONLY by prepare and validate. */
+export function postOdooApiWithBody<T>(
+  sessionId: string,
+  path: string,
+  body: Record<string, unknown>,
+) {
+  return callOdooApiWithLabel<T>(sessionId, path, "POST", body, PHARMACY_SERVICE_LABEL);
+}
+
+const INVALID_PAYLOAD = () =>
+  errorResponse("pharmacy_invalid_payload", "The dispense request is not valid.", 400);
+
+/** The request body as a JSON object, or the desk's fixed 400. */
+export async function readMutationBody(request: Request) {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return { ok: false as const, response: INVALID_PAYLOAD() };
+  }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return { ok: false as const, response: INVALID_PAYLOAD() };
+  }
+  return { ok: true as const, body: body as Record<string, unknown> };
+}
+
+// The two body filters are pure and import-free, so the contract tests can run
+// them directly; see _body.ts.
+export { pickPrepareBody, pickValidateBody } from "./_body";

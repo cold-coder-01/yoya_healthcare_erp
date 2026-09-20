@@ -1,15 +1,27 @@
-"""Pharmacy Desk API (Pharmacy Slice 1): READ ONLY.
+"""Pharmacy Desk API.
 
-    GET /yoya-emr/api/v1/pharmacy/session
-    GET /yoya-emr/api/v1/pharmacy/worklist
-    GET /yoya-emr/api/v1/pharmacy/dispenses/<id>
+    GET  /yoya-emr/api/v1/pharmacy/session
+    GET  /yoya-emr/api/v1/pharmacy/worklist
+    GET  /yoya-emr/api/v1/pharmacy/dispenses/<id>
+    POST /yoya-emr/api/v1/pharmacy/dispenses/<id>/prepare    (Slice 2)
+    POST /yoya-emr/api/v1/pharmacy/dispenses/<id>/validate   (Slice 2)
 
-NO MUTATION ROUTE EXISTS. Preparing quantities, Mark Ready, Validate Dispense and
-cancellation are later slices; this module registers no POST and calls no
-workflow method. Nothing here calls sudo(): every record is read through the
-caller's own ACLs and record rules. The two places that need elevated reads --
+THE CONTROLLER DECIDES NOTHING ABOUT WORKFLOW. Each mutation checks the role,
+resolves the dispense through the caller's own record rules, and hands the
+payload to the model's private _desk_prepare() / _desk_validate(), which own
+locking, idempotency, revision checks, billing, stock and state. The controller
+writes no field itself. Cancellation, returns and substitution are not
+registered. Nothing here calls sudo(): every record is read through the
+caller's own ACLs and record rules. The places that need elevated reads --
 billing clearance and mapping validity -- are model methods owned by
 hospital_billing and hospital_inventory that return booleans only.
+
+ONE SAVEPOINT PER MUTATION. The model call, the response serialization and the
+operation row all happen inside it; business refusals are mapped to fixed codes
+OUTSIDE it, after everything has rolled back. Serialization and lock failures
+are re-raised untouched so Odoo's HTTP layer replays the whole request in a
+fresh transaction -- where the idempotency record or the new revision answers
+it.
 
 THREE INDEPENDENT CONTROLS, IN THIS ORDER
 -----------------------------------------
@@ -31,12 +43,20 @@ that single pass. The counts therefore always match what the rows would show.
 """
 import functools
 import logging
+import uuid
+
+from psycopg2 import IntegrityError
 
 from odoo import http
-from odoo.exceptions import AccessError, UserError
+from odoo.exceptions import AccessError, UserError, ValidationError
 from odoo.http import request
 from odoo.osv import expression
 from odoo.service.model import PG_CONCURRENCY_EXCEPTIONS_TO_RETRY
+
+from odoo.addons.hospital_pharmacy.models.pharmacy_authority import (
+    MUTATION_ERROR_MESSAGES,
+    PharmacyWorkflowError,
+)
 
 from ..services.api_response import (
     ApiError,
@@ -44,6 +64,7 @@ from ..services.api_response import (
     error_response,
     parse_date,
     parse_int_param,
+    read_json_body,
     success_response,
 )
 from ..services.pharmacy_desk_serializers import (
@@ -197,6 +218,132 @@ def _sort_key(pair):
     )
 
 
+# ---------------------------------------------------------------------------
+# Mutations (Pharmacy Slice 2)
+# ---------------------------------------------------------------------------
+MUTATION_STATUS = {
+    "pharmacy_desk_not_authorized": 403,
+    "pharmacy_dispense_not_found": 404,
+    "pharmacy_invalid_payload": 400,
+    "pharmacy_operation_token_required": 400,
+    "pharmacy_idempotency_conflict": 409,
+    "pharmacy_dispense_revision_conflict": 409,
+    "pharmacy_dispense_state_conflict": 409,
+    "pharmacy_dispense_needs_review": 409,
+    "pharmacy_concurrent_conflict": 409,
+    "pharmacy_quantity_invalid": 422,
+    "pharmacy_duplicate_line": 422,
+    "pharmacy_no_positive_increment": 422,
+    "pharmacy_billing_mapping_missing": 422,
+    "pharmacy_inventory_mapping_missing": 422,
+    "pharmacy_charge_conflict": 422,
+    "pharmacy_billing_blocked": 422,
+    "pharmacy_stock_insufficient": 422,
+    "pharmacy_mutation_response_failed": 500,
+}
+
+PREPARE_KEYS = frozenset({"operation_token", "expected_revision", "lines"})
+VALIDATE_KEYS = frozenset({"operation_token", "expected_revision"})
+
+
+def _mutation_error(code):
+    return ApiError(code, MUTATION_ERROR_MESSAGES[code], MUTATION_STATUS[code])
+
+
+def _require_pharmacy_mutation(env):
+    """The role gate, BEFORE the dispense is resolved: a refused caller learns
+    nothing about whether the id exists."""
+    if not may_pharmacy_desk(env):
+        raise _mutation_error("pharmacy_desk_not_authorized")
+
+
+def _mutation_body(required_keys):
+    """Exactly the allowed keys; anything else is refused before a row is read.
+
+    A missing or blank token has its own code so a client can tell "you forgot
+    the token" from "the request is malformed". Everything else about the token,
+    the revision and the lines is validated by the model.
+    """
+    try:
+        body = read_json_body()
+    except ApiError:
+        raise _mutation_error("pharmacy_invalid_payload") from None
+    token = body.get("operation_token")
+    if token is None or (isinstance(token, str) and not token.strip()):
+        raise _mutation_error("pharmacy_operation_token_required")
+    if set(body) != required_keys:
+        raise _mutation_error("pharmacy_invalid_payload")
+    return body
+
+
+def _load_dispense_for_mutation(env, dispense_id):
+    if dispense_id <= 0:
+        raise _mutation_error("pharmacy_dispense_not_found")
+    record = env["hospital.pharmacy.dispense"].search([("id", "=", dispense_id)], limit=1)
+    if not record:
+        raise _mutation_error("pharmacy_dispense_not_found")
+    return record
+
+
+def _desk_policy(dispense):
+    """THE DESK POLICY, run by the model under its locks: a record the queue
+    shows as `anomaly` is never mutated, whatever its state says."""
+    lane, _reason, _facts = classify(dispense)
+    if lane == "anomaly":
+        raise PharmacyWorkflowError("pharmacy_dispense_needs_review")
+
+
+def _canonical_token(raw):
+    try:
+        return str(uuid.UUID(raw.strip()))
+    except (AttributeError, ValueError):
+        return raw
+
+
+def _run_mutation(env, record, operation_type, token, call):
+    """ONE savepoint: model workflow + response serialization + operation row.
+
+    Mapped AFTER the savepoint has rolled back, so a refusal can say "nothing
+    was changed" and mean it. No exception text is ever forwarded.
+    """
+
+    def serialize(dispense):
+        return serialize_dispense_detail(dispense, may_mutate=True)
+
+    try:
+        with env.cr.savepoint():
+            payload, replayed = call(record, _desk_policy, serialize)
+    except PG_CONCURRENCY_EXCEPTIONS_TO_RETRY:
+        raise
+    except PharmacyWorkflowError as error:
+        raise _mutation_error(error.code) from None
+    except IntegrityError:
+        # A unique constraint lost a race the locks did not cover (a charge
+        # source key, a token on another dispense). Rolled back; refresh.
+        _logger.warning("Pharmacy %s integrity conflict on dispense=%s", operation_type, record.id)
+        raise _mutation_error("pharmacy_concurrent_conflict") from None
+    except AccessError:
+        raise _mutation_error("pharmacy_desk_not_authorized") from None
+    except (UserError, ValidationError):
+        # A deeper layer refused in its own words -- which may name amounts or
+        # batches. Logged server-side, answered with the fixed sentence.
+        _logger.warning(
+            "Pharmacy %s refused for dispense=%s uid=%s", operation_type, record.id,
+            env.uid, exc_info=True,
+        )
+        raise _mutation_error("pharmacy_mutation_response_failed") from None
+    except Exception:
+        _logger.exception("Pharmacy %s failed for dispense=%s", operation_type, record.id)
+        raise _mutation_error("pharmacy_mutation_response_failed") from None
+
+    return success_response({
+        "dispense": payload,
+        "capabilities": pharmacy_desk_capability_flags(env),
+        "workflow_revision": payload["workflow_revision"],
+        "operation": {"type": operation_type, "token": token, "replayed": bool(replayed)},
+    })
+
+
 class YoyaEmrPharmacyController(http.Controller):
 
     @http.route("%s/session" % PHARMACY_API, type="http", auth="user", methods=["GET"], csrf=False)
@@ -254,7 +401,11 @@ class YoyaEmrPharmacyController(http.Controller):
             (pair for pair in classified if pair[1][0] in wanted), key=_sort_key
         )
         truncated = (not exact) or len(matching) > limit
-        rows = [serialize_queue_row(record, result) for record, result in matching[:limit]]
+        may_mutate = may_pharmacy_desk(env)
+        rows = [
+            serialize_queue_row(record, result, may_mutate)
+            for record, result in matching[:limit]
+        ]
 
         return success_response(
             serialize_worklist(
@@ -290,6 +441,52 @@ class YoyaEmrPharmacyController(http.Controller):
         _require_pharmacy_desk(env)
         record = _load_dispense(env, dispense_id)
         return success_response({
-            "dispense": serialize_dispense_detail(record),
+            "dispense": serialize_dispense_detail(record, may_mutate=may_pharmacy_desk(env)),
             "capabilities": pharmacy_desk_capability_flags(env),
         })
+
+    @http.route(
+        "%s/dispenses/<int:dispense_id>/prepare" % PHARMACY_API,
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @pharmacy_endpoint
+    def pharmacy_dispense_prepare(self, dispense_id, **params):
+        """Set every line's CUMULATIVE intended quantity, bill it, make Ready.
+
+        Body: {"operation_token": uuid, "expected_revision": int,
+               "lines": [{"line_id": int, "intended_quantity": number}, ...]}
+        Every current line exactly once. Nothing else is accepted.
+        """
+        env = request.env
+        _require_pharmacy_mutation(env)
+        body = _mutation_body(PREPARE_KEYS)
+        record = _load_dispense_for_mutation(env, dispense_id)
+        return _run_mutation(
+            env, record, "prepare", _canonical_token(body["operation_token"]),
+            lambda dispense, policy, serialize: dispense._desk_prepare(
+                body["lines"], body["operation_token"], body["expected_revision"],
+                policy_check=policy, serialize=serialize,
+            ),
+        )
+
+    @http.route(
+        "%s/dispenses/<int:dispense_id>/validate" % PHARMACY_API,
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @pharmacy_endpoint
+    def pharmacy_dispense_validate(self, dispense_id, **params):
+        """Hand over exactly the prepared increment. No quantities accepted.
+
+        Body: {"operation_token": uuid, "expected_revision": int}
+        """
+        env = request.env
+        _require_pharmacy_mutation(env)
+        body = _mutation_body(VALIDATE_KEYS)
+        record = _load_dispense_for_mutation(env, dispense_id)
+        return _run_mutation(
+            env, record, "validate", _canonical_token(body["operation_token"]),
+            lambda dispense, policy, serialize: dispense._desk_validate(
+                body["operation_token"], body["expected_revision"],
+                policy_check=policy, serialize=serialize,
+            ),
+        )

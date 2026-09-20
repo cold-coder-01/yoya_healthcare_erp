@@ -263,21 +263,27 @@ class TestPharmacyDeskAuthorization(PharmacyDeskCase):
         self.assertTrue(may_pharmacy_desk(self.env(user=self.pharmacist)))
         self.assertFalse(may_pharmacy_desk(self.env(user=self.doctor_user)))
 
-    def test_10_session_contract_is_read_only(self):
+    def test_10_session_contract(self):
+        """Slice 2: the two mutations are now offered to every desk role."""
         response, payload = self._desk_get(SESSION)
         data = payload["data"]
         self.assertEqual(set(data), {"user", "company", "roles", "capabilities", "read_only"})
-        self.assertEqual(data["capabilities"], {"pharmacy_desk": True})
-        self.assertTrue(data["read_only"])
+        self.assertEqual(
+            data["capabilities"],
+            {"pharmacy_desk": True, "prepare_dispense": True, "validate_dispense": True},
+        )
+        self.assertFalse(data["read_only"])
         self.assertEqual(
             data["roles"], {"pharmacist": True, "manager": False, "system_admin": False}
         )
 
-    def test_11_no_write_route_exists(self):
+    def test_11_only_prepare_and_validate_accept_writes(self):
+        """Slice 2 registers exactly two mutation routes (covered by
+        test_pharmacy_desk_mutations_api). Every other path refuses a POST."""
         dispense = self._probe()
         self._auth(self.pharmacist, self.pharmacist_password)
-        for url in (WORKLIST, DETAIL % dispense.id, DETAIL % dispense.id + "/validate",
-                    DETAIL % dispense.id + "/ready"):
+        for url in (WORKLIST, DETAIL % dispense.id, DETAIL % dispense.id + "/ready",
+                    DETAIL % dispense.id + "/cancel", DETAIL % dispense.id + "/lines"):
             response = self.url_open(url, data="{}", headers={"Content-Type": "application/json"})
             self.assertIn(response.status_code, (404, 405), url)
         dispense.invalidate_recordset()

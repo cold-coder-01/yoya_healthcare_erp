@@ -59,11 +59,13 @@ export type PharmacyDeskRoles = {
 };
 
 /**
- * READ ONLY. `pharmacy_desk` is the only capability: preparing, validating and
- * cancelling are absent rather than false until the slices that implement them.
+ * What the ROLE may attempt (Slice 2). Whether ONE dispense may be prepared or
+ * validated is that record's own `can_prepare` / `can_validate`.
  */
 export type PharmacyDeskCapabilities = {
   pharmacy_desk: boolean;
+  prepare_dispense: boolean;
+  validate_dispense: boolean;
 };
 
 export type PharmacySessionResponse = {
@@ -116,6 +118,11 @@ export type PharmacyQueueRow = {
   line_count: number;
   lines_complete: number;
   medicines_summary: string | null;
+  /** Incremented once per successful Prepare or Validate. Sent back as expected_revision. */
+  workflow_revision: number;
+  /** Derived server-side from state, lane, mappings, billing and stock. */
+  can_prepare: boolean;
+  can_validate: boolean;
 };
 
 export type PharmacyMedicine = {
@@ -143,6 +150,8 @@ export type PharmacyDispenseLine = {
   consumed_quantity: number;
   remaining_quantity: number;
   pending_increment: number;
+  /** The least cumulative intent the server accepts: what was already supplied. */
+  minimum_intended_quantity: number;
   billing_mapped: boolean;
   charge_linked: boolean;
   inventory_mapped: boolean;
@@ -186,3 +195,25 @@ export type PharmacyDispenseResponse = {
   capabilities: PharmacyDeskCapabilities;
 };
 
+
+/* ------------------------------------------------------------------ *
+ * Mutations (Slice 2)
+ * ------------------------------------------------------------------ */
+
+export type PharmacyPrepareRequest = {
+  operation_token: string;
+  expected_revision: number;
+  lines: { line_id: number; intended_quantity: number }[];
+};
+
+export type PharmacyValidateRequest = {
+  operation_token: string;
+  expected_revision: number;
+};
+
+export type PharmacyMutationResponse = {
+  dispense: PharmacyDispenseDetail;
+  capabilities: PharmacyDeskCapabilities;
+  workflow_revision: number;
+  operation: { type: "prepare" | "validate"; token: string; replayed: boolean };
+};

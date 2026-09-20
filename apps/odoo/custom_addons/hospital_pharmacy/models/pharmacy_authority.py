@@ -39,6 +39,9 @@ leave it open for a later call in the same worker.
 import contextvars
 from contextlib import contextmanager
 
+from odoo.exceptions import UserError
+from odoo.tools import float_compare
+
 # ---------------------------------------------------------------------------
 # Capabilities
 # ---------------------------------------------------------------------------
@@ -184,3 +187,91 @@ def same_value(record, field_name, value):
     if field.type in ("char", "text", "selection"):
         return (current or False) == (value or False)
     return current == value
+
+
+# ---------------------------------------------------------------------------
+# Pharmacy Slice 2: desk mutation authority
+# ---------------------------------------------------------------------------
+_revision_var = contextvars.ContextVar(
+    "hospital_pharmacy_dispense_revision_capability", default=False
+)
+_operation_var = contextvars.ContextVar(
+    "hospital_pharmacy_operation_capability", default=False
+)
+
+
+def revision_capability():
+    """Raised ONLY by HospitalPharmacyDispense._desk_bump_revision()."""
+    return _raised(_revision_var)
+
+
+def has_revision_capability():
+    return _revision_var.get()
+
+
+def operation_capability():
+    """Raised ONLY by HospitalPharmacyDispense._desk_record_operation()."""
+    return _raised(_operation_var)
+
+
+def has_operation_capability():
+    return _operation_var.get()
+
+
+def qty_cmp(a, b):
+    """THE quantity comparison for dispensing: three decimals, everywhere.
+
+    The high-water marks are stored at (16, 3) and the reconciliation reads at
+    three decimals, so the full/partial decision must too -- at two decimals
+    19.996 of 20 rounded to "fully dispensed" while every other layer still saw
+    0.004 outstanding.
+    """
+    return float_compare(a or 0.0, b or 0.0, precision_digits=QTY_PRECISION_DIGITS)
+
+
+def qty_gt(a, b):
+    return qty_cmp(a, b) > 0
+
+
+def qty_eq(a, b):
+    return qty_cmp(a, b) == 0
+
+
+# The fixed, amount-free vocabulary every desk mutation refusal speaks. The HTTP
+# layer maps each code to a status; the MODEL chooses the code, so a refusal
+# means the same thing whichever caller reached it. No sentence below names an
+# amount, a currency, a payer, a batch or a quantity on the shelf.
+MUTATION_ERROR_MESSAGES = {
+    "pharmacy_desk_not_authorized": "Pharmacy Desk mutation requires a pharmacist, hospital manager, or system administrator.",
+    "pharmacy_dispense_not_found": "Pharmacy dispense not found.",
+    "pharmacy_invalid_payload": "The dispense request is not valid.",
+    "pharmacy_operation_token_required": "An operation token is required.",
+    "pharmacy_idempotency_conflict": "This operation token was already used for a different request.",
+    "pharmacy_dispense_revision_conflict": "This dispense changed after it was loaded. Refresh it and review the latest quantities.",
+    "pharmacy_dispense_state_conflict": "This dispense is no longer in a state that allows this action.",
+    "pharmacy_dispense_needs_review": "This dispense contains inconsistent legacy data and must be reviewed before workflow actions continue.",
+    "pharmacy_concurrent_conflict": "Another pharmacy operation changed this dispense. Refresh and try again.",
+    "pharmacy_quantity_invalid": "One or more intended quantities are outside the allowed cumulative range.",
+    "pharmacy_duplicate_line": "Each dispense line may appear only once.",
+    "pharmacy_no_positive_increment": "Enter a cumulative quantity above the quantity already supplied.",
+    "pharmacy_billing_mapping_missing": "A medicine is not configured for pharmacy billing.",
+    "pharmacy_inventory_mapping_missing": "A medicine is not configured for pharmacy stock consumption.",
+    "pharmacy_charge_conflict": "The medication charge cannot be synchronized with this preparation.",
+    "pharmacy_billing_blocked": "Financial clearance is required before this dispense can be validated.",
+    "pharmacy_stock_insufficient": "The Pharmacy Store does not have enough usable stock for this dispense.",
+    "pharmacy_mutation_response_failed": "The pharmacy action could not be completed. Nothing was changed.",
+}
+
+
+class PharmacyWorkflowError(UserError):
+    """A desk mutation refusal with a FIXED code and FIXED wording.
+
+    A UserError, so every existing caller that already rolls back on UserError
+    keeps doing so. Its message is always the fixed sentence for its code:
+    nothing from deeper layers -- a clearance explanation that names an amount,
+    a shortage that names a batch -- can ride along.
+    """
+
+    def __init__(self, code):
+        self.code = code
+        super().__init__(MUTATION_ERROR_MESSAGES[code])

@@ -12,16 +12,22 @@ import {
   reasonNotice,
   stockLabel,
 } from "@/lib/pharmacy-desk-format";
+import { lineIssueText, type PrepareDraft, type PreparePlan } from "@/lib/pharmacy-desk-actions";
 import type { PharmacyDispenseDetail, PharmacyDispenseLine } from "@/types/pharmacy-desk";
 
 import { PharmacyLanePill, PharmacyPriorityPill, VerdictChip } from "./pharmacy-status-pill";
 
 /**
- * The Pharmacy Desk dispense panel. READ ONLY, and it renders no control.
+ * The Pharmacy Desk dispense panel.
  *
- * NOT EVEN A DISABLED BUTTON. Preparing quantities, Mark Ready, Validate
- * Dispense and cancellation are later slices; a greyed-out button is a promise
- * about workflow that has not shipped.
+ * TWO ACTIONS (Slice 2), BOTH OFFERED BY THE SERVER. The intended quantity is
+ * an input only when the record's own `can_prepare` says so, and Validate is
+ * offered only when `can_validate` does. Prescribed, delivered, consumed,
+ * remaining and the billing/stock verdicts are always read-only. The panel
+ * never saves a line: both actions open a confirmation step, and the
+ * workstation sends ONE atomic request after it.
+ *
+ * Cancellation, returns and substitution are not offered: no route exists.
  *
  * NOTHING PRICED APPEARS HERE. Billing is shown as verdicts only -- blocked or
  * not, mapped or not -- because that is all the payload carries.
@@ -71,7 +77,54 @@ function Qty({ value, strong = false }: { value: number; strong?: boolean }) {
   );
 }
 
-function LineRows({ line }: { line: PharmacyDispenseLine }) {
+function IntendedInput({
+  line,
+  value,
+  issue,
+  disabled,
+  onChange,
+}: {
+  line: PharmacyDispenseLine;
+  value: string;
+  issue: string | null;
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <td className="py-1 pr-2 text-right">
+      <input
+        type="text"
+        inputMode="decimal"
+        aria-label={`Intended cumulative quantity for ${medicineLabel(line)}`}
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+        className={`w-[72px] rounded border px-1.5 py-0.5 text-right tabular-nums outline-none focus:ring-1 ${
+          issue
+            ? "border-red-500 bg-red-50 focus:ring-red-500"
+            : "border-violet-300 bg-white focus:border-violet-600 focus:ring-violet-600"
+        }`}
+      />
+      {issue ? <span className="block cl-micro font-bold text-red-700">{issue}</span> : null}
+    </td>
+  );
+}
+
+function LineRows({
+  line,
+  draftValue,
+  issue,
+  editable,
+  busy,
+  onDraftChange,
+}: {
+  line: PharmacyDispenseLine;
+  draftValue: string | null;
+  issue: string | null;
+  editable: boolean;
+  busy: boolean;
+  onDraftChange: (lineId: number, value: string) => void;
+}) {
   const sig = [line.dosage, line.route, line.frequency, line.duration].filter(Boolean).join(" · ");
   return (
     <>
@@ -81,7 +134,17 @@ function LineRows({ line }: { line: PharmacyDispenseLine }) {
           <span className="block cl-meta text-slate-500">{sig || "No directions recorded"}</span>
         </td>
         <Qty value={line.prescribed_quantity} />
-        <Qty value={line.intended_quantity} />
+        {editable && draftValue !== null ? (
+          <IntendedInput
+            line={line}
+            value={draftValue}
+            issue={issue}
+            disabled={busy}
+            onChange={(value) => onDraftChange(line.id, value)}
+          />
+        ) : (
+          <Qty value={line.intended_quantity} />
+        )}
         <Qty value={line.delivered_quantity} />
         <Qty value={line.consumed_quantity} />
         <Qty value={line.remaining_quantity} strong />
@@ -113,12 +176,27 @@ export default function PharmacyDispensePanel({
   error,
   empty,
   stale,
+  draft,
+  plan,
+  busy,
+  actionMessage,
+  onDraftChange,
+  onRequestPrepare,
+  onRequestValidate,
 }: {
   detail: PharmacyDispenseDetail | null;
   loading: boolean;
   error: string | null;
   empty: boolean;
   stale: boolean;
+  /** The Prepare inputs, seeded from the server; null when not editable. */
+  draft: PrepareDraft | null;
+  plan: PreparePlan | null;
+  busy: boolean;
+  actionMessage: { tone: "red" | "amber" | "green"; text: string } | null;
+  onDraftChange: (lineId: number, value: string) => void;
+  onRequestPrepare: () => void;
+  onRequestValidate: () => void;
 }) {
   if (error) {
     return (
@@ -160,6 +238,10 @@ export default function PharmacyDispensePanel({
 
   const reason = reasonNotice(detail);
   const clearance = clearanceNotice(detail);
+  const editable = detail.can_prepare && draft !== null;
+  const issueFor = (lineId: number) =>
+    lineIssueText(plan?.lines.find((entry) => entry.line.id === lineId)?.issue ?? null);
+  const prepareReady = Boolean(plan && plan.valid && plan.hasIncrement);
 
   return (
     <section className="flex min-h-[340px] min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm min-[1100px]:min-h-0">
@@ -179,6 +261,20 @@ export default function PharmacyDispensePanel({
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-3">
+        {actionMessage ? (
+          <div
+            role="status"
+            className={`rounded border px-3 py-2 cl-secondary font-semibold ${
+              actionMessage.tone === "green"
+                ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                : actionMessage.tone === "red"
+                  ? "border-red-300 bg-red-50 text-red-900"
+                  : "border-amber-300 bg-amber-50 text-amber-900"
+            }`}
+          >
+            {actionMessage.text}
+          </div>
+        ) : null}
         {reason ? <Banner tone={reason.tone}>{reason.text}</Banner> : null}
         {clearance ? <Banner tone="amber">{clearance}</Banner> : null}
 
@@ -213,7 +309,7 @@ export default function PharmacyDispensePanel({
                 <tr className="border-b border-slate-200 text-left cl-micro uppercase tracking-[0.06em] text-slate-400">
                   <th className="w-[30%] py-1 font-bold">Medicine · directions</th>
                   <th className="py-1 pr-2 text-right font-bold" title="Prescribed quantity">Rx</th>
-                  <th className="py-1 pr-2 text-right font-bold" title="Intended cumulative quantity">Intended</th>
+                  <th className="py-1 pr-2 text-right font-bold" title="Total intended to have been supplied after the next validation">Intended cumulative</th>
                   <th className="py-1 pr-2 text-right font-bold" title="Delivered (billing record)">Delivered</th>
                   <th className="py-1 pr-2 text-right font-bold" title="Consumed from stock">Consumed</th>
                   <th className="py-1 pr-2 text-right font-bold" title="Prescribed minus supplied">Remaining</th>
@@ -222,7 +318,15 @@ export default function PharmacyDispensePanel({
               </thead>
               <tbody>
                 {detail.lines.map((line) => (
-                  <LineRows key={line.id} line={line} />
+                  <LineRows
+                    key={line.id}
+                    line={line}
+                    draftValue={draft ? (draft[line.id] ?? "") : null}
+                    issue={editable ? issueFor(line.id) : null}
+                    editable={editable}
+                    busy={busy}
+                    onDraftChange={onDraftChange}
+                  />
                 ))}
               </tbody>
             </table>
@@ -237,8 +341,34 @@ export default function PharmacyDispensePanel({
         ) : null}
       </div>
 
-      <footer className="flex h-7 shrink-0 items-center border-t border-slate-200 bg-slate-50 px-3 cl-meta text-slate-500">
-        Read-only view. Dispensing actions are not available on this desk yet.
+      <footer className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-slate-200 bg-slate-50 px-3 py-1.5">
+        <span className="cl-meta text-slate-500">
+          {detail.can_prepare || detail.can_validate
+            ? "Quantities are cumulative. Each action asks for confirmation."
+            : "No dispensing action is available for this record."}
+        </span>
+        <span className="flex items-center gap-2">
+          {detail.can_prepare ? (
+            <button
+              type="button"
+              onClick={onRequestPrepare}
+              disabled={busy || !prepareReady}
+              className="rounded border border-violet-600 bg-white px-2.5 py-1 cl-secondary font-bold text-violet-800 hover:bg-violet-50 disabled:opacity-50"
+            >
+              Prepare…
+            </button>
+          ) : null}
+          {detail.can_validate ? (
+            <button
+              type="button"
+              onClick={onRequestValidate}
+              disabled={busy}
+              className="rounded border border-violet-700 bg-violet-700 px-2.5 py-1 cl-secondary font-bold text-white hover:bg-violet-800 disabled:opacity-50"
+            >
+              Validate dispense…
+            </button>
+          ) : null}
+        </span>
       </footer>
     </section>
   );

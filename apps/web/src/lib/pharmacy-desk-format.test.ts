@@ -79,6 +79,9 @@ function row(overrides: Partial<PharmacyQueueRow> = {}): PharmacyQueueRow {
     line_count: 2,
     lines_complete: 0,
     medicines_summary: "Amoxicillin · Paracetamol",
+    workflow_revision: 0,
+    can_prepare: false,
+    can_validate: false,
     ...overrides,
   };
 }
@@ -98,6 +101,7 @@ function line(overrides: Partial<PharmacyDispenseLine> = {}): PharmacyDispenseLi
     consumed_quantity: 5,
     remaining_quantity: 10,
     pending_increment: 5,
+    minimum_intended_quantity: 5,
     billing_mapped: true,
     charge_linked: true,
     inventory_mapped: true,

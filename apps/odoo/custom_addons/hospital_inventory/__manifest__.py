@@ -1,7 +1,7 @@
 {
     "name": "Hospital Inventory",
     "summary": "Hospital inventory and medical consumables control foundation",
-    "version": "18.0.1.4.0",
+    "version": "18.0.1.5.0",
     "category": "Healthcare",
     "author": "Synergy Tech solns",
     "license": "LGPL-3",

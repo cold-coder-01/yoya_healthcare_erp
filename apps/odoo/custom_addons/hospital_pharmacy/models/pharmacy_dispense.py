@@ -1,6 +1,10 @@
+import hashlib
+import json
+import uuid
+
 from odoo import api, fields, models
 from odoo.exceptions import AccessError, UserError
-from odoo.tools import float_compare
+from odoo.tools import float_compare, float_round
 
 from .pharmacy_authority import (
     DISPENSE_IDENTITY_FIELDS,
@@ -10,8 +14,14 @@ from .pharmacy_authority import (
     PRESCRIPTION_LINE_LOCKED_FIELDS,
     PRESCRIPTION_LOCKED_FIELDS,
     QTY_PRECISION_DIGITS,
+    PharmacyWorkflowError,
     dispense_composition_capability,
     dispense_workflow_capability,
+    has_revision_capability,
+    operation_capability,
+    qty_eq,
+    qty_gt,
+    revision_capability,
     has_dispense_composition_capability,
     has_dispense_workflow_capability,
     has_prescription_workflow_capability,
@@ -125,6 +135,12 @@ class HospitalPharmacyDispense(models.Model):
     )
     notes = fields.Text()
     active = fields.Boolean(default=True)
+    # Pharmacy Slice 2. Incremented exactly once by each successful Pharmacy Desk
+    # Prepare or Validate, and by nothing else. A desk mutation carries the
+    # revision it was loaded at; a different current value means someone else
+    # changed the dispense in between, and the mutation is refused rather than
+    # applied to quantities the pharmacist never saw.
+    workflow_revision = fields.Integer(default=0, readonly=True, copy=False)
 
     @api.depends("name", "patient_id")
     def _compute_display_name(self):
@@ -165,6 +181,10 @@ class HospitalPharmacyDispense(models.Model):
                     "A pharmacy dispense is created as a draft and moved through "
                     "its workflow actions. It cannot be created directly in state "
                     "'%s'." % requested_state
+                )
+            if vals.get("workflow_revision") and not has_revision_capability():
+                raise UserError(
+                    "A pharmacy dispense starts at workflow revision 0."
                 )
             if not vals.get("name") or vals.get("name") == "New":
                 vals["name"] = (
@@ -221,6 +241,14 @@ class HospitalPharmacyDispense(models.Model):
         record. Writing the value a record already has is not a change and is
         allowed, so a form that echoes the current values does not break.
         """
+        if "workflow_revision" in vals and not has_revision_capability():
+            for record in self:
+                if vals["workflow_revision"] != record.workflow_revision:
+                    raise UserError(
+                        "Pharmacy dispense %s: the workflow revision is maintained "
+                        "by the Pharmacy Desk workflow and cannot be edited. "
+                        "Nothing was changed." % record.display_name
+                    )
         if "state" in vals and not has_dispense_workflow_capability():
             for record in self:
                 if vals["state"] != record.state:
@@ -352,13 +380,12 @@ class HospitalPharmacyDispense(models.Model):
         self._assert_pharmacy_operator("validate a pharmacy dispense")
         for record in self.filtered(lambda r: r.state in ("ready", "partial")):
             record._validate_dispense_quantities()
+            # THREE DECIMALS, the precision every high-water mark and every
+            # reconciliation uses (Pharmacy Slice 2). At two, 19.996 of 20
+            # rounded to "fully dispensed" while billing and stock still saw
+            # 0.004 outstanding.
             fully_dispensed = all(
-                float_compare(
-                    line.dispensed_quantity,
-                    line.prescribed_quantity,
-                    precision_digits=2,
-                )
-                == 0
+                qty_eq(line.dispensed_quantity, line.prescribed_quantity)
                 for line in record.line_ids
             )
             record._write_state("dispensed" if fully_dispensed else "partial")
@@ -370,28 +397,18 @@ class HospitalPharmacyDispense(models.Model):
                 "This dispense has no medicine lines. Add lines before validating."
             )
         for line in self.line_ids:
-            if float_compare(line.dispensed_quantity, 0.0, precision_digits=2) < 0:
+            if qty_gt(0.0, line.dispensed_quantity):
                 raise UserError(
                     f"Dispensed quantity for {line.medicine_id.display_name} "
                     "cannot be negative."
                 )
-            if (
-                float_compare(
-                    line.dispensed_quantity,
-                    line.prescribed_quantity,
-                    precision_digits=2,
-                )
-                > 0
-            ):
+            if qty_gt(line.dispensed_quantity, line.prescribed_quantity):
                 raise UserError(
                     f"Dispensed quantity for {line.medicine_id.display_name} "
                     f"({line.dispensed_quantity}) exceeds the prescribed "
                     f"quantity ({line.prescribed_quantity})."
                 )
-        if all(
-            float_compare(line.dispensed_quantity, 0.0, precision_digits=2) == 0
-            for line in self.line_ids
-        ):
+        if all(qty_eq(line.dispensed_quantity, 0.0) for line in self.line_ids):
             raise UserError(
                 "Enter the dispensed quantity on at least one medicine line "
                 "before validating the dispense."
@@ -482,6 +499,353 @@ class HospitalPharmacyDispense(models.Model):
             old_value=f"State: {old_state}",
             new_value=f"State: {self.state}",
         )
+
+    # ------------------------------------------------------------------
+    # Pharmacy Desk mutations (Pharmacy Slice 2)
+    # ------------------------------------------------------------------
+    # TWO PRIVATE ENTRY POINTS, _desk_prepare() and _desk_validate(). Private so
+    # that no RPC client can call them around the Desk's HTTP gate; the Desk
+    # controller is their only caller and wraps each call in ONE savepoint.
+    #
+    # EACH RUNS THE SAME SHAPE:
+    #
+    #   1. operator authorization            (before any row is touched)
+    #   2. payload shape                     (fixed codes, nothing locked yet)
+    #   3. _desk_lock_for_mutation()         (the deterministic lock order)
+    #   4. idempotency replay                (a replay runs NOTHING again)
+    #   5. revision, state, integrity        (under the lock, on fresh values)
+    #   6. the workflow itself               (existing authoritative methods)
+    #   7. revision + 1, flush, serialize    (a serialization failure rolls
+    #   8. the operation row                  everything back, including 6)
+    #
+    # THE LOCK ORDER IS FIXED HERE, in the base module, and not left to super()
+    # chaining. hospital_billing and hospital_inventory do not depend on each
+    # other, so the order their overrides would stack in is a load-order
+    # accident; two transactions stacking them differently could deadlock. The
+    # billing and stock steps are therefore separate hooks, called in sequence.
+    DESK_PREPARE_STATES = ("draft", "ready", "partial")
+    DESK_VALIDATE_STATES = ("ready", "partial")
+    DESK_TOKEN_MAX_LENGTH = 64
+
+    @api.model
+    def _desk_clean_token(self, token):
+        if token is None or (isinstance(token, str) and not token.strip()):
+            raise PharmacyWorkflowError("pharmacy_operation_token_required")
+        if not isinstance(token, str) or len(token.strip()) > self.DESK_TOKEN_MAX_LENGTH:
+            raise PharmacyWorkflowError("pharmacy_invalid_payload")
+        try:
+            # Canonical form, so a retry that changes only the letter case of the
+            # same UUID is still recognised as the same request.
+            return str(uuid.UUID(token.strip()))
+        except ValueError:
+            raise PharmacyWorkflowError("pharmacy_invalid_payload") from None
+
+    @api.model
+    def _desk_clean_revision(self, value):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise PharmacyWorkflowError("pharmacy_invalid_payload")
+        return value
+
+    @api.model
+    def _desk_clean_lines(self, entries):
+        """[(line_id, quantity)] sorted by line id, quantities at 3 decimals.
+
+        SHAPE ONLY: every entry is exactly {line_id, intended_quantity}; nothing
+        clinical, financial or stock-related is accepted. Whether the ids are
+        THIS dispense's lines and whether the quantities are allowed are decided
+        under the lock, on fresh values.
+        """
+        if not isinstance(entries, list) or not entries:
+            raise PharmacyWorkflowError("pharmacy_invalid_payload")
+        seen = set()
+        cleaned = []
+        for entry in entries:
+            if not isinstance(entry, dict) or set(entry) != {"line_id", "intended_quantity"}:
+                raise PharmacyWorkflowError("pharmacy_invalid_payload")
+            line_id = entry["line_id"]
+            quantity = entry["intended_quantity"]
+            if isinstance(line_id, bool) or not isinstance(line_id, int) or line_id <= 0:
+                raise PharmacyWorkflowError("pharmacy_invalid_payload")
+            if isinstance(quantity, bool) or not isinstance(quantity, (int, float)):
+                raise PharmacyWorkflowError("pharmacy_invalid_payload")
+            quantity = float(quantity)
+            if quantity != quantity or quantity in (float("inf"), float("-inf")):
+                raise PharmacyWorkflowError("pharmacy_invalid_payload")
+            if line_id in seen:
+                raise PharmacyWorkflowError("pharmacy_duplicate_line")
+            seen.add(line_id)
+            cleaned.append((line_id, float_round(quantity, precision_digits=QTY_PRECISION_DIGITS)))
+        return sorted(cleaned)
+
+    def _desk_assert_operator(self):
+        try:
+            self._assert_pharmacy_operator("operate the Pharmacy Desk")
+        except AccessError:
+            raise PharmacyWorkflowError("pharmacy_desk_not_authorized") from None
+
+    def _desk_digest(self, operation_type, expected_revision, lines=()):
+        """The canonical request. The ACTOR is part of it: the same token
+        presented by someone else is a different request, never a replay."""
+        self.ensure_one()
+        canonical = json.dumps(
+            {
+                "type": operation_type,
+                "dispense": self.id,
+                "expected_revision": expected_revision,
+                "lines": [[line_id, "%.3f" % quantity] for line_id, quantity in lines],
+                "actor": self.env.uid,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def _desk_find_replay(self, operation_type, token, digest):
+        """The earlier successful operation this request replays, or False.
+
+        sudo() ON THE LOOKUP: a token is globally unique, so the question "has
+        this token been used" must see every row, not only the caller's. Nothing
+        from the row is returned to the caller.
+        """
+        self.ensure_one()
+        operation = self.env["hospital.pharmacy.operation"].sudo().search(
+            [("operation_token", "=", token)], limit=1
+        )
+        if not operation:
+            return False
+        if (
+            operation.dispense_id.id != self.id
+            or operation.operation_type != operation_type
+            or operation.performed_by_id.id != self.env.uid
+            or operation.request_digest != digest
+        ):
+            raise PharmacyWorkflowError("pharmacy_idempotency_conflict")
+        return operation
+
+    def _desk_lock_for_mutation(self, include_stock=False):
+        """THE deterministic lock order for every desk mutation on one dispense.
+
+          1. the dispense header, FOR UPDATE
+          2. a no-op UPDATE of that header -- the Laboratory Desk's pattern. Odoo
+             runs at REPEATABLE READ with the snapshot taken at the request's
+             first query; the no-op write makes a concurrent waiter's lock fail
+             with a serialization error that Odoo's HTTP layer replays in a
+             fresh snapshot, instead of letting it act on stale values
+          3. the dispense lines, ordered by id, FOR UPDATE
+          4-7. billing scope (hospital_billing's hook)
+          8-10. stock scope, Validate only (hospital_inventory's hook)
+          11. every cache invalidated, so each later check reads locked rows
+        """
+        self.ensure_one()
+        cr = self.env.cr
+        self.env.flush_all()
+        cr.execute(
+            "SELECT id FROM hospital_pharmacy_dispense WHERE id = %s FOR UPDATE",
+            (self.id,),
+        )
+        if not cr.fetchone():
+            raise PharmacyWorkflowError("pharmacy_dispense_not_found")
+        cr.execute(
+            "UPDATE hospital_pharmacy_dispense SET write_date = write_date WHERE id = %s",
+            (self.id,),
+        )
+        cr.execute(
+            "SELECT id FROM hospital_pharmacy_dispense_line WHERE dispense_id = %s "
+            "ORDER BY id FOR UPDATE",
+            (self.id,),
+        )
+        self.env.invalidate_all()
+        self._desk_lock_billing_scope()
+        if include_stock:
+            self._desk_lock_stock_scope()
+        self.env.invalidate_all()
+
+    def _desk_lock_billing_scope(self):
+        """Steps 4-7. hospital_billing implements it."""
+        return None
+
+    def _desk_lock_stock_scope(self):
+        """Steps 8-10. hospital_inventory implements it."""
+        return None
+
+    def _desk_assert_integrity(self):
+        """Refuse a record whose facts contradict each other. Never repairs.
+
+        The MODEL's own floor under the Desk's richer anomaly classification:
+        a desk mutation must not act on a record even if a caller skipped the
+        Desk's policy check.
+        """
+        self.ensure_one()
+        prescription = self.prescription_id.sudo()
+        if (
+            not self.line_ids
+            or not prescription
+            or prescription.patient_id != self.patient_id
+            or prescription.state != "confirmed"
+        ):
+            raise PharmacyWorkflowError("pharmacy_dispense_needs_review")
+        delivered_any = False
+        for line in self.line_ids:
+            if not line._desk_line_consistent():
+                raise PharmacyWorkflowError("pharmacy_dispense_needs_review")
+            if qty_gt(line._dispense_intent_floor(), 0.0):
+                delivered_any = True
+        # `partial` is a delivery fact; one with nothing delivered is legacy.
+        if self.state == "partial" and not delivered_any:
+            raise PharmacyWorkflowError("pharmacy_dispense_needs_review")
+        if self.state in ("draft", "ready") and delivered_any:
+            raise PharmacyWorkflowError("pharmacy_dispense_needs_review")
+
+    def _desk_assert_current(self, expected_revision, states, policy_check):
+        if self.workflow_revision != expected_revision:
+            raise PharmacyWorkflowError("pharmacy_dispense_revision_conflict")
+        if self.state not in states:
+            raise PharmacyWorkflowError("pharmacy_dispense_state_conflict")
+        self._desk_assert_integrity()
+        if policy_check:
+            policy_check(self)
+
+    def _desk_assert_mappings(self, lines):
+        """Billing and stock configuration for `lines`. Owned by the modules
+        that decide what configured means; nothing here."""
+        return None
+
+    def _desk_sync_billing(self):
+        """Make every line's charge bill exactly its intended quantity."""
+        return None
+
+    def _desk_assert_validate_billing(self):
+        """Charges exactly synchronized, and financially cleared under lock."""
+        return None
+
+    def _desk_assert_validate_stock(self, lines):
+        """Enough locked Pharmacy Store stock for every pending increment."""
+        return None
+
+    def _desk_assert_delivered(self, lines):
+        """After validation, every pending line's evidence reached its intent."""
+        return None
+
+    def _desk_bump_revision(self):
+        with revision_capability():
+            self.with_context(skip_dispense_write_audit=True).write(
+                {"workflow_revision": self.workflow_revision + 1}
+            )
+
+    def _desk_record_operation(self, operation_type, token, digest):
+        """Write the replay row. LAST, after the workflow and the serialization
+        succeeded. A unique-token collision -- a token raced onto another
+        dispense -- is an idempotency conflict, not a crash."""
+        from psycopg2 import IntegrityError
+
+        values = {
+            "dispense_id": self.id,
+            "operation_type": operation_type,
+            "operation_token": token,
+            "request_digest": digest,
+            "result_revision": self.workflow_revision,
+            "performed_by_id": self.env.uid,
+        }
+        try:
+            with self.env.cr.savepoint(), operation_capability():
+                self.env["hospital.pharmacy.operation"].sudo().create(values)
+        except IntegrityError:
+            raise PharmacyWorkflowError("pharmacy_idempotency_conflict") from None
+
+    def _desk_finish(self, operation_type, token, digest, serialize):
+        self._desk_bump_revision()
+        self._create_audit_log(
+            action_type="update",
+            description="Pharmacy Desk %s completed (revision %s)."
+            % (operation_type, self.workflow_revision),
+        )
+        self.env.flush_all()
+        payload = serialize(self) if serialize else None
+        self._desk_record_operation(operation_type, token, digest)
+        self.env.flush_all()
+        return payload, False
+
+    def _desk_prepare(self, line_quantities, operation_token, expected_revision,
+                      policy_check=None, serialize=None):
+        """PREPARE: set every line's cumulative intended quantity, bill it, Ready.
+
+        Returns (payload, replayed). No stock is touched. Every refusal is a
+        PharmacyWorkflowError with a fixed code; any failure after the first
+        write is rolled back by the caller's savepoint together with every
+        write before it.
+        """
+        self.ensure_one()
+        self._desk_assert_operator()
+        token = self._desk_clean_token(operation_token)
+        revision = self._desk_clean_revision(expected_revision)
+        entries = self._desk_clean_lines(line_quantities)
+
+        self._desk_lock_for_mutation()
+        digest = self._desk_digest("prepare", revision, entries)
+        if self._desk_find_replay("prepare", token, digest):
+            return (serialize(self) if serialize else None), True
+        self._desk_assert_current(revision, self.DESK_PREPARE_STATES, policy_check)
+
+        lines_by_id = {line.id: line for line in self.line_ids}
+        if {line_id for line_id, _qty in entries} != set(lines_by_id):
+            raise PharmacyWorkflowError("pharmacy_invalid_payload")
+
+        pending = self.env["hospital.pharmacy.dispense.line"]
+        for line_id, quantity in entries:
+            line = lines_by_id[line_id]
+            floor = line._dispense_intent_floor()
+            if (
+                qty_gt(0.0, quantity)
+                or qty_gt(quantity, line.prescribed_quantity)
+                or qty_gt(floor, quantity)
+            ):
+                raise PharmacyWorkflowError("pharmacy_quantity_invalid")
+            if qty_gt(quantity, floor):
+                pending |= line
+        if not pending:
+            raise PharmacyWorkflowError("pharmacy_no_positive_increment")
+        self._desk_assert_mappings(pending)
+
+        for line_id, quantity in entries:
+            line = lines_by_id[line_id]
+            if not qty_eq(line.dispensed_quantity, quantity):
+                line.write({"dispensed_quantity": quantity})
+        self._desk_sync_billing()
+        self.action_mark_ready()
+        return self._desk_finish("prepare", token, digest, serialize)
+
+    def _desk_validate(self, operation_token, expected_revision,
+                       policy_check=None, serialize=None):
+        """VALIDATE: hand over exactly the prepared increment. Returns
+        (payload, replayed). Quantities are NOT accepted: validation hands over
+        what Prepare billed, and nothing else."""
+        self.ensure_one()
+        self._desk_assert_operator()
+        token = self._desk_clean_token(operation_token)
+        revision = self._desk_clean_revision(expected_revision)
+
+        self._desk_lock_for_mutation(include_stock=True)
+        digest = self._desk_digest("validate", revision)
+        if self._desk_find_replay("validate", token, digest):
+            return (serialize(self) if serialize else None), True
+        self._desk_assert_current(revision, self.DESK_VALIDATE_STATES, policy_check)
+
+        pending = self.line_ids.filtered(
+            lambda line: qty_gt(line.dispensed_quantity, line._dispense_intent_floor())
+        )
+        if not pending:
+            raise PharmacyWorkflowError("pharmacy_no_positive_increment")
+        self._desk_assert_mappings(pending)
+        self._desk_assert_validate_billing()
+        self._desk_assert_validate_stock(pending)
+
+        self.action_mark_dispensed()
+        self.env.flush_all()
+        self.env.invalidate_all()
+        if self.state not in ("partial", "dispensed"):
+            raise PharmacyWorkflowError("pharmacy_mutation_response_failed")
+        self._desk_assert_delivered(pending)
+        return self._desk_finish("validate", token, digest, serialize)
 
     def _audit_summary(self, field_names):
         values = []
@@ -649,6 +1013,22 @@ class HospitalPharmacyDispenseLine(models.Model):
         beneath medication the patient already holds."""
         self.ensure_one()
         return 0.0
+
+    def _desk_line_consistent(self):
+        """Whether this line's quantities agree with each other. Pure read.
+
+        0 < prescribed, 0 <= high-water <= intended <= prescribed. hospital_billing
+        and hospital_inventory extend it with their own evidence rules.
+        """
+        self.ensure_one()
+        prescribed = self.prescribed_quantity or 0.0
+        intended = self.dispensed_quantity or 0.0
+        return (
+            qty_gt(prescribed, 0.0)
+            and not qty_gt(0.0, intended)
+            and not qty_gt(intended, prescribed)
+            and not qty_gt(self._dispense_intent_floor(), intended)
+        )
 
     def _check_intended_quantity(self):
         """0 <= high-water <= intended <= prescribed, per line."""

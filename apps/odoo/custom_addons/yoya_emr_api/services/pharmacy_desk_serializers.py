@@ -462,6 +462,9 @@ def serialize_line(item):
         "consumed_quantity": item["consumed"],
         "remaining_quantity": item["remaining"],
         "pending_increment": item["pending"],
+        # The least cumulative intent the model will accept: what has already
+        # been supplied. Bounds for the Prepare input; the model re-checks.
+        "minimum_intended_quantity": max(item["billed"], item["consumed"]),
         "billing_mapped": item["billing_mapped"],
         "charge_linked": item["charge_linked"],
         "inventory_mapped": item["inventory_mapped"],
@@ -473,7 +476,35 @@ def serialize_line(item):
 # ---------------------------------------------------------------------------
 # Rows and detail
 # ---------------------------------------------------------------------------
-def serialize_queue_row(dispense, classified=None):
+# The lanes from which the next preparation may be made. `blocked` joins them
+# only for stock and store: the pharmacist's answer to a short shelf IS a
+# smaller preparation. A mapping or billing-context block is not fixable at the
+# counter, and preparing would bill a medicine that cannot be supplied.
+PREPARE_LANES = (
+    "awaiting_preparation",
+    "awaiting_clearance",
+    "ready_to_validate",
+    "partially_supplied",
+)
+PREPARE_BLOCK_REASONS = ("stock_insufficient", "pharmacy_store_missing")
+
+
+def record_capabilities(dispense, lane, reason, facts, may_mutate):
+    """What the desk may attempt on THIS record. Derived here, never in the
+    browser, from the same classification the lane comes from. The model
+    re-checks everything under its locks; these only decide what is OFFERED."""
+    if not may_mutate or not facts:
+        return {"can_prepare": False, "can_validate": False}
+    remaining = any(_gt(item["remaining"], 0) for item in facts["lines"])
+    can_prepare = (
+        dispense.state in ("draft", "ready", "partial")
+        and remaining
+        and (lane in PREPARE_LANES or (lane == "blocked" and reason in PREPARE_BLOCK_REASONS))
+    )
+    return {"can_prepare": bool(can_prepare), "can_validate": lane == "ready_to_validate"}
+
+
+def serialize_queue_row(dispense, classified=None, may_mutate=False):
     lane, reason, facts = classified or classify(dispense)
     lines = facts["lines"] if facts else []
     payload = {
@@ -500,14 +531,16 @@ def serialize_queue_row(dispense, classified=None):
         "medicines_summary": _safe(
             lambda: " · ".join(i["line"].medicine_id.name for i in lines) or None
         ),
+        "workflow_revision": dispense.workflow_revision or 0,
     }
+    payload.update(record_capabilities(dispense, lane, reason, facts, may_mutate))
     return payload
 
 
-def serialize_dispense_detail(dispense):
+def serialize_dispense_detail(dispense, may_mutate=False):
     """One dispense in full: a SUPERSET of the queue row."""
     classified = classify(dispense)
-    payload = serialize_queue_row(dispense, classified)
+    payload = serialize_queue_row(dispense, classified, may_mutate)
     facts = classified[2]
     payload.update({
         "notes": _safe(lambda: (dispense.notes or "").strip() or None),
@@ -540,6 +573,9 @@ def serialize_session(env, roles, capabilities):
         "company": {"id": user.company_id.id, "name": user.company_id.name} if user.company_id else None,
         "roles": roles,
         "capabilities": capabilities,
-        # Stated in the payload so no client infers it from an absent flag.
-        "read_only": True,
+        # Stated in the payload so no client infers it from absent flags: true
+        # only for a caller who may attempt neither desk action.
+        "read_only": not (
+            capabilities.get("prepare_dispense") or capabilities.get("validate_dispense")
+        ),
     }

@@ -2,7 +2,25 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { messageFromPayload } from "@/lib/api-error";
+import { codeFromPayload, messageFromPayload } from "@/lib/api-error";
+import {
+  QUEUE_REFRESH_FAILED_NOTICE,
+  UNKNOWN_OUTCOME_NOTICE,
+  draftFromDetail,
+  draftKey,
+  isResolved,
+  needsReload,
+  prepareBody,
+  preparePath,
+  preparePlan,
+  requestSignature,
+  tokenFor,
+  validateBody,
+  validatePath,
+  validationSummary,
+  type PendingOperation,
+  type PrepareDraft,
+} from "@/lib/pharmacy-desk-actions";
 import {
   ACTIVE_LANE_KEY,
   PHARMACY_SESSION_PATH,
@@ -20,32 +38,37 @@ import type {
   PharmacyDeskRoles,
   PharmacyDispenseDetail,
   PharmacyDispenseResponse,
+  PharmacyMutationResponse,
   PharmacyQueueRow,
   PharmacySessionResponse,
   PharmacyWorklistResponse,
   PharmacyWorklistSummary,
 } from "@/types/pharmacy-desk";
 
+import PharmacyConfirmDialog, { type ConfirmMode } from "./pharmacy-confirm-dialog";
 import PharmacyDispensePanel from "./pharmacy-dispense-panel";
 import PharmacyFilters from "./pharmacy-filters";
 import PharmacyQueue from "./pharmacy-queue";
 
+type ActionMessage = { tone: "red" | "amber" | "green"; text: string };
+
 /**
- * The Pharmacy Desk. READ ONLY.
+ * The Pharmacy Desk.
  *
- * QUEUE LEFT, DISPENSE DETAIL RIGHT -- the arrangement the Laboratory,
- * Radiology and Doctor desks use. Selecting a dispense never navigates.
+ * QUEUE LEFT, DISPENSE DETAIL RIGHT, one screen. Every read is a GET to
+ * /api/pharmacy/*; the two writes are POSTs to the prepare and validate BFF
+ * routes, each sent ONCE per confirmed action with one operation token. The
+ * browser never addresses Odoo and never writes a line directly.
  *
- * EVERY CALL IS A GET TO /api/pharmacy/*. The browser holds no Odoo session and
- * knows no Odoo URL; each BFF route is gated upstream by
- * reception_scope.may_pharmacy_desk before it touches a record. There is no
- * write anywhere in this file, because Pharmacy Slice 1 has none.
+ * AFTER A SUCCESSFUL ACTION the server's returned dispense is PINNED and shown
+ * as-is -- it is the authoritative result, even if the dispense has left the
+ * lane being viewed -- and the queue is reconciled from the server. If that
+ * reconciliation fails, the pinned result stays and says so.
  *
  * THE LANE COUNTS COME FROM THE SERVER and are never recounted here.
  */
 export default function PharmacyWorkstation() {
   const [lane, setLane] = useState(ACTIVE_LANE_KEY);
-  // No date default: yesterday's prescription is still today's work.
   const [date, setDate] = useState("");
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -54,11 +77,9 @@ export default function PharmacyWorkstation() {
   const [summary, setSummary] = useState<PharmacyWorklistSummary | null>(null);
   const [truncated, setTruncated] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  /** A dispense just changed by an action: shown whatever the queue does. */
+  const [pinnedId, setPinnedId] = useState<number | null>(null);
   const [detail, setDetail] = useState<PharmacyDispenseDetail | null>(null);
-  /*
-    A failed RE-READ of the dispense already on screen keeps it, marked stale,
-    rather than blanking a panel the pharmacist is reading.
-  */
   const [detailStaleFor, setDetailStaleFor] = useState<number | null>(null);
   const detailRef = useRef<PharmacyDispenseDetail | null>(null);
   useEffect(() => {
@@ -71,7 +92,17 @@ export default function PharmacyWorkstation() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [queueError, setQueueError] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
-  const [refreshToken, setRefreshToken] = useState(0);
+  const [queueToken, setQueueToken] = useState(0);
+  const [detailToken, setDetailToken] = useState(0);
+  /** Set when the queue reload follows a successful action. */
+  const reconcilingRef = useRef(false);
+
+  const [draftState, setDraftState] = useState<{ key: string; draft: PrepareDraft } | null>(null);
+  const [confirm, setConfirm] = useState<ConfirmMode | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [actionMessage, setActionMessage] = useState<ActionMessage | null>(null);
+  /** The request whose outcome is unknown; a retry reuses its token. */
+  const pendingRef = useRef<PendingOperation | null>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search.trim()), 200);
@@ -113,6 +144,8 @@ export default function PharmacyWorkstation() {
 
     async function loadQueue() {
       setQueueLoading(true);
+      const reconciling = reconcilingRef.current;
+      reconcilingRef.current = false;
       try {
         const response = await fetch(
           worklistPath({ status: statuses, date: date || null, q: debouncedSearch || null }),
@@ -122,6 +155,10 @@ export default function PharmacyWorkstation() {
         if (controller.signal.aborted) return;
 
         if (!response.ok || !payload.success) {
+          if (reconciling) {
+            setActionMessage({ tone: "amber", text: QUEUE_REFRESH_FAILED_NOTICE });
+            return;
+          }
           setRows([]);
           setSummary(null);
           setQueueError(messageFromPayload(payload, "Unable to load the pharmacy queue."));
@@ -134,6 +171,10 @@ export default function PharmacyWorkstation() {
         setQueueError(null);
       } catch {
         if (!controller.signal.aborted) {
+          if (reconciling) {
+            setActionMessage({ tone: "amber", text: QUEUE_REFRESH_FAILED_NOTICE });
+            return;
+          }
           setRows([]);
           setSummary(null);
           setQueueError("Unable to reach the pharmacy service.");
@@ -145,15 +186,17 @@ export default function PharmacyWorkstation() {
 
     void loadQueue();
     return () => controller.abort();
-  }, [statuses, date, debouncedSearch, refreshToken]);
+  }, [statuses, date, debouncedSearch, queueToken]);
 
-  /** Instant local narrowing while typing, ahead of the debounced server search. */
   const visibleRows = useMemo(
     () => rows.filter((row) => matchesSearch(row, search)),
     [rows, search],
   );
 
-  const activeId = useMemo(() => resolveSelection(visibleRows, selectedId), [visibleRows, selectedId]);
+  const activeId = useMemo(
+    () => pinnedId ?? resolveSelection(visibleRows, selectedId),
+    [pinnedId, visibleRows, selectedId],
+  );
 
   /* ---------------- selected dispense ---------------- */
   useEffect(() => {
@@ -201,12 +244,128 @@ export default function PharmacyWorkstation() {
 
     void loadDispense(activeId);
     return () => controller.abort();
-  }, [activeId, refreshToken]);
+  }, [activeId, detailToken]);
 
-  const refresh = useCallback(() => setRefreshToken((token) => token + 1), []);
+  const refresh = useCallback(() => {
+    setActionMessage(null);
+    setQueueToken((token) => token + 1);
+    setDetailToken((token) => token + 1);
+  }, []);
+
+  const selectRow = useCallback((dispenseId: number) => {
+    setPinnedId(null);
+    setActionMessage(null);
+    setSelectedId(dispenseId);
+  }, []);
 
   const detailForSelection = visibleDetail(detail, activeId);
   const panelIsLoading = detailIsLoading(activeId, detailLoading, detailForSelection);
+
+  /* ---------------- prepare draft ---------------- */
+  const draft = useMemo<PrepareDraft | null>(() => {
+    if (!detailForSelection || !detailForSelection.can_prepare) return null;
+    const key = draftKey(detailForSelection);
+    return draftState?.key === key ? draftState.draft : draftFromDetail(detailForSelection);
+  }, [detailForSelection, draftState]);
+
+  const plan = useMemo(
+    () => (detailForSelection && draft ? preparePlan(detailForSelection, draft) : null),
+    [detailForSelection, draft],
+  );
+
+  const changeDraft = useCallback(
+    (lineId: number, value: string) => {
+      if (!detailForSelection || !draft) return;
+      setDraftState({ key: draftKey(detailForSelection), draft: { ...draft, [lineId]: value } });
+    },
+    [detailForSelection, draft],
+  );
+
+  /* ---------------- actions ---------------- */
+  const requestPrepare = useCallback(() => {
+    if (!plan || !plan.valid || !plan.hasIncrement) return;
+    setActionMessage(null);
+    setConfirm({ kind: "prepare", plan });
+  }, [plan]);
+
+  const requestValidate = useCallback(() => {
+    if (!detailForSelection) return;
+    setActionMessage(null);
+    setConfirm({ kind: "validate", summary: validationSummary(detailForSelection) });
+  }, [detailForSelection]);
+
+  const submit = useCallback(async () => {
+    const current = detailForSelection;
+    if (!current || !confirm || busy) return;
+
+    const kind = confirm.kind;
+    const unsigned =
+      kind === "prepare" && plan
+        ? prepareBody(current, plan, "")
+        : validateBody(current, "");
+    const signature = requestSignature(unsigned);
+    const token = tokenFor(pendingRef.current, kind, current.id, signature, () =>
+      crypto.randomUUID(),
+    );
+    const body = { ...unsigned, operation_token: token };
+    pendingRef.current = { kind, dispenseId: current.id, signature, token };
+
+    setBusy(true);
+    let status: number | null = null;
+    let payload: ApiEnvelope<PharmacyMutationResponse> | null = null;
+    try {
+      const response = await fetch(kind === "prepare" ? preparePath(current.id) : validatePath(current.id), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        cache: "no-store",
+      });
+      status = response.status;
+      payload = (await response.json()) as ApiEnvelope<PharmacyMutationResponse>;
+    } catch {
+      payload = null;
+    } finally {
+      setBusy(false);
+    }
+
+    if (!isResolved(status, payload !== null)) {
+      // Outcome unknown: keep the token so a retry replays, never re-applies.
+      setActionMessage({ tone: "amber", text: UNKNOWN_OUTCOME_NOTICE });
+      return;
+    }
+    pendingRef.current = null;
+    setConfirm(null);
+
+    if (payload && payload.success) {
+      const updated = payload.data.dispense;
+      setDetail(updated);
+      setDetailStaleFor(null);
+      setDraftState(null);
+      setPinnedId(updated.id);
+      setSelectedId(updated.id);
+      setActionMessage({
+        tone: "green",
+        text:
+          kind === "prepare"
+            ? `Preparation recorded. ${updated.lane_label}.`
+            : `Validation recorded. ${updated.lane_label}.`,
+      });
+      reconcilingRef.current = true;
+      setQueueToken((value) => value + 1);
+      return;
+    }
+
+    const code = codeFromPayload(payload);
+    setActionMessage({
+      tone: "red",
+      text: messageFromPayload(payload, "The pharmacy action could not be completed. Nothing was changed."),
+    });
+    if (needsReload(code)) {
+      setDraftState(null);
+      setDetailToken((value) => value + 1);
+      setQueueToken((value) => value + 1);
+    }
+  }, [busy, confirm, detailForSelection, plan]);
 
   return (
     <div className="flex min-h-[640px] flex-col gap-2 min-[1100px]:h-full min-[1100px]:min-h-0">
@@ -238,16 +397,33 @@ export default function PharmacyWorkstation() {
           loading={queueLoading}
           error={queueError}
           truncated={truncated}
-          onSelect={setSelectedId}
+          onSelect={selectRow}
         />
         <PharmacyDispensePanel
           detail={detailForSelection}
           loading={panelIsLoading}
           error={activeId !== null ? detailError : null}
-          empty={visibleRows.length === 0}
+          empty={visibleRows.length === 0 && pinnedId === null}
           stale={detailForSelection !== null && detailStaleFor === detailForSelection.id}
+          draft={draft}
+          plan={plan}
+          busy={busy}
+          actionMessage={actionMessage}
+          onDraftChange={changeDraft}
+          onRequestPrepare={requestPrepare}
+          onRequestValidate={requestValidate}
         />
       </div>
+
+      {confirm && detailForSelection ? (
+        <PharmacyConfirmDialog
+          detail={detailForSelection}
+          mode={confirm}
+          busy={busy}
+          onBack={() => setConfirm(null)}
+          onConfirm={() => void submit()}
+        />
+      ) : null}
     </div>
   );
 }
