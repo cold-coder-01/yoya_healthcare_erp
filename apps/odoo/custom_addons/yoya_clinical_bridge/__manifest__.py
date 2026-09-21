@@ -47,7 +47,7 @@ stands between a clinician and another patient's imaging.
 This module never modifies ``hospital_management``, ``hospital_billing`` or
 ``hospital_radiology``.
 """,
-    "version": "18.0.1.10.0",
+    "version": "18.0.1.12.0",
     "category": "Healthcare",
     "author": "YOYA Healthcare",
     "license": "LGPL-3",
@@ -74,6 +74,14 @@ This module never modifies ``hospital_management``, ``hospital_billing`` or
         # Without it the picker would offer medicines the patient can be charged
         # for and then not receive, so this is a hard dependency, not a soft one.
         "hospital_inventory",
+        # Admissions Slice 0. security/yoya_admission_nurse_rules.xml scopes a
+        # nurse's inpatient access by ward department, using the
+        # yoya_permitted_department_ids roster THIS module owns -- the rule
+        # cannot live in hospital_admission, which cannot depend on this module
+        # without creating a cycle. Referencing its model_ids by external id
+        # means the load order must be one this manifest asks for rather than
+        # one inherited through hospital_inventory -> hospital_procedure.
+        "hospital_admission",
     ],
     # Access rows before record rules, matching yoya_reception_bridge: the ACL
     # decides WHETHER a group may touch the model at all, the rules decide WHICH
@@ -82,6 +90,7 @@ This module never modifies ``hospital_management``, ``hospital_billing`` or
     "data": [
         "security/ir.model.access.csv",
         "security/yoya_clinical_bridge_security.xml",
+        "security/yoya_admission_nurse_rules.xml",
         "data/consultation_sequence.xml",
         "views/res_users_views.xml",
         "views/patient_evaluation_views.xml",

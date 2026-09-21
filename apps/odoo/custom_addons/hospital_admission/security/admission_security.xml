@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="0">
+
+        <!--
+            Record rules for hospital.admission and hospital.admission.transfer.
+
+            Before this slice there were NONE. Every group holding a read ACL
+            saw every admission in the hospital, which meant a pharmacist and a
+            lab technician could enumerate the entire inpatient census, and a
+            doctor could open, write and discharge a patient they had never
+            met, anywhere in the building.
+
+            HOW ODOO COMBINES THESE  AND WHY IT DECIDES WHAT GOES WHERE
+            ============================================================
+            For one operation Odoo collects the rules whose matching perm_*
+            flag is set and whose groups intersect the user's groups, then ORs
+            their domains together. Global rules (no groups) are ANDed on top;
+            this module defines none.
+
+            The OR has two consequences that shape every decision below.
+
+            1. A GROUP RULE CAN ONLY WIDEN. It can never deny anything to a
+               user who also holds a more permissive group. Genuine denial
+               lives in the ACL layer. That is why pharmacist, lab technician
+               and data protection officer are removed from
+               ir.model.access.csv rather than given a narrow rule here — a
+               rule would have been decoration.
+
+            2. A MODEL WITH NO MATCHING RULE IS UNRESTRICTED. A role that must
+               be scoped therefore needs a rule that names it. There is no
+               "default deny" to fall back on.
+
+            group_hospital_manager implies receptionist + doctor + nurse, and
+            group_hospital_system_administrator implies manager + DPO, so both
+            match the unrestricted rule below and keep full visibility of the
+            whole hospital. That is deliberate: bed management and inpatient
+            oversight are management functions.
+
+            WHERE THE NURSE RULE IS
+            =======================
+            Not here. Scoping a nurse to their wards needs a user-to-department
+            roster, and the only one in this system is
+            res.users.yoya_permitted_department_ids, contributed by
+            yoya_clinical_bridge. hospital_admission cannot depend on that
+            module: yoya_clinical_bridge already depends on this one,
+            transitively, through hospital_inventory -> hospital_procedure ->
+            hospital_admission. Adding the reverse edge would be a dependency
+            cycle and the registry would refuse to load.
+
+            So the nurse rule lives in yoya_clinical_bridge, which already owns
+            the roster and already carries the nurse record rule for
+            hospital.patient.evaluation for exactly the same reason. It is
+            named there, not here, and the two files reference each other in
+            comments so neither can be read alone and misunderstood.
+        -->
+
+        <!-- ============================================================
+             hospital.admission
+             ============================================================ -->
+
+        <record id="rule_hospital_admission_manager" model="ir.rule">
+            <field name="name">Admission: all wards (manager / system administrator)</field>
+            <field name="model_id" ref="model_hospital_admission"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_manager')),
+                                        (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <!--
+            The receptionist IS the admissions desk role: they prepare the
+            admission, confirm it, arrange the transfer and record the
+            discharge. Scoping them to a ward would break the desk, because an
+            admissions clerk's job is precisely to place a patient in whichever
+            ward has a bed. Unrestricted here is the intended scope, not an
+            oversight — and it is bounded by the fact that they hold no write
+            ACL on hospital.bed at all (see PART 16 / _set_occupancy).
+        -->
+        <record id="rule_hospital_admission_receptionist" model="ir.rule">
+            <field name="name">Admission: all wards (receptionist / admissions desk)</field>
+            <field name="model_id" ref="model_hospital_admission"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_receptionist'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <!--
+            The accountant bills the stay after discharge, which needs read and
+            the one write that Generate Admission Bill performs. Unrestricted
+            because billing is a hospital-wide back-office function, and the
+            money on this model is the point of their access rather than a leak
+            through it.
+        -->
+        <record id="rule_hospital_admission_accountant" model="ir.rule">
+            <field name="name">Admission: all wards (accountant)</field>
+            <field name="model_id" ref="model_hospital_admission"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_accountant'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <!--
+            A doctor reaches an admission through a care relationship they
+            actually hold, by any of the three routes this model records one:
+
+              * they are the admitting physician;
+              * the admission came from their appointment;
+              * they are the primary doctor on the visit it belongs to.
+
+            An admission with none of those is not theirs to open, write or
+            discharge. This is the rule that ends hospital-wide arbitrary
+            discharge by any doctor — the ACL gives them write, and before
+            this there was nothing narrowing which rows that write reached.
+        -->
+        <record id="rule_hospital_admission_doctor" model="ir.rule">
+            <field name="name">Admission: my patients (doctor)</field>
+            <field name="model_id" ref="model_hospital_admission"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">
+                ['|', '|',
+                    ('physician_id.user_id', '=', user.id),
+                    ('appointment_id.doctor_id.user_id', '=', user.id),
+                    ('encounter_id.primary_doctor_id.user_id', '=', user.id)
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <!-- ============================================================
+             hospital.admission.transfer
+             ============================================================ -->
+        <!--
+            Transfer history is scoped to the admission it belongs to, so the
+            movement log inherits whatever scope the reader has on the stay
+            itself. Written as a domain on admission_id rather than duplicating
+            the admission predicates, so the two can never drift apart.
+        -->
+
+        <record id="rule_hospital_admission_transfer_manager" model="ir.rule">
+            <field name="name">Admission Transfer: all (manager / system administrator)</field>
+            <field name="model_id" ref="model_hospital_admission_transfer"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_manager')),
+                                        (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_hospital_admission_transfer_receptionist" model="ir.rule">
+            <field name="name">Admission Transfer: all (receptionist / admissions desk)</field>
+            <field name="model_id" ref="model_hospital_admission_transfer"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_receptionist'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_hospital_admission_transfer_accountant" model="ir.rule">
+            <field name="name">Admission Transfer: all (accountant)</field>
+            <field name="model_id" ref="model_hospital_admission_transfer"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_accountant'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_hospital_admission_transfer_doctor" model="ir.rule">
+            <field name="name">Admission Transfer: my patients (doctor)</field>
+            <field name="model_id" ref="model_hospital_admission_transfer"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_doctor'))]"/>
+            <field name="domain_force">
+                [('admission_id', 'any',
+                    ['|', '|',
+                        ('physician_id.user_id', '=', user.id),
+                        ('appointment_id.doctor_id.user_id', '=', user.id),
+                        ('encounter_id.primary_doctor_id.user_id', '=', user.id)
+                    ])
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+    </data>
+</odoo>
