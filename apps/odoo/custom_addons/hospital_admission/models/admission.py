@@ -1,4 +1,9 @@
+import hashlib
+import json
 import math
+import uuid
+
+from psycopg2 import IntegrityError
 
 from odoo import api, fields, models
 from odoo.exceptions import UserError, AccessError, ValidationError
@@ -10,8 +15,18 @@ from .admission_authority import (
     ADMISSION_LOCATION_FIELDS,
     ADMISSION_TIMELINE_FIELDS,
     ENCOUNTER_ADMISSIBLE_STATES,
+    DESK_ADMIT_GROUPS,
+    DESK_REASON_MAX_LENGTH,
+    DESK_REQUEST_OVERSIGHT_GROUPS,
+    DESK_TOKEN_MAX_LENGTH,
+    G_DOCTOR,
+    AdmissionDeskError,
     AdmissionWorkflowError,
     admission_billing_capability,
+    admission_operation_capability,
+    admission_revision_capability,
+    desk_code_for,
+    has_admission_revision_capability,
     admission_location_capability,
     admission_workflow_capability,
     changed_fields,
@@ -126,6 +141,16 @@ class HospitalAdmission(models.Model):
         string="Transfers",
     )
     notes = fields.Text()
+
+    # ── Desk concurrency (Admissions Slice 2) ───────────────────
+    #
+    # Optimistic concurrency for the Admissions / Doctor Desk mutations. Starts
+    # at 0; every successful desk mutation raises it by exactly ONE, and a
+    # replayed request (same operation token) does not raise it again. The
+    # client echoes the revision it loaded; a stale one is refused with
+    # admission_revision_conflict rather than acting on state the operator
+    # never saw. Writable only under admission_revision_capability().
+    workflow_revision = fields.Integer(default=0, readonly=True, copy=False)
 
     # ── Billing linkage ─────────────────────────────────────────
     bill_id = fields.Many2one(
@@ -699,6 +724,9 @@ class HospitalAdmission(models.Model):
                 and not has_admission_workflow_capability()
             ):
                 raise AdmissionWorkflowError("admission_state_write_refused")
+            if vals.get("workflow_revision") and not has_admission_revision_capability():
+                # An admission starts at revision 0; only the desk workflow moves it.
+                raise AdmissionWorkflowError("admission_state_write_refused")
             if vals.get("name", "New") == "New":
                 vals["name"] = (
                     self.env["ir.sequence"].next_by_code("hospital.admission.sequence") or "New"
@@ -758,6 +786,11 @@ class HospitalAdmission(models.Model):
         """
         if not vals:
             return
+
+        if "workflow_revision" in vals and not has_admission_revision_capability():
+            for rec in self:
+                if vals["workflow_revision"] != rec.workflow_revision:
+                    raise AdmissionWorkflowError("admission_state_write_refused")
 
         for rec in self:
             # ── state ──────────────────────────────────────────────
@@ -1152,6 +1185,350 @@ class HospitalAdmission(models.Model):
             ),
         )
         return True
+
+    # ==================================================================
+    # ADMISSIONS SLICE 2: DESK MUTATION AUTHORITY
+    # ==================================================================
+    #
+    # Two acts, and only two:
+    #
+    #   _desk_request_admission  the visit's doctor asks for an inpatient stay.
+    #                            Creates a DRAFT bound to the visit. No bed, no
+    #                            occupancy, no state transition.
+    #   _desk_admit              the admissions clerk puts the draft into a bed.
+    #                            Assign-bed and admit are ONE atomic act: a bed is
+    #                            never held by a draft, so there is no "assigned
+    #                            but not admitted" state for another clerk to trip
+    #                            over, and the bed becomes occupied only when the
+    #                            admission succeeds.
+    #
+    # THE SHAPE, both methods: authorize -> clean the payload -> LOCK -> check
+    # for a replay (same token) -> check the revision and the state on locked,
+    # fresh rows -> act through the Slice 0 authority -> bump the revision once
+    # -> record the operation. Every refusal is an AdmissionDeskError with a
+    # fixed code; the caller's savepoint rolls back every write before it.
+    #
+    # sudo() appears in exactly the places Slice 0 already justified it (the
+    # duplicate / occupancy reads that only ever refuse) plus ONE new one: the
+    # doctor's draft is created under sudo() because the doctor holds no create
+    # ACL on hospital.admission and should not be given one -- a raw RPC create
+    # would skip every check below. The doctor is authorized explicitly against
+    # the appointment first; the elevation covers nothing else.
+
+    @api.model
+    def _desk_clean_token(self, token):
+        if not isinstance(token, str) or not token.strip():
+            raise AdmissionDeskError("admission_invalid_payload")
+        if len(token.strip()) > DESK_TOKEN_MAX_LENGTH:
+            raise AdmissionDeskError("admission_invalid_payload")
+        try:
+            # Canonical form, so a retry that only changes letter case is the
+            # same request.
+            return str(uuid.UUID(token.strip()))
+        except ValueError:
+            raise AdmissionDeskError("admission_invalid_payload") from None
+
+    @api.model
+    def _desk_clean_revision(self, value):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise AdmissionDeskError("admission_invalid_payload")
+        return value
+
+    @api.model
+    def _desk_clean_id(self, value, missing_code="admission_invalid_payload"):
+        if value is None:
+            raise AdmissionDeskError(missing_code)
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise AdmissionDeskError("admission_invalid_payload")
+        return value
+
+    @api.model
+    def _desk_clean_reason(self, value):
+        if not isinstance(value, str) or not value.strip():
+            raise AdmissionDeskError("admission_invalid_payload")
+        if len(value) > DESK_REASON_MAX_LENGTH:
+            raise AdmissionDeskError("admission_invalid_payload")
+        return value.strip()
+
+    @api.model
+    def _desk_digest(self, operation_type, payload):
+        """The canonical request, hashed. The ACTOR is part of it: the same
+        token presented by someone else is a different request, never a replay.
+        Only the hash is stored -- no reason text, no patient, no bed label."""
+        canonical = json.dumps(
+            dict(payload, type=operation_type, actor=self.env.uid),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    @api.model
+    def _desk_find_replay(self, operation_type, token, digest):
+        """The earlier successful operation this request replays, or False.
+
+        sudo() ON THE LOOKUP: a token is globally unique, so "has this token
+        been used" must see every row, not only the caller's. Nothing from the
+        row except its admission is used, and only when it is this caller's own
+        identical request.
+        """
+        operation = self.env["hospital.admission.operation"].sudo().search(
+            [("operation_token", "=", token)], limit=1
+        )
+        if not operation:
+            return False
+        if (
+            operation.operation_type != operation_type
+            or operation.performed_by_id.id != self.env.uid
+            or operation.request_digest != digest
+        ):
+            raise AdmissionDeskError("admission_operation_conflict")
+        return operation
+
+    def _desk_bump_revision(self):
+        self.ensure_one()
+        with admission_revision_capability():
+            self.write({"workflow_revision": self.workflow_revision + 1})
+
+    def _desk_record_operation(self, operation_type, token, digest):
+        """Write the replay row, LAST. A unique-token collision -- a token raced
+        onto another request -- is an operation conflict, not a crash."""
+        self.ensure_one()
+        values = {
+            "admission_id": self.id,
+            "operation_type": operation_type,
+            "operation_token": token,
+            "request_digest": digest,
+            "result_revision": self.workflow_revision,
+            "performed_by_id": self.env.uid,
+        }
+        try:
+            with self.env.cr.savepoint(), admission_operation_capability():
+                self.env["hospital.admission.operation"].sudo().create(values)
+        except IntegrityError:
+            raise AdmissionDeskError("admission_operation_conflict") from None
+
+    def _desk_finish(self, operation_type, token, digest):
+        self._desk_bump_revision()
+        self._audit(
+            patient_id=self.patient_id.id,
+            model_name=self._name,
+            record_id=self.id,
+            action_type="update",
+            description="Admissions Desk %s completed (revision %s)."
+            % (operation_type, self.workflow_revision),
+        )
+        self.env.flush_all()
+        self._desk_record_operation(operation_type, token, digest)
+        self.env.flush_all()
+        return self, False
+
+    # ------------------------------------------------------------------
+    # Doctor: request an admission from a visit
+    # ------------------------------------------------------------------
+    @api.model
+    def _desk_assert_may_request(self, appointment):
+        """The visit's OWN doctor, or oversight. Group membership alone is not
+        enough for a doctor: they must be the doctor on this appointment."""
+        user = self.env.user
+        if any(user.has_group(group) for group in DESK_REQUEST_OVERSIGHT_GROUPS):
+            return
+        if user.has_group(G_DOCTOR) and appointment.sudo().doctor_id.user_id == user:
+            return
+        raise AdmissionDeskError("admission_not_authorized")
+
+    @api.model
+    def _desk_lock_patient_requests(self, patient, company):
+        """Serialize admission requests for ONE patient. A SELECT-then-INSERT
+        cannot stop two concurrent requests: both read "no open admission"
+        before either writes. The same advisory-lock shape as the encounter's
+        single-active-episode guard."""
+        self.env.flush_all()
+        self.env.cr.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            ["hospital.admission.request:%s:%s" % (company.id, patient.id)],
+        )
+        self.env.invalidate_all()
+
+    @api.model
+    def _desk_open_admission_for(self, patient, company):
+        """An open (draft, admitted or transferred) admission for the patient.
+
+        sudo(): the duplicate may sit outside the caller's record rules -- a
+        doctor cannot see another doctor's request -- and a duplicate is a
+        duplicate either way. It only ever refuses.
+
+        WHY DRAFTS COUNT HERE AND NOT IN THE DATABASE INDEX. The partial unique
+        index covers ACTIVE stays only; Slice 0 allows several drafts per
+        patient in the back office. The DESK is stricter on purpose: one open
+        request per patient, so a double submission, or two doctors on one
+        patient, never leaves the admissions clerk choosing between competing
+        drafts.
+        """
+        return self.sudo().search(
+            [
+                ("patient_id", "=", patient.id),
+                ("company_id", "=", company.id),
+                ("state", "in", ["draft"] + list(ADMISSION_ACTIVE_STATES)),
+            ],
+            limit=1,
+        )
+
+    @api.model
+    def _desk_request_admission(self, appointment, reason, operation_token):
+        """Create a DRAFT admission for the visit. Returns (admission, replayed).
+
+        Everything the draft names is DERIVED from the visit -- patient, visit,
+        doctor, appointment, the visit's primary diagnosis -- never from the
+        client. The doctor supplies the reason and nothing else: not a ward, not
+        a bed.
+        """
+        appointment = appointment.sudo()
+        if not appointment.exists():
+            raise AdmissionDeskError("admission_not_found")
+        self._desk_assert_may_request(appointment)
+        token = self._desk_clean_token(operation_token)
+        reason = self._desk_clean_reason(reason)
+
+        encounter = appointment.encounter_id
+        patient = appointment.patient_id
+        if not encounter:
+            raise AdmissionDeskError("admission_encounter_required")
+        company = encounter.company_id
+
+        self._desk_lock_patient_requests(patient, company)
+        digest = self._desk_digest(
+            "request", {"appointment": appointment.id, "reason": reason}
+        )
+        replay = self._desk_find_replay("request", token, digest)
+        if replay:
+            return replay.admission_id.with_env(self.env), True
+
+        closed = episode_closed_states(self.env["hospital.encounter"])
+        if encounter.patient_id != patient:
+            raise AdmissionDeskError("admission_encounter_mismatch")
+        if encounter.state in closed or encounter.state not in ENCOUNTER_ADMISSIBLE_STATES:
+            raise AdmissionDeskError("admission_encounter_required")
+        if self._desk_open_admission_for(patient, company):
+            raise AdmissionDeskError("admission_active_conflict")
+
+        diagnosis = self.env["hospital.patient.diagnosis"].sudo().search(
+            [
+                ("appointment_id", "=", appointment.id),
+                ("patient_id", "=", patient.id),
+                ("diagnosis_type", "=", "primary"),
+            ],
+            order="id desc",
+            limit=1,
+        )
+        values = {
+            "patient_id": patient.id,
+            "encounter_id": encounter.id,
+            "company_id": company.id,
+            "physician_id": appointment.doctor_id.id or False,
+            "appointment_id": appointment.id,
+            "diagnosis_id": diagnosis.id or False,
+            "admission_reason": reason,
+        }
+        # sudo() ON THE CREATE ONLY -- see the section note above. The record is
+        # a draft (the create guard refuses any other state on every channel).
+        try:
+            admission = self.sudo().create(values).with_env(self.env)
+        except AdmissionWorkflowError as error:
+            raise AdmissionDeskError(desk_code_for(error.code)) from None
+        return admission._desk_finish("request", token, digest)
+
+    # ------------------------------------------------------------------
+    # Admissions Desk: admit into a bed (assign + confirm, atomically)
+    # ------------------------------------------------------------------
+    @api.model
+    def _desk_assert_may_admit(self):
+        if not self._desk_may_admit():
+            raise AdmissionDeskError("admission_not_authorized")
+
+    @api.model
+    def _desk_may_admit(self):
+        """Role only; _desk_admit() re-checks everything else under its locks."""
+        user = self.env.user
+        return any(user.has_group(group) for group in DESK_ADMIT_GROUPS)
+
+    def _desk_admit(self, bed_id, operation_token, expected_revision):
+        """Assign the bed and confirm the admission, in one act. Returns
+        (admission, replayed).
+
+        Uses Slice 0's action_confirm_admission() for the admission itself --
+        encounter adoption and retype, the no-active-admission check, the
+        locked availability check and the occupancy write all live there -- so
+        this method adds only what the desk needs on top: authorization, the
+        revision, idempotency, the choice of bed, and one error vocabulary.
+        """
+        self.ensure_one()
+        self._desk_assert_may_admit()
+        token = self._desk_clean_token(operation_token)
+        revision = self._desk_clean_revision(expected_revision)
+        bed_id = self._desk_clean_id(bed_id, missing_code="admission_bed_required")
+
+        # Resolved through the caller's own rights (every admitting role reads
+        # the bed catalogue); a bed that does not exist is simply unavailable.
+        bed = self.env["hospital.bed"].with_context(active_test=False).search(
+            [("id", "=", bed_id)], limit=1
+        )
+        if not bed:
+            raise AdmissionDeskError("admission_bed_unavailable")
+
+        try:
+            # Admission row, then the target bed: Slice 0's lock order.
+            self._lock_for_occupancy(bed)
+        except AdmissionWorkflowError:
+            raise AdmissionDeskError("admission_not_found") from None
+
+        digest = self._desk_digest(
+            "admit", {"admission": self.id, "bed": bed.id, "expected_revision": revision}
+        )
+        if self._desk_find_replay("admit", token, digest):
+            return self, True
+
+        if self.workflow_revision != revision:
+            raise AdmissionDeskError("admission_revision_conflict")
+        if self.state != "draft":
+            raise AdmissionDeskError("admission_invalid_state")
+        if not self.encounter_id:
+            raise AdmissionDeskError("admission_encounter_required")
+
+        # The bed, re-read under the lock. Checked here as well as in Slice 0 so
+        # the desk can tell "not available" from "someone else holds it".
+        held = bool(bed.current_admission_id or bed._active_admission())
+        if held:
+            raise AdmissionDeskError("admission_bed_conflict")
+        if not bed.active or bed.state != "available":
+            raise AdmissionDeskError("admission_bed_unavailable")
+        if bed.company_id and bed.company_id != self.company_id:
+            raise AdmissionDeskError("admission_company_mismatch")
+
+        try:
+            # A draft's location is freely editable (Slice 0, tier one). The
+            # coherence constraint validates the hierarchy on this write.
+            self.write(
+                {
+                    "ward_id": bed.ward_id.id,
+                    "room_id": bed.room_id.id,
+                    "bed_id": bed.id,
+                    # The stay starts NOW, not when the doctor asked for it.
+                    "admission_date": fields.Datetime.now(),
+                }
+            )
+            self.action_confirm_admission()
+        except AdmissionWorkflowError as error:
+            raise AdmissionDeskError(desk_code_for(error.code)) from None
+
+        self.env.flush_all()
+        self.env.invalidate_all()
+        if (
+            self.state != "admitted"
+            or bed.state != "occupied"
+            or bed.current_admission_id != self
+        ):
+            raise AdmissionDeskError("admission_integrity_error")
+        return self._desk_finish("admit", token, digest)
 
     def unlink(self):
         for rec in self:

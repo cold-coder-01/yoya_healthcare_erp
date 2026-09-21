@@ -2,7 +2,8 @@
  * THE ADMISSIONS BFF: route set and upstream shape, held at the source (the
  * technique pharmacy-bff-contract.test.ts uses).
  *
- *   * Exactly five routes, all GET. Slice 1 has no mutation route at all.
+ *   * Five read routes (GET) and ONE mutation route (Slice 2): POST
+ *     [id]/admit, whose body is rebuilt from exactly three fields.
  *   * Every route requires the existing Odoo session and forwards through the
  *     shared reception helpers (timeout, session cookie, fixed error mapping).
  *   * No host or port is named; the browser never reaches Odoo.
@@ -41,10 +42,13 @@ function listRoutes(dir: URL, prefix = ""): string[] {
   return found;
 }
 
-test("exactly five read routes exist and nothing else", () => {
+const ADMIT = read("app/api/admissions/[id]/admit/route.ts");
+
+test("five read routes and the one admit route exist, and nothing else", () => {
   const root = new URL("../app/api/admissions/", import.meta.url);
   assert.ok(existsSync(root));
   assert.deepEqual(listRoutes(root).sort(), [
+    "[id]/admit/route.ts",
     "[id]/route.ts",
     "beds/route.ts",
     "session/route.ts",
@@ -72,13 +76,16 @@ test("every route requires the Odoo session and forwards through the shared help
   }
 });
 
-test("the utils bind GET only, keep the session server-side and name no host", () => {
+test("the utils bind GET and one POST helper, keep the session server-side and name no host", () => {
   const emitted = code(UTILS);
   assert.match(UTILS, /^import "server-only";/m);
   assert.ok(emitted.includes('callOdooApiWithLabel<T>(sessionId, path, "GET", undefined, ADMISSIONS_SERVICE_LABEL)'));
-  assert.doesNotMatch(emitted, /"POST"|postOdoo|readJsonObject|readMutationBody/);
+  assert.ok(emitted.includes('callOdooApiWithLabel<T>(sessionId, path, "POST", body, ADMISSIONS_SERVICE_LABEL)'));
+  assert.equal((emitted.match(/"POST"/g) ?? []).length, 1);
+  assert.doesNotMatch(emitted, /"PUT"|"PATCH"|"DELETE"/);
+  assert.ok(emitted.includes('errorResponse("admission_invalid_payload"'));
   assert.ok(emitted.includes('export const ADMISSIONS_API = "/yoya-emr/api/v1/admissions"'));
-  for (const source of [UTILS, ...Object.values(ROUTES).map((r) => r.source)]) {
+  for (const source of [UTILS, ADMIT, ...Object.values(ROUTES).map((r) => r.source)]) {
     assert.doesNotMatch(code(source), /https?:\/\/|localhost|:8069|:8171/);
   }
 });
@@ -87,4 +94,16 @@ test("the detail route validates its id before calling upstream", () => {
   const emitted = code(ROUTES.detail.source);
   assert.ok(emitted.indexOf("parseAdmissionId(id)") < emitted.indexOf("callOdooApi<"));
   assert.ok(code(UTILS).includes("Number.isInteger(admissionId) || admissionId <= 0"));
+});
+
+test("the admit route is POST only, validates the id, and forwards the rebuilt body", () => {
+  const emitted = code(ADMIT);
+  assert.match(emitted, /export async function POST\(/);
+  assert.doesNotMatch(emitted, /export async function (GET|PUT|PATCH|DELETE)\(/);
+  assert.ok(emitted.includes("await requireOdooSession()"));
+  assert.ok(emitted.indexOf("parseAdmissionId(id)") < emitted.indexOf("readMutationBody(request)"));
+  assert.ok(emitted.indexOf("readMutationBody(request)") < emitted.indexOf("postOdooApiWithBody<"));
+  assert.ok(emitted.includes("`${ADMISSIONS_API}/${parsed.value}/admit`"));
+  assert.ok(emitted.includes("pickAdmitBody(body.body)"));
+  assert.doesNotMatch(emitted, /body: body\.body|\.\.\.body/);
 });

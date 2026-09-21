@@ -1,8 +1,8 @@
 /**
  * Shared bits for the Admissions Desk BFF routes (Admissions Slice 1).
  *
- * READ ONLY. Every route here is a GET; there is no body helper and no POST
- * binding, because Slice 1 registers no mutation upstream.
+ * READS ARE GET. The ONE write (Slice 2) is POST .../admit, whose body is
+ * rebuilt from exactly three fields by pickAdmitBody (see _body.ts).
  *
  * `server-only` keeps these -- and the Odoo session cookie they read -- out of
  * every client bundle. The browser never holds an Odoo session and never has a
@@ -47,3 +47,31 @@ export function parseAdmissionId(raw: string) {
   }
   return { ok: true as const, value: admissionId };
 }
+
+/** A POST with a rebuilt body, bound to this desk's label. Used ONLY by admit. */
+export function postOdooApiWithBody<T>(
+  sessionId: string,
+  path: string,
+  body: Record<string, unknown>,
+) {
+  return callOdooApiWithLabel<T>(sessionId, path, "POST", body, ADMISSIONS_SERVICE_LABEL);
+}
+
+const INVALID_PAYLOAD = () =>
+  errorResponse("admission_invalid_payload", "The admission request is not valid.", 400);
+
+/** The request body as a JSON object, or the desk's fixed 400. */
+export async function readMutationBody(request: Request) {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return { ok: false as const, response: INVALID_PAYLOAD() };
+  }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return { ok: false as const, response: INVALID_PAYLOAD() };
+  }
+  return { ok: true as const, body: body as Record<string, unknown> };
+}
+
+export { pickAdmitBody, pickAdmissionRequestBody } from "./_body";

@@ -82,6 +82,56 @@ class HospitalEncounter(models.Model):
             )
         )
 
+    def _open_admissions(self):
+        """Admissions still OPEN against this encounter: a draft request not yet
+        admitted, or a patient in a bed. sudo() for the reason
+        _active_admissions() gives; it only ever defers or refuses."""
+        self.ensure_one()
+        return (
+            self.env["hospital.admission"]
+            .sudo()
+            .search(
+                [
+                    ("encounter_id", "=", self.id),
+                    ("state", "in", ["draft"] + list(ADMISSION_ACTIVE_STATES)),
+                ],
+                limit=1,
+            )
+        )
+
+    def action_complete(self):
+        """A visit with an open admission is NOT finished when its consultation is.
+
+        THE FLOW THIS PROTECTS (Admissions Slice 2). A doctor requests an
+        admission during a consultation and then completes the consultation --
+        the normal order. Completing the consultation runs
+        hospital.appointment.action_done(), which (hospital_billing) calls this
+        method and would move the visit active -> completed. A completed visit
+        is a CLOSED episode, so the admissions desk could then no longer admit
+        from it, and a patient already in a bed would be stranded on a closed
+        episode (the Slice 1 needs-review reason `encounter_closed`).
+
+        So an encounter carrying an open admission -- draft or active -- is
+        left active. The consultation, the appointment and the consultation
+        charge all finish exactly as before; only the EPISODE stays open,
+        because it has become an inpatient stay. Completing it is the discharge
+        workflow's job (Slice 4), not the outpatient consultation's.
+
+        Every other encounter completes exactly as before. Nothing here raises,
+        so completing a consultation can never be blocked by an admission.
+        """
+        deferred = self.filtered(lambda encounter: encounter._open_admissions())
+        for encounter in deferred:
+            encounter._log_audit(
+                "update",
+                "Completion of visit %s deferred: an inpatient admission is open "
+                "against it." % encounter.name,
+            )
+        remaining = self - deferred
+        if remaining:
+            return super(HospitalEncounter, remaining).action_complete()
+        return True
+
     def _check_can_close(self):
         """hospital_management's extension hook. Runs inside action_close()."""
         result = super()._check_can_close()

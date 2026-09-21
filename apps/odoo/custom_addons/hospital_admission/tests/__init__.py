@@ -6,3 +6,4 @@ from . import test_admission_security
 from . import test_admission_transfer
 from . import test_admission_runtime
 from . import test_admission_rule_atomicity
+from . import test_admission_desk_mutations

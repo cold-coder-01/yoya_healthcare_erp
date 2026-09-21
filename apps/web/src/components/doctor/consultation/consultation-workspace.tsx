@@ -42,6 +42,7 @@ import type {
 import { CONSULTATION_CONFLICT_CODE } from "@/types/doctor-consultation";
 
 import { PriorityBadge, StageBadge } from "../doctor-badges";
+import DoctorAdmissionCard from "../doctor-admission-card";
 import DoctorVitalsGrid from "../doctor-vitals-grid";
 import DiagnosisWorkspace from "./diagnosis-workspace";
 import OrdersWorkspace from "./orders-workspace";
@@ -644,6 +645,13 @@ export default function ConsultationWorkspace({
       <div className="shrink-0 border-b border-slate-200 bg-slate-50/80 px-3 py-1.5">
         <VitalsStrip vitals={triage.vitals} />
       </div>
+
+      {/* ---- Admission: request only; the Admissions Desk assigns the bed ---- */}
+      {detail.admission ? (
+        <div className="shrink-0 border-b border-slate-200 bg-white px-3 py-1.5">
+          <DoctorAdmissionCard key={appointmentId} appointmentId={appointmentId} summary={detail.admission} compact />
+        </div>
+      ) : null}
 
       {alerts.length > 0 ? (
         <div className="shrink-0 border-b border-red-200 bg-red-50/70 px-3 py-1.5">

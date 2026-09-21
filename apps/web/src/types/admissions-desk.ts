@@ -8,8 +8,9 @@
  * (boolean, or null when the admission has no visit to judge) and a clearance
  * Selection KEY. No rate, fee, charge, bill or payer.
  *
- * NO WORKFLOW. Every mutation capability is present and always false in this
- * slice; there is no route behind it.
+ * ONE WORKFLOW ACT (Slice 2): admit, which assigns the bed and confirms the
+ * admission together. Transfer and discharge are present and always false;
+ * there is no route behind them.
  */
 import type { ApiEnvelope } from "./clinical";
 
@@ -123,6 +124,10 @@ export type AdmissionWorklistRow = {
   reference: string;
   state: AdmissionState;
   state_label: string;
+  /** Optimistic concurrency: echoed back as expected_revision by admit. */
+  workflow_revision: number;
+  /** AFFORDANCE ONLY: the role may admit and this record's lane allows it. */
+  can_admit: boolean;
   lane: AdmissionLane;
   lane_label: string;
   review_reasons: NeedsReviewReason[];
@@ -272,11 +277,87 @@ export type AdmissionDeskCapabilities = {
   admissions_desk: boolean;
   view_worklist: boolean;
   view_bed_board: boolean;
-  /** Always false in Slice 1: no route exists behind these. */
-  admit: false;
-  assign_bed: false;
+  /** Slice 2: admit = assign bed + confirm, one act. Admitting roles only. */
+  admit: boolean;
+  assign_bed: boolean;
+  /** Always false: no route exists behind these yet. */
   transfer: false;
   discharge: false;
+};
+
+/** POST /api/admissions/[id]/admit */
+export type AdmissionAdmitRequest = {
+  operation_token: string;
+  expected_revision: number;
+  bed_id: number;
+};
+
+export type AdmissionMutationOperation = {
+  type: "admit" | "request";
+  token: string;
+  replayed: boolean;
+};
+
+export type AdmissionAdmitResponse = {
+  admission: AdmissionDetail;
+  capabilities: AdmissionDeskCapabilities;
+  workflow_revision: number;
+  operation: AdmissionMutationOperation;
+};
+
+/** The fixed error codes both desks' admission mutations speak. */
+export type AdmissionMutationErrorCode =
+  | "admission_not_found"
+  | "admission_not_authorized"
+  | "admission_invalid_payload"
+  | "admission_revision_conflict"
+  | "admission_operation_conflict"
+  | "admission_invalid_state"
+  | "admission_encounter_required"
+  | "admission_encounter_mismatch"
+  | "admission_company_mismatch"
+  | "admission_bed_required"
+  | "admission_bed_unavailable"
+  | "admission_bed_conflict"
+  | "admission_location_mismatch"
+  | "admission_active_conflict"
+  | "admission_integrity_error"
+  | "admission_mutation_failed";
+
+/* ------------------------------------------------------------------ *
+ * Doctor Desk handoff (Slice 2)
+ * ------------------------------------------------------------------ */
+
+export type DoctorAdmissionStatus = "none" | "requested" | "admitted" | "discharged" | "cancelled";
+
+export type DoctorAdmissionBlock = "not_authorized" | "visit_not_open" | "open_admission_exists";
+
+/** The admission block on the Doctor Desk visit detail. Never an admissions
+ *  desk: no lanes, no bed board, no transfer or discharge. */
+export type DoctorAdmissionSummary = {
+  status: DoctorAdmissionStatus;
+  status_label: string;
+  admission: {
+    id: number;
+    reference: string;
+    state: AdmissionState;
+    state_label: string;
+    requested_at: string | null;
+    admitted_at: string | null;
+    location: AdmissionLocation;
+    length_of_stay: LengthOfStay | null;
+  } | null;
+  can_request: boolean;
+  request_blocked_reason: DoctorAdmissionBlock | null;
+  request_blocked_message: string | null;
+};
+
+/** POST /api/doctor/visits/[appointmentId]/admission-request */
+export type DoctorAdmissionRequest = { operation_token: string; reason: string };
+
+export type DoctorAdmissionRequestResponse = {
+  admission: DoctorAdmissionSummary;
+  operation: AdmissionMutationOperation;
 };
 
 export type AdmissionDeskRoles = {

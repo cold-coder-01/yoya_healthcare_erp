@@ -438,11 +438,21 @@ def transfer_counts(admissions):
     return counts
 
 
-def serialize_row(admission, lane, reasons, encounter, transfers=0, now=None):
+# Lanes an admission may be admitted from (Slice 2). A draft with or without a
+# bed named; never needs_review -- a broken record is reviewed, not admitted.
+ADMITTABLE_LANES = ("awaiting_bed", "draft")
+
+
+def serialize_row(admission, lane, reasons, encounter, transfers=0, now=None, may_admit=False):
     return {
         "id": admission.id,
         "reference": admission.name,
         "state": admission.state,
+        # Optimistic concurrency: echoed back by the admit action.
+        "workflow_revision": admission.workflow_revision,
+        # AFFORDANCE ONLY. The role may admit AND this record is in a lane that
+        # can be admitted. The model re-checks every condition under its locks.
+        "can_admit": bool(may_admit and lane in ADMITTABLE_LANES),
         "state_label": _selection_label(admission, "state"),
         "lane": lane,
         "lane_label": lane_label(lane),
@@ -516,8 +526,8 @@ def serialize_transfer(transfer):
     }
 
 
-def serialize_detail(admission):
-    """One admission, read-only, for a caller who can already read it."""
+def serialize_detail(admission, may_admit=False):
+    """One admission, for a caller who can already read it."""
     env = admission.env
     [(record, lane, reasons, encounter)] = classify_batch(admission)
     bed = admission.bed_id
@@ -559,7 +569,9 @@ def serialize_detail(admission):
         }
 
     return dict(
-        serialize_row(admission, lane, reasons, encounter, transfers=len(transfers)),
+        serialize_row(
+            admission, lane, reasons, encounter, transfers=len(transfers), may_admit=may_admit
+        ),
         admission_reason=admission.admission_reason or None,
         diagnosis=diagnosis,
         bed_ownership=ownership,
@@ -800,4 +812,100 @@ def serialize_session(env, roles, capabilities):
         "permitted_ward_ids": wards,
         "capabilities": capabilities,
         "read_only": True,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Doctor Desk handoff (Admissions Slice 2)
+# ---------------------------------------------------------------------------
+# What the DOCTOR sees about admission on a visit: whether one was requested,
+# whether the patient is now an inpatient and where, and whether they may
+# request one. Deliberately NOT an Admissions Desk: no lanes, no bed board, no
+# transfer or discharge.
+DOCTOR_ADMISSION_STATUS = {
+    "draft": ("requested", "Admission requested - awaiting bed"),
+    "admitted": ("admitted", "Inpatient - admitted"),
+    "transferred": ("admitted", "Inpatient - admitted"),
+    "discharged": ("discharged", "Discharged"),
+    "cancelled": ("cancelled", "Admission request cancelled"),
+}
+
+# Why a doctor may NOT request, as fixed keys and sentences. Nothing here names
+# another patient, doctor or ward.
+DOCTOR_REQUEST_BLOCKS = {
+    "not_authorized": "Only the visit's own doctor may request an admission.",
+    "visit_not_open": "This visit is not open, so an admission cannot be requested from it.",
+    "open_admission_exists": "This patient already has an open admission request or an active admission.",
+}
+
+
+def _doctor_may_request(appointment, visible_open):
+    """(allowed, block_key). AFFORDANCE ONLY -- _desk_request_admission() is the
+    authority and re-checks every condition under its lock."""
+    from odoo.addons.hospital_admission.models.admission_authority import (
+        ENCOUNTER_ADMISSIBLE_STATES,
+        AdmissionDeskError,
+    )
+
+    Admission = appointment.env["hospital.admission"]
+    try:
+        Admission._desk_assert_may_request(appointment)
+    except AdmissionDeskError:
+        return False, "not_authorized"
+    visit = appointment.sudo().encounter_id
+    if not visit or visit.state not in ENCOUNTER_ADMISSIBLE_STATES:
+        return False, "visit_not_open"
+    # The duplicate check is the model's own, read as a BOOLEAN: an open
+    # admission the doctor cannot see still blocks, without being described.
+    if visible_open or Admission._desk_open_admission_for(visit.patient_id, visit.company_id):
+        return False, "open_admission_exists"
+    return True, None
+
+
+def serialize_doctor_admission(appointment, now=None):
+    """The admission block on the Doctor Desk visit detail.
+
+    The admission itself is read under the DOCTOR's own record rules (the
+    admitting physician, the appointment's doctor, or the visit's primary
+    doctor). The one elevated read is the boolean duplicate check above.
+    """
+    env = appointment.env
+    Admission = env["hospital.admission"].with_context(active_test=False)
+    visit_id = appointment.sudo().encounter_id.id
+    domain = [("appointment_id", "=", appointment.id)]
+    if visit_id:
+        domain = ["|", ("appointment_id", "=", appointment.id), ("encounter_id", "=", visit_id)]
+    try:
+        admission = Admission.search(domain, order="id desc", limit=1)
+    except AccessError:
+        admission = Admission
+
+    open_states = ("draft",) + tuple(ADMISSION_ACTIVE_STATES)
+    can_request, block = _doctor_may_request(
+        appointment, bool(admission and admission.state in open_states)
+    )
+    status, label = DOCTOR_ADMISSION_STATUS.get(admission.state, ("none", "Not admitted")) if admission else ("none", "Not admitted")
+
+    return {
+        "status": status,
+        "status_label": label,
+        "admission": (
+            {
+                "id": admission.id,
+                "reference": admission.name,
+                "state": admission.state,
+                "state_label": _selection_label(admission, "state"),
+                "requested_at": datetime_value(admission.create_date),
+                "admitted_at": (
+                    datetime_value(admission.admission_date)
+                    if admission.state in ADMISSION_ACTIVE_STATES + ("discharged",) else None
+                ),
+                "location": serialize_location(admission),
+                "length_of_stay": length_of_stay(admission, now),
+            }
+            if admission else None
+        ),
+        "can_request": can_request,
+        "request_blocked_reason": block,
+        "request_blocked_message": DOCTOR_REQUEST_BLOCKS.get(block) if block else None,
     }

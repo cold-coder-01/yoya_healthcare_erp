@@ -361,3 +361,145 @@ def changed_fields(record, field_names, vals):
         for name in field_names
         if name in vals and not same_value(record, name, vals[name])
     ]
+
+
+# ===========================================================================
+# ADMISSIONS SLICE 2: desk mutation authority (request, admit)
+# ===========================================================================
+#
+# Two more capabilities, the Pharmacy Slice 2 shape exactly:
+#
+#   * revision  -- raised ONLY by HospitalAdmission._desk_bump_revision(),
+#                  opens hospital.admission.workflow_revision and nothing else;
+#   * operation -- raised ONLY by _desk_record_operation(), opens the creation
+#                  of one hospital.admission.operation row.
+#
+# Neither is a context flag and neither honours sudo(), for the reason at the
+# top of this file.
+_admission_revision_var = contextvars.ContextVar(
+    "hospital_admission_revision_capability", default=False
+)
+_admission_operation_var = contextvars.ContextVar(
+    "hospital_admission_operation_capability", default=False
+)
+
+
+def admission_revision_capability():
+    """Raised ONLY by HospitalAdmission._desk_bump_revision()."""
+    return _raised(_admission_revision_var)
+
+
+def has_admission_revision_capability():
+    return _admission_revision_var.get()
+
+
+def admission_operation_capability():
+    """Raised ONLY by HospitalAdmission._desk_record_operation()."""
+    return _raised(_admission_operation_var)
+
+
+def has_admission_operation_capability():
+    return _admission_operation_var.get()
+
+
+# WHO MAY DO WHAT, decided in the MODEL so every channel obeys it. The HTTP gate
+# in yoya_emr_api is a fail-fast in front of these, never the only control.
+G_RECEPTIONIST = "hospital_management.group_hospital_receptionist"
+G_DOCTOR = "hospital_management.group_hospital_doctor"
+G_MANAGER = "hospital_management.group_hospital_manager"
+G_SYSADMIN = "hospital_management.group_hospital_system_administrator"
+
+# Admit a patient into a bed. The admissions clerk and oversight. NOT the
+# doctor (who requests; a physical bed is not a clinical decision) and NOT the
+# ward nurse (who works the census, and has no documented bed-assignment duty).
+DESK_ADMIT_GROUPS = (G_RECEPTIONIST, G_MANAGER, G_SYSADMIN)
+
+# Request an admission from a visit. The visit's OWN doctor, or oversight. The
+# model checks the doctor half against the appointment, not just the group.
+DESK_REQUEST_OVERSIGHT_GROUPS = (G_MANAGER, G_SYSADMIN)
+
+DESK_TOKEN_MAX_LENGTH = 64
+DESK_REASON_MAX_LENGTH = 2000
+
+# The fixed, amount-free vocabulary every Admissions Desk / Doctor Desk
+# admission mutation speaks. The MODEL chooses the code; the HTTP layer maps it
+# to a status. No sentence names a patient, an amount or a record of another
+# user.
+DESK_ERROR_MESSAGES = {
+    "admission_not_found": "Admission not found.",
+    "admission_not_authorized": "Your role may not perform this admission action.",
+    "admission_invalid_payload": "The admission request is not valid.",
+    "admission_revision_conflict": (
+        "This admission changed after it was loaded. Refresh it and review the "
+        "latest state."
+    ),
+    "admission_operation_conflict": (
+        "This operation token was already used for a different request."
+    ),
+    "admission_invalid_state": (
+        "This admission is no longer in a state that allows this action."
+    ),
+    "admission_encounter_required": (
+        "This patient has no open visit to admit from. The visit may have been "
+        "completed or cancelled."
+    ),
+    "admission_encounter_mismatch": (
+        "The visit linked to this admission does not match the patient, or the "
+        "patient has more than one open visit. It must be reviewed first."
+    ),
+    "admission_company_mismatch": (
+        "The visit, ward or bed belongs to a different company than this admission."
+    ),
+    "admission_bed_required": "Choose a bed to admit the patient into.",
+    "admission_bed_unavailable": (
+        "That bed is not available. Refresh the bed board and choose another."
+    ),
+    "admission_bed_conflict": (
+        "That bed was just taken by another admission. Refresh the bed board and "
+        "choose another."
+    ),
+    "admission_location_mismatch": (
+        "The ward, room and bed do not belong together."
+    ),
+    "admission_active_conflict": (
+        "This patient already has an open admission request or an active "
+        "admission."
+    ),
+    "admission_integrity_error": (
+        "This admission contains inconsistent data and must be reviewed before "
+        "it can be admitted."
+    ),
+}
+
+
+class AdmissionDeskError(UserError):
+    """A desk mutation refusal with a FIXED code and FIXED wording.
+
+    A UserError, so every caller that already rolls back on UserError keeps
+    doing so. Its message is always the fixed sentence for its code.
+    """
+
+    def __init__(self, code):
+        self.code = code
+        super().__init__(DESK_ERROR_MESSAGES[code])
+
+
+# Slice 0's workflow codes, translated into the desk contract. One table, so
+# a refusal from the underlying authority always surfaces as the same desk code.
+SLICE0_TO_DESK = {
+    "admission_encounter_required": "admission_encounter_required",
+    "admission_encounter_closed": "admission_encounter_required",
+    "admission_encounter_ambiguous": "admission_encounter_mismatch",
+    "admission_encounter_patient_mismatch": "admission_encounter_mismatch",
+    "admission_encounter_company_mismatch": "admission_company_mismatch",
+    "admission_company_mismatch": "admission_company_mismatch",
+    "admission_bed_not_available": "admission_bed_unavailable",
+    "admission_bed_owned_by_other": "admission_bed_conflict",
+    "admission_duplicate_bed_in_batch": "admission_bed_conflict",
+    "admission_location_incoherent": "admission_location_mismatch",
+    "admission_patient_already_admitted": "admission_active_conflict",
+}
+
+
+def desk_code_for(slice0_code):
+    return SLICE0_TO_DESK.get(slice0_code, "admission_integrity_error")

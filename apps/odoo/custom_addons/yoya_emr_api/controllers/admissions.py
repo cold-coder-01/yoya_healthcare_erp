@@ -1,14 +1,29 @@
-"""Admissions Desk API (Admissions Slice 1). READ ONLY.
+"""Admissions Desk API (Admissions Slices 1-2).
 
-    GET /yoya-emr/api/v1/admissions/session
-    GET /yoya-emr/api/v1/admissions/worklist   ?lane= &ward_id= &q= &limit=
-    GET /yoya-emr/api/v1/admissions/<id>
-    GET /yoya-emr/api/v1/admissions/wards
-    GET /yoya-emr/api/v1/admissions/beds       ?ward_id= &room_id= &state= &q=
+    GET  /yoya-emr/api/v1/admissions/session
+    GET  /yoya-emr/api/v1/admissions/worklist   ?lane= &ward_id= &q= &limit=
+    GET  /yoya-emr/api/v1/admissions/<id>
+    GET  /yoya-emr/api/v1/admissions/wards
+    GET  /yoya-emr/api/v1/admissions/beds       ?ward_id= &room_id= &state= &q=
+    POST /yoya-emr/api/v1/admissions/<id>/admit (Slice 2)
 
-NO ROUTE HERE WRITES. Admit, assign bed, transfer, discharge and cancel are not
-registered; every capability flag for them is False. Nothing here creates an
-audit row either -- viewing is not an act the audit trail records.
+ONE WRITE. Admit assigns the bed and confirms the admission as a single atomic
+act; there is no separate assign-bed route, so a bed is never "held" by a
+draft. Transfer, discharge and cancel are not registered. The Doctor Desk's
+admission REQUEST lives in controllers/doctor.py, beside the visit it belongs
+to. Viewing creates no audit row.
+
+THE CONTROLLER DECIDES NOTHING ABOUT WORKFLOW. The admit route checks the role,
+resolves the admission through the caller's own record rules, and hands the
+payload to hospital.admission._desk_admit(), which owns locking, idempotency,
+the revision check, the bed checks and the Slice 0 confirmation. The
+controller writes no field and calls no sudo().
+
+ONE SAVEPOINT PER MUTATION: the model call and the response serialization run
+inside it; refusals are mapped to fixed codes OUTSIDE it, after everything has
+rolled back. Serialization and lock failures are re-raised untouched so the
+HTTP layer replays the request in a fresh transaction, where the operation
+token answers it.
 
 THREE INDEPENDENT CONTROLS, IN THIS ORDER
 -----------------------------------------
@@ -32,12 +47,25 @@ filter and the lane counts are all derived from that one pass.
 import functools
 import logging
 
+from psycopg2 import IntegrityError
+
 from odoo import http
-from odoo.exceptions import AccessError, UserError
+from odoo.exceptions import AccessError, UserError, ValidationError
 from odoo.http import request
 from odoo.osv import expression
 from odoo.service.model import PG_CONCURRENCY_EXCEPTIONS_TO_RETRY
 
+from odoo.addons.hospital_admission.models.admission_authority import (
+    AdmissionDeskError,
+)
+
+from ..services.admission_mutations import (
+    ADMIT_KEYS,
+    canonical_token,
+    desk_error,
+    integrity_code,
+    mutation_body,
+)
 from ..services.admissions_desk_serializers import (
     ACTIVE_LANES,
     BED_STATES,
@@ -56,11 +84,13 @@ from ..services.api_response import (
     api_error_response,
     error_response,
     parse_int_param,
+    read_json_body,
     success_response,
 )
 from ..services.reception_scope import (
     admissions_desk_capability_flags,
     admissions_desk_role_flags,
+    may_admissions_admit,
     may_admissions_desk,
 )
 
@@ -194,6 +224,18 @@ def _sort_key(item):
     return (LANE_ORDER.index(lane), -(stamp.timestamp() if stamp else 0), -admission.id)
 
 
+def _load_admission_for_mutation(env, admission_id):
+    """search(), not browse(): hidden and missing are the same 404."""
+    if admission_id <= 0:
+        raise desk_error("admission_not_found")
+    record = env["hospital.admission"].with_context(active_test=False).search(
+        [("id", "=", admission_id)], limit=1
+    )
+    if not record:
+        raise desk_error("admission_not_found")
+    return record
+
+
 class YoyaEmrAdmissionsController(http.Controller):
 
     @http.route("%s/session" % ADMISSIONS_API, type="http", auth="user", methods=["GET"], csrf=False)
@@ -250,8 +292,12 @@ class YoyaEmrAdmissionsController(http.Controller):
 
         admissions = env["hospital.admission"].browse([item[0].id for item in page])
         counts = transfer_counts(admissions)
+        may_admit = may_admissions_admit(env)
         rows = [
-            serialize_row(admission, lane, reasons, encounter, counts.get(admission.id, 0))
+            serialize_row(
+                admission, lane, reasons, encounter, counts.get(admission.id, 0),
+                may_admit=may_admit,
+            )
             for admission, lane, reasons, encounter in page
         ]
 
@@ -348,6 +394,65 @@ class YoyaEmrAdmissionsController(http.Controller):
         if not record:
             raise ApiError("admission_not_found", "Admission not found.", 404)
         return success_response({
-            "admission": serialize_detail(record),
+            "admission": serialize_detail(record, may_admit=may_admissions_admit(env)),
             "capabilities": admissions_desk_capability_flags(env),
+        })
+
+    # ------------------------------------------------------------------
+    # Slice 2: admit (assign bed + confirm, atomically)
+    # ------------------------------------------------------------------
+    @http.route(
+        "%s/<int:admission_id>/admit" % ADMISSIONS_API,
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @admissions_endpoint
+    def admissions_admit(self, admission_id, **params):
+        """Put a draft admission into a bed.
+
+        Body: {"operation_token": uuid, "expected_revision": int, "bed_id": int}
+        Exactly those keys. The ward and room are derived from the bed.
+        """
+        env = request.env
+        # THE ROLE GATE, before the admission is resolved: a refused caller
+        # learns nothing about whether the id exists.
+        if not may_admissions_admit(env):
+            raise desk_error("admission_not_authorized")
+        body = mutation_body(ADMIT_KEYS)
+        record = _load_admission_for_mutation(env, admission_id)
+
+        try:
+            with env.cr.savepoint():
+                admission, replayed = record._desk_admit(
+                    body["bed_id"], body["operation_token"], body["expected_revision"]
+                )
+                payload = serialize_detail(admission, may_admit=True)
+        except PG_CONCURRENCY_EXCEPTIONS_TO_RETRY:
+            raise
+        except AdmissionDeskError as error:
+            raise desk_error(error.code) from None
+        except IntegrityError as error:
+            raise desk_error(integrity_code(error)) from None
+        except AccessError:
+            raise desk_error("admission_not_authorized") from None
+        except (UserError, ValidationError):
+            # A deeper layer refused in its own words. Logged, answered with a
+            # fixed sentence; the savepoint has already rolled everything back.
+            _logger.warning(
+                "Admissions admit refused for admission=%s uid=%s", record.id, env.uid,
+                exc_info=True,
+            )
+            raise desk_error("admission_integrity_error") from None
+        except Exception:
+            _logger.exception("Admissions admit failed for admission=%s", record.id)
+            raise desk_error("admission_mutation_failed") from None
+
+        return success_response({
+            "admission": payload,
+            "capabilities": admissions_desk_capability_flags(env),
+            "workflow_revision": payload["workflow_revision"],
+            "operation": {
+                "type": "admit",
+                "token": canonical_token(body["operation_token"]),
+                "replayed": bool(replayed),
+            },
         })

@@ -1,11 +1,13 @@
 /**
- * THE ADMISSIONS DESK'S READ-ONLY, PRIVACY AND LAYOUT GUARANTEES, HELD AT THE
+ * THE ADMISSIONS DESK'S WRITE, PRIVACY AND LAYOUT GUARANTEES, HELD AT THE
  * SOURCE (no DOM test stack exists; the technique the Pharmacy and Radiology
  * workstation contracts use). Comments are stripped before any "must not
  * contain" check.
  *
- *   1. NO WRITES. No POST/PUT/PATCH/DELETE anywhere; no admit, bed, transfer,
- *      discharge or cancel control.
+ *   1. ONE WRITE. The only POST is Admit (Slice 2), sent by the workstation to
+ *      admitPath(). No transfer, discharge or cancel control exists; Admit is
+ *      offered only on the server's `admit` capability AND the row's
+ *      `can_admit`.
  *   2. BFF ONLY. Every fetch goes through a path helper; no Odoo URL.
  *   3. ROLE FIRST. Nothing but the session loads until the server has said the
  *      desk is this user's; a refused role sees "This is not your workstation".
@@ -40,6 +42,7 @@ const FORMAT = read("lib/admissions-desk-format.ts");
 const LAYOUT = read("app/admissions/layout.tsx");
 const PAGE = read("app/admissions/page.tsx");
 const SIDEBAR = read("components/clinical/clinical-sidebar.tsx");
+const DIALOG = read("components/admissions/admit-dialog.tsx");
 
 const ALL: ReadonlyArray<readonly [string, string]> = [
   ["admissions-workstation.tsx", WORKSTATION],
@@ -49,27 +52,51 @@ const ALL: ReadonlyArray<readonly [string, string]> = [
   ["ward-occupancy-strip.tsx", STRIP],
   ["admissions-toolbar.tsx", TOOLBAR],
   ["admission-lane-pill.tsx", PILL],
+  ["admit-dialog.tsx", DIALOG],
   ["admissions-desk-format.ts", FORMAT],
   ["layout.tsx", LAYOUT],
   ["page.tsx", PAGE],
 ];
 
-/* 1. No writes */
+/* 1. One write */
 
-test("no component sends anything but a GET", () => {
+test("the only write is the workstation's single Admit POST", () => {
   for (const [name, source] of ALL) {
-    assert.doesNotMatch(code(source), /method:\s*["'](POST|PUT|PATCH|DELETE)["']/, name);
+    const writes = code(source).match(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/g) ?? [];
+    if (name === "admissions-workstation.tsx") {
+      assert.deepEqual(writes, ['method: "POST"'], name);
+    } else {
+      assert.equal(writes.length, 0, name);
+    }
   }
+  const emitted = code(WORKSTATION);
+  const post = emitted.indexOf('method: "POST"');
+  assert.ok(emitted.lastIndexOf("fetch(admitPath(current.id)", post) > 0);
 });
 
-test("there is no workflow control on any surface", () => {
-  const forbidden = /\b(Admit|Assign bed|Transfer patient|Discharge patient|Cancel admission|Confirm admission)\b/;
+test("there is no transfer, discharge or cancel control on any surface", () => {
+  const forbidden = /\b(Transfer|Discharge|Cancel admission|Assign bed)\b/;
   for (const [name, source] of ALL) {
     const emitted = code(source);
     for (const match of emitted.matchAll(/<button[\s\S]*?<\/button>/g)) {
       assert.doesNotMatch(match[0], forbidden, `${name}: ${match[0].slice(0, 80)}`);
     }
-    assert.doesNotMatch(emitted, /capabilities\.(admit|assign_bed|transfer|discharge)/, name);
+    assert.doesNotMatch(emitted, /capabilities\.(assign_bed|transfer|discharge)/, name);
+  }
+});
+
+test("Admit is offered only on the server's role capability AND the row's can_admit", () => {
+  const workstation = code(WORKSTATION);
+  assert.ok(workstation.includes("const mayAdmit = session?.capabilities.admit === true;"));
+  assert.ok(workstation.includes("mayAdmit={mayAdmit}"));
+  assert.ok(workstation.includes("{admitOpen && shownDetail && mayAdmit ? ("));
+  const panel = code(PANEL);
+  assert.ok(panel.includes("{mayAdmit && detail.can_admit && onRequestAdmit ? ("));
+  assert.equal((panel.match(/<button/g) ?? []).length, 1);
+  // Only the workstation reads the capability; nothing else invents it.
+  for (const [name, source] of ALL) {
+    if (name === "admissions-workstation.tsx") continue;
+    assert.doesNotMatch(code(source), /capabilities\.admit/, name);
   }
 });
 
@@ -78,9 +105,17 @@ test("there is no workflow control on any surface", () => {
 test("every fetch goes through a BFF path helper and no Odoo address appears", () => {
   const emitted = code(WORKSTATION);
   const fetches = [...emitted.matchAll(/fetch\(\s*([^,\n]+)/g)].map((m) => m[1].trim());
-  assert.equal(fetches.length, 5);
+  assert.equal(fetches.length, 7);
   for (const target of fetches) {
-    assert.match(target, /^(ADMISSIONS_SESSION_PATH|ADMISSIONS_WARDS_PATH|worklistPath\(|bedsPath\(|admissionPath\()/, target);
+    assert.match(
+      target,
+      /^(ADMISSIONS_SESSION_PATH|ADMISSIONS_WARDS_PATH|worklistPath\(|bedsPath\(|admissionPath\(|admitPath\()/,
+      target,
+    );
+  }
+  for (const [name, source] of ALL) {
+    if (name === "admissions-workstation.tsx") continue;
+    assert.doesNotMatch(code(source), /\bfetch\(/, name);
   }
   for (const [name, source] of ALL) {
     assert.doesNotMatch(code(source), /yoya-emr|:8069|localhost|https?:\/\//, name);

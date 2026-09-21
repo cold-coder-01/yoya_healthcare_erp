@@ -300,13 +300,22 @@ class TestAdmissionsDeskGate(AdmissionsDeskCase):
             self.assertFalse(may_admissions_desk(self.env(user=user)))
         self.assertEqual(len(ADMISSIONS_DESK_GROUPS), 5)
 
-    def test_every_workflow_capability_is_false_even_for_the_administrator(self):
+    def test_workflow_capabilities_match_the_slice(self):
+        """Slice 2 opens exactly ONE act, admit (assign_bed is the same act),
+        and only for the admitting roles. Transfer and discharge stay FALSE for
+        everyone, administrators included -- no route exists behind them."""
         for user in (self.sysadmin, self.manager, self.receptionist):
             caps = self._ok(SESSION, user)["capabilities"]
-            for flag in ("admit", "assign_bed", "transfer", "discharge"):
+            self.assertIs(caps["admit"], True, user.login)
+            self.assertIs(caps["assign_bed"], True, user.login)
+            for flag in ("transfer", "discharge"):
                 self.assertIs(caps[flag], False, (user.login, flag))
             self.assertTrue(caps["view_worklist"])
             self.assertTrue(caps["view_bed_board"])
+        for user in (self.doctor_user, self.nurse_a, self.front_desk):
+            caps = self._ok(SESSION, user)["capabilities"]
+            for flag in ("admit", "assign_bed", "transfer", "discharge"):
+                self.assertIs(caps[flag], False, (user.login, flag))
 
     def test_the_session_carries_only_operational_metadata(self):
         data = self._ok(SESSION, self.nurse_a)
@@ -631,12 +640,19 @@ class TestAdmissionsDeskReadOnly(AdmissionsDeskCase):
     # 6. READ ONLY
     # ==================================================================
     def test_no_route_accepts_a_write(self):
+        """The read routes refuse a POST, and transfer/discharge/cancel do not
+        exist. /admit (Slice 2) exists but refuses a malformed body before it
+        reads a row -- covered fully in test_admissions_desk_mutations_api."""
         self.authenticate(self.manager.login, self.PASSWORD)
-        for route in (SESSION, WORKLIST, WARDS, BEDS, DETAIL % self.adm_mine.id,
-                      DETAIL % self.adm_mine.id + "/admit", DETAIL % self.adm_mine.id + "/discharge"):
+        base = DETAIL % self.adm_mine.id
+        for route in (SESSION, WORKLIST, WARDS, BEDS, base,
+                      base + "/discharge", base + "/transfer", base + "/cancel", base + "/assign-bed"):
             with self.subTest(route=route):
                 response = self.url_open(route, data=json.dumps({}), headers={"Content-Type": "application/json"})
                 self.assertIn(response.status_code, (404, 405), route)
+        response = self.url_open(base + "/admit", data=json.dumps({}), headers={"Content-Type": "application/json"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(json.loads(response.text)["error"]["code"], "admission_invalid_payload")
 
     def test_viewing_writes_nothing(self):
         self.env.flush_all()

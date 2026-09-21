@@ -1,7 +1,7 @@
 {
     "name": "Hospital Admission",
     "summary": "Inpatient admission, ward, room, bed management for Ethiopian Hospital ERP",
-    "version": "18.0.1.1.0",
+    "version": "18.0.1.2.0",
     "category": "Healthcare",
     "author": "Ethiopian Hospital ERP",
     "license": "LGPL-3",

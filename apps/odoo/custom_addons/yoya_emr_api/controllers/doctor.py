@@ -60,8 +60,15 @@ workflow decision and never calls sudo().
 import functools
 import logging
 
+from psycopg2 import IntegrityError
+
 from odoo import fields, http
 from odoo.exceptions import AccessError, UserError, ValidationError
+from odoo.service.model import PG_CONCURRENCY_EXCEPTIONS_TO_RETRY
+
+from odoo.addons.hospital_admission.models.admission_authority import (
+    AdmissionDeskError,
+)
 from odoo.http import request
 from odoo.osv import expression
 
@@ -81,6 +88,14 @@ from odoo.addons.yoya_clinical_bridge.models.radiology_request import (
     RAD_ORDER_EDITABLE_FIELDS,
 )
 
+from ..services.admission_mutations import (
+    REQUEST_KEYS as ADMISSION_REQUEST_KEYS,
+    canonical_token as admission_canonical_token,
+    desk_error as admission_desk_error,
+    integrity_code as admission_integrity_code,
+    mutation_body as admission_mutation_body,
+)
+from ..services.admissions_desk_serializers import serialize_doctor_admission
 from ..services.api_response import (
     ApiError,
     api_error_response,
@@ -1727,9 +1742,67 @@ class YoyaEmrDoctorController(http.Controller):
 
         appointment = _load_visit(env, appointment_id)
         prefetch_worklist(appointment)
-        return success_response(
-            serialize_visit_detail(appointment, doctor_capability_flags(env))
-        )
+        payload = serialize_visit_detail(appointment, doctor_capability_flags(env))
+        # Admissions Slice 2: what the doctor needs to know about inpatient
+        # care on THIS visit -- requested, admitted and where, or requestable.
+        payload["admission"] = serialize_doctor_admission(appointment)
+        return success_response(payload)
+
+    # ------------------------------------------------------------------
+    # Admissions Slice 2: request an admission from this visit
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>/admission-request",
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @doctor_endpoint
+    def visit_admission_request(self, appointment_id, **params):
+        """Ask for an inpatient stay. The Admissions Desk puts the patient in a bed.
+
+        Body: {"operation_token": uuid, "reason": text}. Exactly those keys.
+        The doctor names NO ward and NO bed; patient, visit, doctor, appointment
+        and the primary diagnosis are derived from the visit by the model
+        (hospital.admission._desk_request_admission), which also re-checks that
+        this caller is the visit's own doctor. Same error contract as the
+        Admissions Desk (services/admission_mutations).
+        """
+        env = request.env
+        _require_doctor_desk(env)
+        body = admission_mutation_body(ADMISSION_REQUEST_KEYS)
+        appointment = _load_visit(env, appointment_id)
+
+        try:
+            with env.cr.savepoint():
+                admission, replayed = env["hospital.admission"]._desk_request_admission(
+                    appointment, body["reason"], body["operation_token"]
+                )
+                payload = serialize_doctor_admission(appointment)
+        except PG_CONCURRENCY_EXCEPTIONS_TO_RETRY:
+            raise
+        except AdmissionDeskError as error:
+            raise admission_desk_error(error.code) from None
+        except IntegrityError as error:
+            raise admission_desk_error(admission_integrity_code(error)) from None
+        except AccessError:
+            raise admission_desk_error("admission_not_authorized") from None
+        except (UserError, ValidationError):
+            _logger.warning(
+                "Admission request refused for appointment=%s uid=%s",
+                appointment.id, env.uid, exc_info=True,
+            )
+            raise admission_desk_error("admission_integrity_error") from None
+        except Exception:
+            _logger.exception("Admission request failed for appointment=%s", appointment.id)
+            raise admission_desk_error("admission_mutation_failed") from None
+
+        return success_response({
+            "admission": payload,
+            "operation": {
+                "type": "request",
+                "token": admission_canonical_token(body["operation_token"]),
+                "replayed": bool(replayed),
+            },
+        })
 
     # ------------------------------------------------------------------
     # 4. Start consultation

@@ -2,7 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { messageFromPayload } from "@/lib/api-error";
+import {
+  UNKNOWN_OUTCOME_NOTICE,
+  admitBody,
+  admitPath,
+  admitSignature,
+  isResolved,
+  needsBedRefresh,
+  needsReload,
+  tokenFor,
+  type PendingAdmissionOperation,
+} from "@/lib/admissions-desk-actions";
+import { codeFromPayload, messageFromPayload } from "@/lib/api-error";
 import {
   ACTIVE_LANE_KEY,
   ADMISSIONS_SESSION_PATH,
@@ -16,6 +27,7 @@ import {
   worklistPath,
 } from "@/lib/admissions-desk-format";
 import type {
+  AdmissionAdmitResponse,
   AdmissionDeskSession,
   AdmissionDetail,
   AdmissionDetailResponse,
@@ -29,6 +41,7 @@ import type {
   WardsResponse,
 } from "@/types/admissions-desk";
 
+import AdmitDialog from "./admit-dialog";
 import AdmissionDetailPanel from "./admission-detail-panel";
 import AdmissionsQueue from "./admissions-queue";
 import AdmissionsToolbar from "./admissions-toolbar";
@@ -36,12 +49,17 @@ import BedBoard from "./bed-board";
 import WardOccupancyStrip from "./ward-occupancy-strip";
 
 /**
- * The Admissions Desk (Admissions Slice 1). READ ONLY.
+ * The Admissions Desk (Admissions Slices 1-2).
  *
  * WARD STRIP and LANE TABS on top; the CENSUS left and the PINNED ADMISSION
- * right; the BED BOARD below. Every read is a GET to /api/admissions/*. There
- * is no POST anywhere in this workstation -- admit, assign bed, transfer and
- * discharge are Slice 2 onwards.
+ * right; the BED BOARD below. Every read is a GET to /api/admissions/*.
+ *
+ * ONE WRITE (Slice 2): Admit to bed, a POST to /api/admissions/[id]/admit,
+ * sent ONCE per confirmed action with one operation token. If the outcome is
+ * unknown the token is kept, so a retry replays rather than admitting twice.
+ * The returned admission is PINNED and shown as-is -- it is the authoritative
+ * result -- and the census, wards and bed board are then reloaded. Transfer and
+ * discharge do not exist here.
  *
  * NOTHING LOADS BEFORE THE ROLE IS KNOWN. The session is read first; a caller
  * the server refuses sees "This is not your workstation" and no census, bed or
@@ -54,6 +72,8 @@ import WardOccupancyStrip from "./ward-occupancy-strip";
  * A BED CLICK PINS its admission in the detail panel even when the census is
  * showing another lane or ward; picking a census row releases the pin.
  */
+type ActionMessage = { tone: "red" | "amber" | "green"; text: string };
+
 export default function AdmissionsWorkstation() {
   const [session, setSession] = useState<AdmissionDeskSession | null>(null);
   const [deskAllowed, setDeskAllowed] = useState<boolean | null>(null);
@@ -87,6 +107,17 @@ export default function AdmissionsWorkstation() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [detailStale, setDetailStale] = useState(false);
   const detailRef = useRef<AdmissionDetail | null>(null);
+
+  /* ---- Admit (Slice 2) ---- */
+  const [admitOpen, setAdmitOpen] = useState(false);
+  const [admitBeds, setAdmitBeds] = useState<BedBoardRow[]>([]);
+  const [admitBedsLoading, setAdmitBedsLoading] = useState(false);
+  const [admitBedsError, setAdmitBedsError] = useState<string | null>(null);
+  const [admitBusy, setAdmitBusy] = useState(false);
+  const [admitMessage, setAdmitMessage] = useState<ActionMessage | null>(null);
+  const [actionMessage, setActionMessage] = useState<ActionMessage | null>(null);
+  /** The admit whose outcome is unknown; a retry of the same request reuses it. */
+  const pendingRef = useRef<PendingAdmissionOperation | null>(null);
   useEffect(() => {
     detailRef.current = detail;
   }, [detail]);
@@ -262,6 +293,7 @@ export default function AdmissionsWorkstation() {
 
   const selectRow = useCallback((admissionId: number) => {
     setPinnedId(null);
+    setActionMessage(null);
     setSelectedId(admissionId);
   }, []);
 
@@ -275,6 +307,107 @@ export default function AdmissionsWorkstation() {
   }, []);
 
   const shownDetail = detail && detail.id === activeId ? detail : null;
+  const mayAdmit = session?.capabilities.admit === true;
+
+  /* ---------------- admit ---------------- */
+  const loadAvailableBeds = useCallback(async () => {
+    setAdmitBedsLoading(true);
+    setAdmitBedsError(null);
+    try {
+      const response = await fetch(bedsPath({ wardId: null, state: "available" }), { cache: "no-store" });
+      const payload = (await response.json()) as ApiEnvelope<BedsResponse>;
+      if (response.ok && payload.success) {
+        setAdmitBeds(payload.data.beds);
+      } else {
+        setAdmitBeds([]);
+        setAdmitBedsError(messageFromPayload(payload, "Unable to load the available beds."));
+      }
+    } catch {
+      setAdmitBeds([]);
+      setAdmitBedsError("Unable to reach the admissions service.");
+    } finally {
+      setAdmitBedsLoading(false);
+    }
+  }, []);
+
+  const openAdmit = useCallback(() => {
+    setActionMessage(null);
+    setAdmitMessage(null);
+    setAdmitOpen(true);
+    void loadAvailableBeds();
+  }, [loadAvailableBeds]);
+
+  const closeAdmit = useCallback(() => {
+    if (admitBusy) return;
+    setAdmitOpen(false);
+    setAdmitMessage(null);
+  }, [admitBusy]);
+
+  const submitAdmit = useCallback(
+    async (bedId: number) => {
+      const current = shownDetail;
+      if (!current || admitBusy) return;
+      const signature = admitSignature(current.workflow_revision, bedId);
+      const token = tokenFor(pendingRef.current, "admit", current.id, signature, () => crypto.randomUUID());
+      pendingRef.current = { kind: "admit", targetId: current.id, signature, token };
+
+      setAdmitBusy(true);
+      let status: number | null = null;
+      let payload: ApiEnvelope<AdmissionAdmitResponse> | null = null;
+      try {
+        const response = await fetch(admitPath(current.id), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(admitBody(current.workflow_revision, bedId, token)),
+          cache: "no-store",
+        });
+        status = response.status;
+        payload = (await response.json()) as ApiEnvelope<AdmissionAdmitResponse>;
+      } catch {
+        payload = null;
+      } finally {
+        setAdmitBusy(false);
+      }
+
+      if (!isResolved(status, payload !== null)) {
+        // Outcome unknown: keep the token so a retry replays, never re-applies.
+        setAdmitMessage({ tone: "amber", text: UNKNOWN_OUTCOME_NOTICE });
+        return;
+      }
+      pendingRef.current = null;
+
+      if (payload && payload.success) {
+        const updated = payload.data.admission;
+        setDetail(updated);
+        setDetailStale(false);
+        setPinnedId(updated.id);
+        setSelectedId(updated.id);
+        setAdmitOpen(false);
+        setAdmitMessage(null);
+        setActionMessage({
+          tone: "green",
+          text: payload.data.operation.replayed
+            ? `Already admitted: ${updated.reference}.`
+            : `Admitted ${updated.reference} to ${updated.location.bed?.code ?? updated.location.bed?.name ?? "the bed"}.`,
+        });
+        setRefreshToken((value) => value + 1);
+        return;
+      }
+
+      const code = codeFromPayload(payload);
+      setAdmitMessage({
+        tone: "red",
+        text: messageFromPayload(payload, "The admission could not be completed. Nothing was changed."),
+      });
+      if (needsBedRefresh(code)) {
+        void loadAvailableBeds();
+      }
+      if (needsReload(code)) {
+        setRefreshToken((value) => value + 1);
+      }
+    },
+    [admitBusy, loadAvailableBeds, shownDetail],
+  );
 
   if (deskAllowed === false) {
     return (
@@ -332,6 +465,9 @@ export default function AdmissionsWorkstation() {
           error={activeId !== null ? detailError : null}
           empty={rows.length === 0 && pinnedId === null}
           stale={detailStale && shownDetail !== null}
+          mayAdmit={mayAdmit}
+          actionMessage={actionMessage}
+          onRequestAdmit={openAdmit}
         />
       </div>
 
@@ -342,6 +478,19 @@ export default function AdmissionsWorkstation() {
         pinnedAdmissionId={pinnedId}
         onPin={pinFromBed}
       />
+
+      {admitOpen && shownDetail && mayAdmit ? (
+        <AdmitDialog
+          detail={shownDetail}
+          beds={admitBeds}
+          bedsLoading={admitBedsLoading}
+          bedsError={admitBedsError}
+          busy={admitBusy}
+          message={admitMessage}
+          onConfirm={(bedId) => void submitAdmit(bedId)}
+          onClose={closeAdmit}
+        />
+      ) : null}
     </div>
   );
 }

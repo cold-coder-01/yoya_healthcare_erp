@@ -635,22 +635,40 @@ def admissions_desk_role_flags(env):
     }
 
 
+# WHO MAY ADMIT (assign a bed and confirm), Admissions Slice 2. MIRRORS
+# hospital_admission's DESK_ADMIT_GROUPS, which the model enforces again inside
+# _desk_admit(); test_admissions_desk_mutations_api asserts the two agree, so a
+# change in the model cannot silently widen the API. The ward nurse and the
+# doctor open the desk (ADMISSIONS_DESK_GROUPS) but do not admit: the doctor
+# REQUESTS from the Doctor Desk, and the nurse works the census.
+ADMISSIONS_ADMIT_GROUPS = (GROUP_RECEPTIONIST, GROUP_MANAGER, GROUP_SYSADMIN)
+
+
+def may_admissions_admit(env):
+    return may_admissions_desk(env) and _in_any(env, ADMISSIONS_ADMIT_GROUPS)
+
+
 def admissions_desk_capability_flags(env):
     """What the Admissions Desk may do. Every flag mirrors a server-side guard.
 
-    SLICE 1 IS READ ONLY. The four workflow flags are present and FALSE for
-    every role, including Manager and System Administrator, because no route
-    exists behind them: a True flag with no endpoint would be a lie the UI
-    could act on. Slice 2 turns `admit` / `assign_bed` on only when the routes
-    and their model authority exist.
+    SLICE 2 turns on exactly ONE act: admit, which assigns the bed and confirms
+    the admission together (assign_bed therefore equals admit -- there is no
+    separate "assign without admitting" route). Transfer and discharge stay
+    present and FALSE for every role, administrators included, because no
+    route exists behind them yet.
+
+    These say which ACTS the role may attempt. Whether ONE admission may be
+    admitted is its own `can_admit`, and the model re-checks everything under
+    its locks on every call.
     """
     allowed = may_admissions_desk(env)
+    admit = may_admissions_admit(env)
     return {
         "admissions_desk": allowed,
         "view_worklist": allowed,
         "view_bed_board": allowed,
-        "admit": False,
-        "assign_bed": False,
+        "admit": admit,
+        "assign_bed": admit,
         "transfer": False,
         "discharge": False,
     }

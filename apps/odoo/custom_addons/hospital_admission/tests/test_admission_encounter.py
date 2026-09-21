@@ -160,8 +160,13 @@ class TestAdmissionEncounterBridge(AdmissionCase):
         """hospital_billing's comment said this would be enforced here. It is."""
         admission = self._admitted()
         encounter = admission.encounter_id
-        encounter.sudo().write({"state": "active"})
+        # Since Admissions Slice 2, action_complete() DEFERS on a visit with an
+        # open admission, so the visit can no longer reach `completed` through
+        # the workflow at all. Force it there to prove the second line of
+        # defence -- the _check_can_close() hook -- still refuses.
         encounter.sudo().action_complete()
+        self.assertEqual(encounter.state, "active")
+        encounter.sudo().write({"state": "completed"})
 
         with self.assertRaises(AdmissionWorkflowError) as caught:
             encounter.sudo().action_close()

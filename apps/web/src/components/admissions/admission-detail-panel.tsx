@@ -15,8 +15,10 @@ import type { AdmissionDetail, CountAndLatest, NamedRef } from "@/types/admissio
 import AdmissionLanePill from "./admission-lane-pill";
 
 /**
- * One admission, READ ONLY. There is no button on this panel: Slice 1 has no
- * workflow, and the capability flags that would enable one are all false.
+ * One admission. Its ONE action (Slice 2) is "Admit to bed", offered only when
+ * the SERVER says so twice over: the role's `admit` capability AND this
+ * record's own `can_admit`. The browser derives neither. There is no transfer,
+ * discharge or cancel control.
  *
  * Needs-review reasons come first and in red: a broken admission must be seen
  * before anything that looks normal about it.
@@ -50,18 +52,27 @@ function countLabel(value: CountAndLatest | number | null): string {
   return `${value.count} · last ${formatHospitalDateTime(value.latest_at, "—")}`;
 }
 
+type ActionMessage = { tone: "red" | "amber" | "green"; text: string };
+
 export default function AdmissionDetailPanel({
   detail,
   loading,
   error,
   empty,
   stale,
+  mayAdmit = false,
+  actionMessage = null,
+  onRequestAdmit,
 }: {
   detail: AdmissionDetail | null;
   loading: boolean;
   error: string | null;
   empty: boolean;
   stale: boolean;
+  /** The role's `admit` capability, from the server session. */
+  mayAdmit?: boolean;
+  actionMessage?: ActionMessage | null;
+  onRequestAdmit?: () => void;
 }) {
   if (error) {
     return (
@@ -105,6 +116,32 @@ export default function AdmissionDetailPanel({
         {stale ? (
           <p className="mt-1 rounded border border-amber-200 bg-amber-50 px-2 py-0.5 cl-meta text-amber-900">
             Showing the last loaded version; the refresh did not complete.
+          </p>
+        ) : null}
+        {mayAdmit && detail.can_admit && onRequestAdmit ? (
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onRequestAdmit}
+              className="h-8 rounded-md bg-sky-700 px-3 cl-meta font-bold text-white hover:bg-sky-800"
+            >
+              Admit to bed…
+            </button>
+            <span className="cl-micro text-slate-500">Assigns the bed and admits in one step.</span>
+          </div>
+        ) : null}
+        {actionMessage ? (
+          <p
+            role="status"
+            className={`mt-2 rounded border px-2 py-1 cl-meta ${
+              actionMessage.tone === "red"
+                ? "border-red-300 bg-red-50 text-red-900"
+                : actionMessage.tone === "amber"
+                  ? "border-amber-300 bg-amber-50 text-amber-900"
+                  : "border-emerald-300 bg-emerald-50 text-emerald-900"
+            }`}
+          >
+            {actionMessage.text}
           </p>
         ) : null}
       </header>

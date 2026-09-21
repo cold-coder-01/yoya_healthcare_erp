@@ -19,6 +19,7 @@ import type { ApiEnvelope, DoctorVisitDetail } from "@/types/doctor";
 
 import HistoryWorkspace from "./consultation/history-workspace";
 import { PriorityBadge, StageBadge, VisitTypeBadge } from "./doctor-badges";
+import DoctorAdmissionCard from "./doctor-admission-card";
 import DoctorVitalsGrid from "./doctor-vitals-grid";
 
 /**
@@ -416,6 +417,15 @@ export default function DoctorPatientPanel({
         >
           <DoctorVitalsGrid vitals={triage.vitals} previous={detail.previous_vitals} />
         </Section>
+
+        {/* ---- Admission: request only; the Admissions Desk assigns the bed ---- */}
+        {detail.admission ? (
+          <DoctorAdmissionCard
+            key={visit.appointment_id}
+            appointmentId={visit.appointment_id}
+            summary={detail.admission}
+          />
+        ) : null}
 
         {/* ---- History ---- */}
         {patient.past_medical_history || patient.disease_history ? (
