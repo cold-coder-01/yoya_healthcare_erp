@@ -187,6 +187,22 @@ def role_flags(env):
         # Pharmacist holds no reception-side, doctor, laboratory or radiology
         # role, and would otherwise fall through to /triage.
         "pharmacist": user.has_group(GROUP_PHARMACIST),
+        # Added with the Admissions Desk (Slice 1). WIDE, like `doctor`, and
+        # read the note on `doctor` before routing on it: Manager implies
+        # Nurse, and Front Desk Nurse implies Nurse, so both read TRUE here.
+        #
+        # It exists so the front end can tell a DEDICATED WARD NURSE -- a user
+        # whose only hospital role is Hospital Nurse -- by POSITIVE membership
+        # rather than by elimination. Elimination is what used to drop every
+        # plain nurse on /triage; routing them to /admissions by elimination
+        # would be the same mistake in the other direction. isWardOnlyNurse()
+        # in apps/web/src/lib/reception-roles.ts requires this flag to be TRUE
+        # AND every other role above to be FALSE.
+        #
+        # REPORTING ONLY. Every /admissions/* endpoint decides for itself
+        # through may_admissions_desk(), and the record rules decide which
+        # wards a nurse sees.
+        "nurse": user.has_group(GROUP_NURSE),
     }
 
 
@@ -550,6 +566,93 @@ def pharmacy_desk_capability_flags(env):
         "pharmacy_desk": allowed,
         "prepare_dispense": allowed,
         "validate_dispense": allowed,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Admissions Desk (Admissions Slice 1: READ ONLY)
+# ---------------------------------------------------------------------------
+#
+# WHO OPENS THE DESK, AND WHY THE GATE IS NOT THE WHOLE STORY.
+#
+# The gate answers "is the Admissions Desk this user's workstation". WHICH
+# admissions they then see is decided by hospital_admission's and
+# yoya_clinical_bridge's record rules -- the gate never widens a row, and
+# nothing in the desk calls sudo() to search admissions:
+#
+#   * Receptionist      -- the admissions clerk. Rules: every ward.
+#   * Nurse             -- rules: wards in their permitted departments. Hospital
+#                          Front Desk Nurse IMPLIES Nurse, so it passes this
+#                          gate and is scoped by the same rule; an unrostered
+#                          nurse opens the desk and sees an empty census.
+#   * Doctor            -- rules: admissions they are the physician of, admitted
+#                          from their appointment, or primary on the visit.
+#   * Manager, Sysadmin -- rules: every ward (oversight carve-out).
+#
+# DELIBERATELY EXCLUDED, although some hold a read ACL somewhere nearby:
+#
+#   * Accountant        -- bills the stay after discharge from the back office.
+#                          The desk shows no money, so it has nothing an
+#                          accountant needs, and the census is not theirs.
+#   * Cashier           -- takes payment at the cashier desk; no inpatient need.
+#   * Pharmacist, Lab Technician, DPO -- have NO read ACL on hospital.admission
+#                          at all (Slice 0). The gate refuses them first, so they
+#                          get a clean 403 rather than an ORM AccessError.
+#   * Radiology Technician / Radiologist -- no inpatient census need.
+#
+# None of the excluded groups implies an included one (verified against the
+# UAT database's res_groups_implied_rel), so none of them passes by implication.
+#
+# Authorization is group membership, never "can read the model".
+ADMISSIONS_DESK_GROUPS = (
+    GROUP_RECEPTIONIST,
+    GROUP_NURSE,
+    GROUP_DOCTOR,
+    GROUP_MANAGER,
+    GROUP_SYSADMIN,
+)
+
+
+def may_admissions_desk(env):
+    """May this user open the Admissions Desk and read its census?"""
+    return _in_any(env, ADMISSIONS_DESK_GROUPS)
+
+
+def admissions_desk_role_flags(env):
+    """The Admissions Desk's own role header: only the groups the gate knows.
+
+    No group id, no other workstation's roles. Membership as has_group reports
+    it, so an administrator reads TRUE for several.
+    """
+    user = env.user
+    return {
+        "receptionist": user.has_group(GROUP_RECEPTIONIST),
+        "nurse": user.has_group(GROUP_NURSE),
+        "front_desk_nurse": user.has_group(GROUP_FRONT_DESK_NURSE),
+        "doctor": user.has_group(GROUP_DOCTOR),
+        "manager": user.has_group(GROUP_MANAGER),
+        "system_admin": user.has_group(GROUP_SYSADMIN),
+    }
+
+
+def admissions_desk_capability_flags(env):
+    """What the Admissions Desk may do. Every flag mirrors a server-side guard.
+
+    SLICE 1 IS READ ONLY. The four workflow flags are present and FALSE for
+    every role, including Manager and System Administrator, because no route
+    exists behind them: a True flag with no endpoint would be a lie the UI
+    could act on. Slice 2 turns `admit` / `assign_bed` on only when the routes
+    and their model authority exist.
+    """
+    allowed = may_admissions_desk(env)
+    return {
+        "admissions_desk": allowed,
+        "view_worklist": allowed,
+        "view_bed_board": allowed,
+        "admit": False,
+        "assign_bed": False,
+        "transfer": False,
+        "discharge": False,
     }
 
 

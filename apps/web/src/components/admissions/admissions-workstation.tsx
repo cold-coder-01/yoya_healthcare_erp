@@ -1,0 +1,347 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { messageFromPayload } from "@/lib/api-error";
+import {
+  ACTIVE_LANE_KEY,
+  ADMISSIONS_SESSION_PATH,
+  ADMISSIONS_WARDS_PATH,
+  admissionPath,
+  bedsPath,
+  deskRoleLabel,
+  emptyQueueMessage,
+  resolveSelection,
+  scopeLabel,
+  worklistPath,
+} from "@/lib/admissions-desk-format";
+import type {
+  AdmissionDeskSession,
+  AdmissionDetail,
+  AdmissionDetailResponse,
+  AdmissionLaneSummary,
+  AdmissionWorklistResponse,
+  AdmissionWorklistRow,
+  ApiEnvelope,
+  BedBoardRow,
+  BedsResponse,
+  WardSummary,
+  WardsResponse,
+} from "@/types/admissions-desk";
+
+import AdmissionDetailPanel from "./admission-detail-panel";
+import AdmissionsQueue from "./admissions-queue";
+import AdmissionsToolbar from "./admissions-toolbar";
+import BedBoard from "./bed-board";
+import WardOccupancyStrip from "./ward-occupancy-strip";
+
+/**
+ * The Admissions Desk (Admissions Slice 1). READ ONLY.
+ *
+ * WARD STRIP and LANE TABS on top; the CENSUS left and the PINNED ADMISSION
+ * right; the BED BOARD below. Every read is a GET to /api/admissions/*. There
+ * is no POST anywhere in this workstation -- admit, assign bed, transfer and
+ * discharge are Slice 2 onwards.
+ *
+ * NOTHING LOADS BEFORE THE ROLE IS KNOWN. The session is read first; a caller
+ * the server refuses sees "This is not your workstation" and no census, bed or
+ * ward request is ever made. (The server refuses them anyway -- this only keeps
+ * the screen honest.)
+ *
+ * THE COUNTS COME FROM THE SERVER and are never recounted here. The browser
+ * never derives a lane, a review reason or a clearance.
+ *
+ * A BED CLICK PINS its admission in the detail panel even when the census is
+ * showing another lane or ward; picking a census row releases the pin.
+ */
+export default function AdmissionsWorkstation() {
+  const [session, setSession] = useState<AdmissionDeskSession | null>(null);
+  const [deskAllowed, setDeskAllowed] = useState<boolean | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+
+  const [lane, setLane] = useState(ACTIVE_LANE_KEY);
+  const [wardId, setWardId] = useState<number | null>(null);
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [refreshToken, setRefreshToken] = useState(0);
+
+  const [wards, setWards] = useState<WardSummary[]>([]);
+  const [wardsLoading, setWardsLoading] = useState(false);
+  const [wardsError, setWardsError] = useState<string | null>(null);
+
+  const [rows, setRows] = useState<AdmissionWorklistRow[]>([]);
+  const [summary, setSummary] = useState<AdmissionLaneSummary | null>(null);
+  const [truncated, setTruncated] = useState(false);
+  const [queueLoading, setQueueLoading] = useState(false);
+  const [queueError, setQueueError] = useState<string | null>(null);
+
+  const [beds, setBeds] = useState<BedBoardRow[]>([]);
+  const [bedsLoading, setBedsLoading] = useState(false);
+  const [bedsError, setBedsError] = useState<string | null>(null);
+
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  /** An admission opened from the bed board: shown whatever the census does. */
+  const [pinnedId, setPinnedId] = useState<number | null>(null);
+  const [detail, setDetail] = useState<AdmissionDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailStale, setDetailStale] = useState(false);
+  const detailRef = useRef<AdmissionDetail | null>(null);
+  useEffect(() => {
+    detailRef.current = detail;
+  }, [detail]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search.trim()), 250);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  /* ---------------- session: first, and alone ---------------- */
+  useEffect(() => {
+    const controller = new AbortController();
+    async function loadSession() {
+      try {
+        const response = await fetch(ADMISSIONS_SESSION_PATH, { cache: "no-store", signal: controller.signal });
+        const payload = (await response.json()) as ApiEnvelope<AdmissionDeskSession>;
+        if (controller.signal.aborted) return;
+        if (response.ok && payload.success) {
+          setSession(payload.data);
+          setDeskAllowed(payload.data.capabilities.admissions_desk);
+        } else if (response.status === 403) {
+          setDeskAllowed(false);
+        } else {
+          setSessionError(messageFromPayload(payload, "Unable to load your session."));
+        }
+      } catch {
+        if (!controller.signal.aborted) setSessionError("Unable to reach the admissions service.");
+      }
+    }
+    void loadSession();
+    return () => controller.abort();
+  }, []);
+
+  const ready = deskAllowed === true;
+
+  /* ---------------- wards ---------------- */
+  useEffect(() => {
+    if (!ready) return;
+    const controller = new AbortController();
+    async function loadWards() {
+      setWardsLoading(true);
+      try {
+        const response = await fetch(ADMISSIONS_WARDS_PATH, { cache: "no-store", signal: controller.signal });
+        const payload = (await response.json()) as ApiEnvelope<WardsResponse>;
+        if (controller.signal.aborted) return;
+        if (response.ok && payload.success) {
+          setWards(payload.data.wards);
+          setWardsError(null);
+        } else {
+          setWardsError(messageFromPayload(payload, "Unable to load the ward occupancy."));
+        }
+      } catch {
+        if (!controller.signal.aborted) setWardsError("Unable to reach the admissions service.");
+      } finally {
+        if (!controller.signal.aborted) setWardsLoading(false);
+      }
+    }
+    void loadWards();
+    return () => controller.abort();
+  }, [ready, refreshToken]);
+
+  /* ---------------- census ---------------- */
+  useEffect(() => {
+    if (!ready) return;
+    const controller = new AbortController();
+    async function loadQueue() {
+      setQueueLoading(true);
+      try {
+        const response = await fetch(worklistPath({ lane, wardId, q: debouncedSearch || null }), {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const payload = (await response.json()) as ApiEnvelope<AdmissionWorklistResponse>;
+        if (controller.signal.aborted) return;
+        if (!response.ok || !payload.success) {
+          setRows([]);
+          setSummary(null);
+          setQueueError(messageFromPayload(payload, "Unable to load the admissions census."));
+          return;
+        }
+        setRows(payload.data.rows);
+        setSummary(payload.data.summary);
+        setTruncated(payload.data.meta.truncated);
+        setQueueError(null);
+      } catch {
+        if (!controller.signal.aborted) {
+          setRows([]);
+          setSummary(null);
+          setQueueError("Unable to reach the admissions service.");
+        }
+      } finally {
+        if (!controller.signal.aborted) setQueueLoading(false);
+      }
+    }
+    void loadQueue();
+    return () => controller.abort();
+  }, [ready, lane, wardId, debouncedSearch, refreshToken]);
+
+  /* ---------------- bed board: follows the ward filter only ---------------- */
+  useEffect(() => {
+    if (!ready) return;
+    const controller = new AbortController();
+    async function loadBeds() {
+      setBedsLoading(true);
+      try {
+        const response = await fetch(bedsPath({ wardId }), { cache: "no-store", signal: controller.signal });
+        const payload = (await response.json()) as ApiEnvelope<BedsResponse>;
+        if (controller.signal.aborted) return;
+        if (response.ok && payload.success) {
+          setBeds(payload.data.beds);
+          setBedsError(null);
+        } else {
+          setBeds([]);
+          setBedsError(messageFromPayload(payload, "Unable to load the bed board."));
+        }
+      } catch {
+        if (!controller.signal.aborted) {
+          setBeds([]);
+          setBedsError("Unable to reach the admissions service.");
+        }
+      } finally {
+        if (!controller.signal.aborted) setBedsLoading(false);
+      }
+    }
+    void loadBeds();
+    return () => controller.abort();
+  }, [ready, wardId, refreshToken]);
+
+  const activeId = useMemo(
+    () => pinnedId ?? resolveSelection(rows, selectedId),
+    [pinnedId, rows, selectedId],
+  );
+
+  /* ---------------- selected / pinned admission ---------------- */
+  useEffect(() => {
+    if (!ready || activeId === null) return;
+    const controller = new AbortController();
+    async function loadDetail(admissionId: number) {
+      setDetailLoading(true);
+      setDetailError(null);
+      try {
+        const response = await fetch(admissionPath(admissionId), { cache: "no-store", signal: controller.signal });
+        const payload = (await response.json()) as ApiEnvelope<AdmissionDetailResponse>;
+        if (controller.signal.aborted) return;
+        if (!response.ok || !payload.success) {
+          if (detailRef.current?.id === admissionId) {
+            setDetailStale(true);
+            return;
+          }
+          setDetail(null);
+          setDetailError(messageFromPayload(payload, "Unable to load the selected admission."));
+          return;
+        }
+        setDetail(payload.data.admission);
+        setDetailStale(false);
+      } catch {
+        if (controller.signal.aborted) return;
+        if (detailRef.current?.id === admissionId) {
+          setDetailStale(true);
+          return;
+        }
+        setDetail(null);
+        setDetailError("Unable to reach the admissions service.");
+      } finally {
+        if (!controller.signal.aborted) setDetailLoading(false);
+      }
+    }
+    void loadDetail(activeId);
+    return () => controller.abort();
+  }, [ready, activeId, refreshToken]);
+
+  const refresh = useCallback(() => setRefreshToken((token) => token + 1), []);
+
+  const selectRow = useCallback((admissionId: number) => {
+    setPinnedId(null);
+    setSelectedId(admissionId);
+  }, []);
+
+  const pinFromBed = useCallback((admissionId: number) => {
+    setPinnedId(admissionId);
+  }, []);
+
+  const changeWard = useCallback((next: number | null) => {
+    setWardId(next);
+    setPinnedId(null);
+  }, []);
+
+  const shownDetail = detail && detail.id === activeId ? detail : null;
+
+  if (deskAllowed === false) {
+    return (
+      <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 cl-body text-amber-900">
+        <span className="font-bold">This is not your workstation.</span> The Admissions Desk is open to
+        reception, nursing, doctors, hospital managers and system administrators. Pharmacy, laboratory
+        and billing work continue on their own desks.
+      </div>
+    );
+  }
+
+  if (deskAllowed === null) {
+    return (
+      <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 cl-body text-slate-500">
+        {sessionError ?? "Opening the Admissions Desk…"}
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid h-full min-h-[720px] grid-rows-[auto_auto_minmax(0,1fr)_minmax(200px,34%)] gap-2">
+      <WardOccupancyStrip
+        wards={wards}
+        selectedWardId={wardId}
+        loading={wardsLoading}
+        error={wardsError}
+        onSelect={changeWard}
+      />
+
+      <AdmissionsToolbar
+        lane={lane}
+        search={search}
+        summary={summary}
+        loading={queueLoading}
+        roleLabel={deskRoleLabel(session)}
+        scopeText={scopeLabel(session?.scope)}
+        onLaneChange={setLane}
+        onSearchChange={setSearch}
+        onRefresh={refresh}
+      />
+
+      <div className="grid min-h-0 gap-2 min-[1100px]:grid-cols-[minmax(420px,44%)_minmax(0,1fr)]">
+        <AdmissionsQueue
+          rows={rows}
+          selectedId={pinnedId === null ? activeId : null}
+          loading={queueLoading}
+          error={queueError}
+          truncated={truncated}
+          emptyMessage={emptyQueueMessage(session?.scope, lane)}
+          onSelect={selectRow}
+        />
+        <AdmissionDetailPanel
+          detail={shownDetail}
+          loading={detailLoading}
+          error={activeId !== null ? detailError : null}
+          empty={rows.length === 0 && pinnedId === null}
+          stale={detailStale && shownDetail !== null}
+        />
+      </div>
+
+      <BedBoard
+        beds={beds}
+        loading={bedsLoading}
+        error={bedsError}
+        pinnedAdmissionId={pinnedId}
+        onPin={pinFromBed}
+      />
+    </div>
+  );
+}

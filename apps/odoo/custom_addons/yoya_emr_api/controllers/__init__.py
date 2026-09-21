@@ -10,3 +10,4 @@ from . import doctor
 from . import laboratory
 from . import radiology
 from . import pharmacy
+from . import admissions

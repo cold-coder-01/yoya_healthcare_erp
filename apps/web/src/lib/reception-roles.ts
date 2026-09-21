@@ -73,6 +73,18 @@ export type ReceptionRoles = {
    * manager and an admin read FALSE.
    */
   pharmacist: boolean;
+  /**
+   * Membership of hospital_management.group_hospital_nurse (Admissions Desk).
+   *
+   * WIDE, like `doctor`: Manager implies Nurse and Front Desk Nurse implies
+   * Nurse, so a manager, an admin and a front desk nurse all read TRUE. It is
+   * never routed on by itself -- only through isWardOnlyNurse(), which also
+   * requires every other role in this type to be false.
+   *
+   * An Odoo instance that predates the flag sends no key; parseReceptionRoles
+   * reads that as false and the user keeps the landing page they had.
+   */
+  nurse: boolean;
 };
 
 export const RECEPTION_ROUTE = "/reception";
@@ -84,6 +96,7 @@ export const DOCTOR_ROUTE = "/doctor";
 export const LABORATORY_ROUTE = "/laboratory";
 export const RADIOLOGY_ROUTE = "/radiology";
 export const PHARMACY_ROUTE = "/pharmacy";
+export const ADMISSIONS_ROUTE = "/admissions";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -109,6 +122,7 @@ export function parseReceptionRoles(value: unknown): ReceptionRoles | null {
     "radiology_technician",
     "radiologist",
     "pharmacist",
+    "nurse",
   ];
   if (!known.some((key) => key in value)) {
     return null;
@@ -130,7 +144,72 @@ export function parseReceptionRoles(value: unknown): ReceptionRoles | null {
     radiology_technician: flag("radiology_technician"),
     radiologist: flag("radiologist"),
     pharmacist: flag("pharmacist"),
+    nurse: flag("nurse"),
   };
+}
+
+/**
+ * A DEDICATED WARD NURSE: Hospital Nurse and nothing else this type knows of.
+ *
+ * POSITIVE MEMBERSHIP FIRST. `nurse` must be TRUE -- it is never inferred from
+ * the absence of other roles, which is how every plain nurse used to be
+ * dropped on /triage and would be the same mistake pointed the other way.
+ *
+ * THEN CONSERVATIVE. Any other role disqualifies, because each one means the
+ * user has another workstation that needs the shared navigation:
+ *
+ *   * manager / system_administrator -- they IMPLY nurse (so they read nurse
+ *     true) and must keep the multi-workstation landing;
+ *   * front_desk_nurse -- implies nurse too, and owns /front-desk;
+ *   * receptionist, doctor, cashier, accountant, insurance officer, emergency
+ *     authorizer, lab, radiology, pharmacy -- each has its own desk.
+ *
+ * Unknown roles (null) are never ward-only.
+ *
+ * A LANDING ROUTE IS NOT A PERMISSION. /admissions/* is gated server-side by
+ * may_admissions_desk() and the nurse's ward scope by the record rules.
+ */
+export function isWardOnlyNurse(roles: ReceptionRoles | null): boolean {
+  if (!roles || roles.nurse !== true) {
+    return false;
+  }
+  return !(
+    roles.front_desk_nurse ||
+    roles.receptionist ||
+    roles.cashier ||
+    roles.accountant ||
+    roles.manager ||
+    roles.system_administrator ||
+    roles.emergency_authorizer ||
+    roles.insurance_officer ||
+    roles.doctor ||
+    roles.lab_technician ||
+    roles.radiology_technician ||
+    roles.radiologist ||
+    roles.pharmacist
+  );
+}
+
+/**
+ * Admissions Desk visibility.
+ *
+ * Mirrors the server's ADMISSIONS_DESK_GROUPS (yoya_emr_api reception_scope):
+ * Receptionist, Nurse (incl. Front Desk Nurse, which implies it), Doctor,
+ * Manager, System Administrator. Decides what is OFFERED; the server decides
+ * what is allowed, and the record rules decide which admissions are seen.
+ */
+export function canUseAdmissionsDesk(roles: ReceptionRoles | null): boolean {
+  if (!roles) {
+    return false;
+  }
+  return (
+    roles.receptionist ||
+    roles.nurse ||
+    roles.front_desk_nurse ||
+    roles.doctor ||
+    roles.manager ||
+    roles.system_administrator
+  );
 }
 
 /**
@@ -177,6 +256,11 @@ export function canUseClinical(roles: ReceptionRoles | null): boolean {
   }
   if (roles.front_desk_nurse || roles.manager || roles.system_administrator) {
     return true;
+  }
+  // A dedicated ward nurse works the Admissions Desk, not the Evaluation
+  // Queue; /triage redirects them to /admissions, so the link is not offered.
+  if (isWardOnlyNurse(roles)) {
+    return false;
   }
   return !roles.receptionist;
 }
@@ -340,6 +424,15 @@ export function landingRouteForRoles(roles: ReceptionRoles | null): string {
   // the desk's own "not your workstation" banner and 403 on every data call.
   if (roles?.pharmacist === true) {
     return PHARMACY_ROUTE;
+  }
+  // LAST before the clinical fallback. isWardOnlyNurse() is true only when
+  // `nurse` is TRUE and EVERY other role is false, so it is disjoint from every
+  // branch above: no user who lands anywhere else today can be moved by it,
+  // and manager / admin / front desk nurse (who all imply nurse) never reach
+  // it. What it changes is exactly one case -- the dedicated ward nurse, who
+  // used to fall through to the Evaluation Queue by elimination.
+  if (isWardOnlyNurse(roles)) {
+    return ADMISSIONS_ROUTE;
   }
   return CLINICAL_ROUTE;
 }

@@ -50,6 +50,10 @@ function roles(overrides: Partial<ReceptionRoles> = {}): ReceptionRoles {
     radiology_technician: false,
     radiologist: false,
     pharmacist: false,
+    // Default FALSE: this is also the shape of a payload from an Odoo instance
+    // that predates the flag, so every "plain nurse -> /triage" test below
+    // doubles as the no-upgrade fallback.
+    nurse: false,
     ...overrides,
   };
 }
@@ -63,7 +67,7 @@ function roles(overrides: Partial<ReceptionRoles> = {}): ReceptionRoles {
  * and would not catch a precedence regression that moved managers to /doctor.
  */
 function managerRoles(overrides: Partial<ReceptionRoles> = {}): ReceptionRoles {
-  return roles({ manager: true, receptionist: true, doctor: true, ...overrides });
+  return roles({ manager: true, receptionist: true, doctor: true, nurse: true, ...overrides });
 }
 
 function adminRoles(overrides: Partial<ReceptionRoles> = {}): ReceptionRoles {
@@ -72,6 +76,7 @@ function adminRoles(overrides: Partial<ReceptionRoles> = {}): ReceptionRoles {
     manager: true,
     receptionist: true,
     doctor: true,
+    nurse: true,
     ...overrides,
   });
 }

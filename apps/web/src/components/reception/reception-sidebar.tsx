@@ -1,6 +1,8 @@
 import Link from "next/link";
 
 import {
+  ADMISSIONS_ROUTE,
+  canUseAdmissionsDesk,
   canUseCashier,
   canUseInsuranceCredit,
   canUseClinical,
@@ -35,6 +37,11 @@ export default function ReceptionSidebar({
   // who lands elsewhere. A landing route is a default, not a restriction.
   const showCashier = canUseCashier(roles);
   const showInsuranceCredit = canUseInsuranceCredit(roles);
+  // The Admissions Desk for the multi-workstation roles this sidebar serves
+  // (reception, manager, admin). A Front Desk Nurse's workspace stays the one
+  // destination B2.2 made it; a dedicated ward nurse never sees this shell --
+  // they land on /admissions, whose own header carries sign-out.
+  const showAdmissions = canUseAdmissionsDesk(roles) && !showFrontDesk;
 
   // B2.2 RETIRED THE SCAFFOLDING.
   //
@@ -65,6 +72,7 @@ export default function ReceptionSidebar({
       href: "/triage",
       visible: showClinical && !showFrontDesk,
     },
+    { label: "Admissions Desk", href: ADMISSIONS_ROUTE, visible: showAdmissions },
     { label: "Cashier Desk", href: CASHIER_ROUTE, visible: showCashier },
     {
       label: "Insurance / Credit",

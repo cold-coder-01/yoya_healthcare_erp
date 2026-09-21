@@ -7,7 +7,7 @@ const items = [
   { label: "Laboratory", href: "#", disabled: true },
   { label: "Radiology", href: "#", disabled: true },
   { label: "Pharmacy", href: "#", disabled: true },
-  { label: "Inpatient", href: "#", disabled: true },
+  { label: "Inpatient", href: "/admissions", disabled: false },
   { label: "Billing", href: "#", disabled: true },
   { label: "Reports", href: "#", disabled: true },
 ];
