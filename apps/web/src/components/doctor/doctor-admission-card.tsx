@@ -7,6 +7,9 @@ import {
   UNKNOWN_OUTCOME_NOTICE,
   admissionRequestBody,
   admissionRequestPath,
+  cancelRequestBody,
+  cancelRequestPath,
+  cancelRequestSignature,
   cleanReason,
   isResolved,
   requestSignature,
@@ -17,6 +20,7 @@ import { formatLengthOfStay } from "@/lib/admissions-desk-format";
 import { messageFromPayload } from "@/lib/api-error";
 import { formatHospitalDateTime } from "@/lib/clinical-format";
 import type {
+  AdmissionCancelRequestResponse,
   ApiEnvelope,
   DoctorAdmissionRequestResponse,
   DoctorAdmissionSummary,
@@ -28,16 +32,20 @@ const STATUS_TONE: Record<DoctorAdmissionSummary["status"], string> = {
   none: "border-slate-200 bg-slate-50 text-slate-700",
   requested: "border-amber-300 bg-amber-50 text-amber-900",
   admitted: "border-sky-300 bg-sky-50 text-sky-900",
+  transferred: "border-sky-300 bg-sky-50 text-sky-900",
   discharged: "border-slate-300 bg-slate-100 text-slate-700",
   cancelled: "border-slate-300 bg-slate-100 text-slate-600",
 };
 
 /**
- * ADMISSION on the Doctor Desk (Admissions Slice 2).
+ * ADMISSION on the Doctor Desk (Admissions Slices 2-3).
  *
  * The doctor REQUESTS an admission; the Admissions Desk chooses the bed and
- * admits. So this card has exactly one action, "Request admission", and it
- * never offers a ward, room or bed. Transfer and discharge are not here.
+ * admits. So this card offers "Request admission" -- never a ward, room or bed
+ * -- and, while their own request is still a draft, "Cancel request" (Slice
+ * 3), offered only on the server's `can_cancel_request`. A transferred patient
+ * is shown at their CURRENT ward / room / bed. Transfer and discharge are not
+ * here.
  *
  * Whether the request is offered is the SERVER's `can_request`; when it is
  * not, the server's reason is shown instead. The card keeps the summary the
@@ -62,7 +70,7 @@ export default function DoctorAdmissionCard({
    *  replaced is still the one passed in; a visit reload supersedes it. */
   const [returned, setReturned] = useState<{ basis: DoctorAdmissionSummary | undefined; value: DoctorAdmissionSummary } | null>(null);
   const summary = returned && returned.basis === initial ? returned.value : initial;
-  const [step, setStep] = useState<"idle" | "write" | "confirm">("idle");
+  const [step, setStep] = useState<"idle" | "write" | "confirm" | "cancel">("idle");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -70,7 +78,7 @@ export default function DoctorAdmissionCard({
   const backRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    if (step === "confirm") backRef.current?.focus();
+    if (step === "confirm" || step === "cancel") backRef.current?.focus();
   }, [step]);
 
   if (!summary) return null;
@@ -127,6 +135,56 @@ export default function DoctorAdmissionCard({
     setStep("write");
   }
 
+  async function cancelRequest() {
+    if (busy || !admission || !summary?.can_cancel_request) return;
+    const signature = cancelRequestSignature(admission.workflow_revision);
+    const token = tokenFor(pendingRef.current, "cancel_request", admission.id, signature, () => crypto.randomUUID());
+    pendingRef.current = { kind: "cancel_request", targetId: admission.id, signature, token };
+
+    setBusy(true);
+    let status: number | null = null;
+    let payload: ApiEnvelope<AdmissionCancelRequestResponse> | null = null;
+    try {
+      const response = await fetch(cancelRequestPath(admission.id), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cancelRequestBody(admission.workflow_revision, token)),
+        cache: "no-store",
+      });
+      status = response.status;
+      payload = (await response.json()) as ApiEnvelope<AdmissionCancelRequestResponse>;
+    } catch {
+      payload = null;
+    } finally {
+      setBusy(false);
+    }
+
+    if (!isResolved(status, payload !== null)) {
+      setNotice({ tone: "amber", text: UNKNOWN_OUTCOME_NOTICE });
+      return;
+    }
+    pendingRef.current = null;
+
+    if (payload && payload.success) {
+      if (payload.data.doctor_admission) {
+        setReturned({ basis: initial, value: payload.data.doctor_admission });
+      }
+      setStep("idle");
+      setNotice({
+        tone: "green",
+        text: payload.data.operation.replayed
+          ? "The admission request was already cancelled."
+          : "Admission request cancelled.",
+      });
+      return;
+    }
+    setNotice({
+      tone: "red",
+      text: messageFromPayload(payload, "The request could not be cancelled. Nothing was changed."),
+    });
+    setStep("idle");
+  }
+
   const statusLine = (
     <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
       <span className="cl-micro font-bold uppercase tracking-[0.07em] text-slate-500">Admission</span>
@@ -170,7 +228,50 @@ export default function DoctorAdmissionCard({
             Request admission…
           </button>
         ) : null}
+        {summary.can_cancel_request && step === "idle" ? (
+          <button
+            type="button"
+            onClick={() => {
+              setNotice(null);
+              setStep("cancel");
+            }}
+            className="h-7 shrink-0 rounded-md border border-red-300 bg-white px-2.5 cl-meta font-bold text-red-800 hover:bg-red-50"
+          >
+            Cancel request…
+          </button>
+        ) : null}
       </div>
+
+      {step === "cancel" && admission ? (
+        <div role="group" aria-label="Confirm cancelling the admission request" className="flex flex-col gap-1.5 rounded-md border border-red-200 bg-red-50/60 px-2 py-1.5">
+          <p className="cl-body text-slate-800">
+            Cancel this admission request? The patient has not been admitted and no bed is occupied.
+          </p>
+          <div className="flex justify-end gap-2">
+            <button
+              ref={backRef}
+              type="button"
+              disabled={busy}
+              onClick={() => setStep("idle")}
+              className="h-7 rounded-md border border-slate-300 bg-white px-2.5 cl-meta font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+            >
+              Keep request
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={(event) => {
+                // Pointer only: a keyboard-activated click reports detail 0.
+                if (event.detail === 0) return;
+                void cancelRequest();
+              }}
+              className="h-7 rounded-md bg-red-700 px-2.5 cl-meta font-bold text-white hover:bg-red-800 disabled:opacity-40"
+            >
+              {busy ? "Cancelling…" : "Cancel request"}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {!summary.can_request && summary.request_blocked_message && summary.status === "none" ? (
         <p className="cl-meta text-slate-500">{summary.request_blocked_message}</p>

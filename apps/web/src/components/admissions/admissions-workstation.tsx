@@ -7,10 +7,16 @@ import {
   admitBody,
   admitPath,
   admitSignature,
+  cancelRequestBody,
+  cancelRequestPath,
+  cancelRequestSignature,
   isResolved,
   needsBedRefresh,
   needsReload,
   tokenFor,
+  transferBody,
+  transferPath,
+  transferSignature,
   type PendingAdmissionOperation,
 } from "@/lib/admissions-desk-actions";
 import { codeFromPayload, messageFromPayload } from "@/lib/api-error";
@@ -28,10 +34,12 @@ import {
 } from "@/lib/admissions-desk-format";
 import type {
   AdmissionAdmitResponse,
+  AdmissionCancelRequestResponse,
   AdmissionDeskSession,
   AdmissionDetail,
   AdmissionDetailResponse,
   AdmissionLaneSummary,
+  AdmissionTransferResponse,
   AdmissionWorklistResponse,
   AdmissionWorklistRow,
   ApiEnvelope,
@@ -42,6 +50,8 @@ import type {
 } from "@/types/admissions-desk";
 
 import AdmitDialog from "./admit-dialog";
+import CancelRequestDialog from "./cancel-request-dialog";
+import TransferDialog from "./transfer-dialog";
 import AdmissionDetailPanel from "./admission-detail-panel";
 import AdmissionsQueue from "./admissions-queue";
 import AdmissionsToolbar from "./admissions-toolbar";
@@ -54,12 +64,13 @@ import WardOccupancyStrip from "./ward-occupancy-strip";
  * WARD STRIP and LANE TABS on top; the CENSUS left and the PINNED ADMISSION
  * right; the BED BOARD below. Every read is a GET to /api/admissions/*.
  *
- * ONE WRITE (Slice 2): Admit to bed, a POST to /api/admissions/[id]/admit,
- * sent ONCE per confirmed action with one operation token. If the outcome is
- * unknown the token is kept, so a retry replays rather than admitting twice.
- * The returned admission is PINNED and shown as-is -- it is the authoritative
- * result -- and the census, wards and bed board are then reloaded. Transfer and
- * discharge do not exist here.
+ * THREE WRITES, ONE SHAPE: Admit to bed (Slice 2), Transfer patient and Cancel
+ * request (Slice 3) -- POSTs to /api/admissions/[id]/{admit,transfer,
+ * cancel-request}, each sent ONCE per confirmed action with one operation
+ * token. If the outcome is unknown the token is kept, so a retry replays
+ * rather than acting twice. The returned admission is PINNED and shown as-is
+ * -- it is the authoritative result -- and the census, wards and bed board are
+ * then reloaded. Discharge does not exist here (Slice 4).
  *
  * NOTHING LOADS BEFORE THE ROLE IS KNOWN. The session is read first; a caller
  * the server refuses sees "This is not your workstation" and no census, bed or
@@ -116,7 +127,14 @@ export default function AdmissionsWorkstation() {
   const [admitBusy, setAdmitBusy] = useState(false);
   const [admitMessage, setAdmitMessage] = useState<ActionMessage | null>(null);
   const [actionMessage, setActionMessage] = useState<ActionMessage | null>(null);
-  /** The admit whose outcome is unknown; a retry of the same request reuses it. */
+  /* ---- Transfer and Cancel request (Slice 3) ---- */
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferBusy, setTransferBusy] = useState(false);
+  const [transferMessage, setTransferMessage] = useState<ActionMessage | null>(null);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [cancelMessage, setCancelMessage] = useState<ActionMessage | null>(null);
+  /** The act whose outcome is unknown; a retry of the same request reuses it. */
   const pendingRef = useRef<PendingAdmissionOperation | null>(null);
   useEffect(() => {
     detailRef.current = detail;
@@ -308,6 +326,8 @@ export default function AdmissionsWorkstation() {
 
   const shownDetail = detail && detail.id === activeId ? detail : null;
   const mayAdmit = session?.capabilities.admit === true;
+  const mayTransfer = session?.capabilities.transfer === true;
+  const mayCancelRequest = session?.capabilities.cancel_request === true;
 
   /* ---------------- admit ---------------- */
   const loadAvailableBeds = useCallback(async () => {
@@ -409,6 +429,157 @@ export default function AdmissionsWorkstation() {
     [admitBusy, loadAvailableBeds, shownDetail],
   );
 
+  /* ---------------- transfer (Slice 3) ---------------- */
+  const openTransfer = useCallback(() => {
+    setActionMessage(null);
+    setTransferMessage(null);
+    setTransferOpen(true);
+    void loadAvailableBeds();
+  }, [loadAvailableBeds]);
+
+  const closeTransfer = useCallback(() => {
+    if (transferBusy) return;
+    setTransferOpen(false);
+    setTransferMessage(null);
+  }, [transferBusy]);
+
+  const submitTransfer = useCallback(
+    async (bedId: number, reason: string) => {
+      const current = shownDetail;
+      if (!current || transferBusy) return;
+      const signature = transferSignature(current.workflow_revision, bedId, reason);
+      const token = tokenFor(pendingRef.current, "transfer", current.id, signature, () => crypto.randomUUID());
+      pendingRef.current = { kind: "transfer", targetId: current.id, signature, token };
+
+      setTransferBusy(true);
+      let status: number | null = null;
+      let payload: ApiEnvelope<AdmissionTransferResponse> | null = null;
+      try {
+        const response = await fetch(transferPath(current.id), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(transferBody(current.workflow_revision, bedId, reason, token)),
+          cache: "no-store",
+        });
+        status = response.status;
+        payload = (await response.json()) as ApiEnvelope<AdmissionTransferResponse>;
+      } catch {
+        payload = null;
+      } finally {
+        setTransferBusy(false);
+      }
+
+      if (!isResolved(status, payload !== null)) {
+        // Outcome unknown: keep the token so a retry replays, never re-applies.
+        setTransferMessage({ tone: "amber", text: UNKNOWN_OUTCOME_NOTICE });
+        return;
+      }
+      pendingRef.current = null;
+
+      if (payload && payload.success) {
+        const updated = payload.data.admission;
+        setDetail(updated);
+        setDetailStale(false);
+        setPinnedId(updated.id);
+        setSelectedId(updated.id);
+        setTransferOpen(false);
+        setTransferMessage(null);
+        setActionMessage({
+          tone: "green",
+          text: payload.data.operation.replayed
+            ? `Already transferred: ${updated.reference}.`
+            : `Transferred ${updated.reference} to ${updated.location.bed?.code ?? updated.location.bed?.name ?? "the bed"}.`,
+        });
+        setRefreshToken((value) => value + 1);
+        return;
+      }
+
+      const code = codeFromPayload(payload);
+      setTransferMessage({
+        tone: "red",
+        text: messageFromPayload(payload, "The transfer could not be completed. Nothing was changed."),
+      });
+      if (needsBedRefresh(code)) {
+        void loadAvailableBeds();
+      }
+      if (needsReload(code)) {
+        setRefreshToken((value) => value + 1);
+      }
+    },
+    [loadAvailableBeds, shownDetail, transferBusy],
+  );
+
+  /* ---------------- cancel request (Slice 3) ---------------- */
+  const openCancel = useCallback(() => {
+    setActionMessage(null);
+    setCancelMessage(null);
+    setCancelOpen(true);
+  }, []);
+
+  const closeCancel = useCallback(() => {
+    if (cancelBusy) return;
+    setCancelOpen(false);
+    setCancelMessage(null);
+  }, [cancelBusy]);
+
+  const submitCancel = useCallback(async () => {
+    const current = shownDetail;
+    if (!current || cancelBusy) return;
+    const signature = cancelRequestSignature(current.workflow_revision);
+    const token = tokenFor(pendingRef.current, "cancel_request", current.id, signature, () => crypto.randomUUID());
+    pendingRef.current = { kind: "cancel_request", targetId: current.id, signature, token };
+
+    setCancelBusy(true);
+    let status: number | null = null;
+    let payload: ApiEnvelope<AdmissionCancelRequestResponse> | null = null;
+    try {
+      const response = await fetch(cancelRequestPath(current.id), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cancelRequestBody(current.workflow_revision, token)),
+        cache: "no-store",
+      });
+      status = response.status;
+      payload = (await response.json()) as ApiEnvelope<AdmissionCancelRequestResponse>;
+    } catch {
+      payload = null;
+    } finally {
+      setCancelBusy(false);
+    }
+
+    if (!isResolved(status, payload !== null)) {
+      setCancelMessage({ tone: "amber", text: UNKNOWN_OUTCOME_NOTICE });
+      return;
+    }
+    pendingRef.current = null;
+
+    if (payload && payload.success) {
+      const updated = payload.data.admission;
+      setDetail(updated);
+      setDetailStale(false);
+      setPinnedId(updated.id);
+      setSelectedId(updated.id);
+      setCancelOpen(false);
+      setCancelMessage(null);
+      setActionMessage({
+        tone: "green",
+        text: payload.data.operation.replayed
+          ? `Already cancelled: ${updated.reference}.`
+          : `Admission request ${updated.reference} cancelled.`,
+      });
+      setRefreshToken((value) => value + 1);
+      return;
+    }
+
+    setCancelMessage({
+      tone: "red",
+      text: messageFromPayload(payload, "The request could not be cancelled. Nothing was changed."),
+    });
+    if (needsReload(codeFromPayload(payload))) {
+      setRefreshToken((value) => value + 1);
+    }
+  }, [cancelBusy, shownDetail]);
+
   if (deskAllowed === false) {
     return (
       <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 cl-body text-amber-900">
@@ -466,8 +637,12 @@ export default function AdmissionsWorkstation() {
           empty={rows.length === 0 && pinnedId === null}
           stale={detailStale && shownDetail !== null}
           mayAdmit={mayAdmit}
+          mayTransfer={mayTransfer}
+          mayCancelRequest={mayCancelRequest}
           actionMessage={actionMessage}
           onRequestAdmit={openAdmit}
+          onRequestTransfer={openTransfer}
+          onRequestCancel={openCancel}
         />
       </div>
 
@@ -489,6 +664,29 @@ export default function AdmissionsWorkstation() {
           message={admitMessage}
           onConfirm={(bedId) => void submitAdmit(bedId)}
           onClose={closeAdmit}
+        />
+      ) : null}
+
+      {transferOpen && shownDetail && mayTransfer ? (
+        <TransferDialog
+          detail={shownDetail}
+          beds={admitBeds}
+          bedsLoading={admitBedsLoading}
+          bedsError={admitBedsError}
+          busy={transferBusy}
+          message={transferMessage}
+          onConfirm={(bedId, reason) => void submitTransfer(bedId, reason)}
+          onClose={closeTransfer}
+        />
+      ) : null}
+
+      {cancelOpen && shownDetail && mayCancelRequest ? (
+        <CancelRequestDialog
+          detail={shownDetail}
+          busy={cancelBusy}
+          message={cancelMessage}
+          onConfirm={() => void submitCancel()}
+          onClose={closeCancel}
         />
       ) : null}
     </div>

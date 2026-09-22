@@ -49,7 +49,13 @@ class HospitalAdmissionOperation(models.Model):
         readonly=True,
     )
     operation_type = fields.Selection(
-        [("request", "Request Admission"), ("admit", "Admit")],
+        [
+            ("request", "Request Admission"),
+            ("admit", "Admit"),
+            # Admissions Slice 3.
+            ("transfer", "Transfer"),
+            ("cancel_request", "Cancel Request"),
+        ],
         required=True,
         readonly=True,
     )

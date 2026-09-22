@@ -218,6 +218,55 @@ BED_OCCUPANCY_FIELDS = (
     "current_admission_id",
 )
 
+# WHAT THE STAY COSTS PER DAY, frozen when the patient enters a bed (Admissions
+# Slice 3). The ward, room and bed rates are ordinary catalogue fields a manager
+# may edit at any time; a stay that has already happened must not reprice when
+# they do. Written only under admission_rate_snapshot_capability(), by the
+# confirmation step that occupies the bed.
+ADMISSION_RATE_SNAPSHOT_FIELDS = (
+    "rate_snapshot_taken",
+    "rate_snapshot_origin",
+    "rate_snapshot_basis",
+    "rate_snapshot_daily_rate",
+    "rate_snapshot_admission_fee",
+)
+
+# Which catalogue rate a snapshot came from. The precedence is the one the
+# legacy bill always used: a bed rate above zero, else a room rate above zero,
+# else the ward rate.
+RATE_BASIS_SELECTION = [
+    ("bed", "Bed daily rate"),
+    ("room", "Room daily rate"),
+    ("ward", "Ward daily rate"),
+    ("none", "No rate configured"),
+]
+
+RATE_SNAPSHOT_ORIGIN_SELECTION = [
+    ("workflow", "Recorded by the workflow"),
+    # Rows that existed before Slice 3 had no snapshot. The upgrade froze the
+    # catalogue rate in force AT UPGRADE TIME -- which is exactly what the
+    # legacy bill would have used -- and labels it so, rather than pretending
+    # it was recorded when the patient moved.
+    ("upgrade_backfill", "Backfilled at upgrade"),
+]
+
+
+def resolve_location_rate(ward, room, bed):
+    """(daily_rate, basis) for a location, by the legacy bill's precedence.
+
+    THE ONE PLACE this precedence lives. The admission snapshot, the transfer
+    snapshot, the draft preview and the upgrade backfill all use it, so a
+    snapshot can never have been taken by a different rule than the one the
+    bill used before snapshots existed.
+    """
+    if bed and bed.daily_bed_rate > 0:
+        return bed.daily_bed_rate, "bed"
+    if room and room.daily_room_rate > 0:
+        return room.daily_room_rate, "room"
+    if ward:
+        return ward.daily_ward_rate, "ward"
+    return 0.0, "none"
+
 
 # ---------------------------------------------------------------------------
 # Refusals
@@ -304,6 +353,23 @@ ADMISSION_ERROR_MESSAGES = {
     ),
     "admission_company_mismatch": (
         "The ward, room or bed belongs to a different company than this admission."
+    ),
+    # Admissions Slice 3.
+    "admission_transfer_not_authorized": (
+        "Only the admissions clerk, a hospital manager or a system administrator "
+        "may transfer an admitted patient. Nothing was changed."
+    ),
+    "admission_rate_snapshot_write_refused": (
+        "An admission's stay rate is recorded by the admission and transfer workflow "
+        "and cannot be written directly. Nothing was changed."
+    ),
+    "admission_transfer_history_refused": (
+        "Transfer history is written by the Transfer action and cannot be created, "
+        "changed or deleted directly. Nothing was changed."
+    ),
+    "admission_timeline_incoherent": (
+        "The transfer time would fall before the start of the patient's current stay "
+        "segment. Nothing was changed."
     ),
 }
 
@@ -402,6 +468,46 @@ def has_admission_operation_capability():
     return _admission_operation_var.get()
 
 
+# ===========================================================================
+# ADMISSIONS SLICE 3: stay segmentation, transfer and request cancellation
+# ===========================================================================
+#
+# Two more capabilities, same shape as every other one in this file:
+#
+#   * rate snapshot     -- raised ONLY by HospitalAdmission._take_opening_rate_snapshot(),
+#                          opens ADMISSION_RATE_SNAPSHOT_FIELDS and nothing else;
+#   * transfer history  -- raised ONLY by HospitalAdmission.action_transfer(),
+#                          opens the creation of ONE hospital.admission.transfer row.
+#
+# Transfer history is what the stay is priced from: every row starts a new
+# billed segment. A row created, edited or deleted by anything other than the
+# transfer workflow would move money between segments without moving a patient.
+_admission_rate_snapshot_var = contextvars.ContextVar(
+    "hospital_admission_rate_snapshot_capability", default=False
+)
+_admission_transfer_history_var = contextvars.ContextVar(
+    "hospital_admission_transfer_history_capability", default=False
+)
+
+
+def admission_rate_snapshot_capability():
+    """Raised ONLY by HospitalAdmission._take_opening_rate_snapshot()."""
+    return _raised(_admission_rate_snapshot_var)
+
+
+def has_admission_rate_snapshot_capability():
+    return _admission_rate_snapshot_var.get()
+
+
+def admission_transfer_history_capability():
+    """Raised ONLY by HospitalAdmission.action_transfer()."""
+    return _raised(_admission_transfer_history_var)
+
+
+def has_admission_transfer_history_capability():
+    return _admission_transfer_history_var.get()
+
+
 # WHO MAY DO WHAT, decided in the MODEL so every channel obeys it. The HTTP gate
 # in yoya_emr_api is a fail-fast in front of these, never the only control.
 G_RECEPTIONIST = "hospital_management.group_hospital_receptionist"
@@ -417,6 +523,26 @@ DESK_ADMIT_GROUPS = (G_RECEPTIONIST, G_MANAGER, G_SYSADMIN)
 # Request an admission from a visit. The visit's OWN doctor, or oversight. The
 # model checks the doctor half against the appointment, not just the group.
 DESK_REQUEST_OVERSIGHT_GROUPS = (G_MANAGER, G_SYSADMIN)
+
+# Move an admitted patient to another bed (Slice 3). The same people who put a
+# patient into a bed: a bed move is a bed assignment. NOT the doctor (who asks
+# for inpatient care, not for a bed), NOT the ward nurse or the front-desk nurse
+# (no documented bed-assignment duty), and none of pharmacy, laboratory, DPO or
+# cashier. Enforced in action_transfer() itself, so the backend wizard obeys it
+# too; the desk re-checks it before reading a row.
+DESK_TRANSFER_GROUPS = (G_RECEPTIONIST, G_MANAGER, G_SYSADMIN)
+
+# Cancel a DRAFT admission request (Slice 3): the admissions clerk, who works
+# the queue the request sits in, and oversight. The requesting doctor may also
+# cancel THEIR OWN request -- checked against the admission's physician, not the
+# group alone.
+DESK_CANCEL_REQUEST_GROUPS = (G_RECEPTIONIST, G_MANAGER, G_SYSADMIN)
+
+# Who may READ a rate snapshot on the ORM. The desk never serializes one; this
+# keeps the figure off the backend form for clinical roles as well.
+G_CASHIER = "hospital_billing.group_hospital_cashier"
+G_ACCOUNTANT = "hospital_management.group_hospital_accountant"
+ADMISSION_MONEY_READ = ",".join((G_CASHIER, G_ACCOUNTANT, G_MANAGER, G_SYSADMIN))
 
 DESK_TOKEN_MAX_LENGTH = 64
 DESK_REASON_MAX_LENGTH = 2000
@@ -498,6 +624,7 @@ SLICE0_TO_DESK = {
     "admission_duplicate_bed_in_batch": "admission_bed_conflict",
     "admission_location_incoherent": "admission_location_mismatch",
     "admission_patient_already_admitted": "admission_active_conflict",
+    "admission_transfer_not_authorized": "admission_not_authorized",
 }
 
 

@@ -1,6 +1,7 @@
 /**
- * Admission mutations (Admissions Slice 2): paths, bodies, retry tokens and
- * wording, for the Admissions Desk (admit) and the Doctor Desk (request).
+ * Admission mutations (Admissions Slices 2-3): paths, bodies, retry tokens and
+ * wording, for the Admissions Desk (admit, transfer, cancel request) and the
+ * Doctor Desk (request, cancel own request).
  *
  * Pure and import-free, so node:test runs it directly.
  *
@@ -23,6 +24,15 @@ export function admissionRequestPath(appointmentId: number): string {
   return `/api/doctor/visits/${appointmentId}/admission-request`;
 }
 
+export function transferPath(admissionId: number): string {
+  return `/api/admissions/${admissionId}/transfer`;
+}
+
+/** Shared by both desks: the doctor cancels through the same route. */
+export function cancelRequestPath(admissionId: number): string {
+  return `/api/admissions/${admissionId}/cancel-request`;
+}
+
 /* ------------------------------------------------------------------ *
  * Bodies -- exactly the fields the server accepts
  * ------------------------------------------------------------------ */
@@ -33,6 +43,14 @@ export function admitBody(expectedRevision: number, bedId: number, token: string
 
 export function admissionRequestBody(reason: string, token: string) {
   return { operation_token: token, reason };
+}
+
+export function transferBody(expectedRevision: number, bedId: number, reason: string, token: string) {
+  return { operation_token: token, expected_revision: expectedRevision, bed_id: bedId, reason };
+}
+
+export function cancelRequestBody(expectedRevision: number, token: string) {
+  return { operation_token: token, expected_revision: expectedRevision };
 }
 
 /** The admission reason the server will accept: trimmed, non-empty, bounded. */
@@ -49,7 +67,7 @@ export function cleanReason(raw: string): string | null {
  * ------------------------------------------------------------------ */
 
 export type PendingAdmissionOperation = {
-  kind: "admit" | "request";
+  kind: "admit" | "request" | "transfer" | "cancel_request";
   targetId: number;
   signature: string;
   token: string;
@@ -62,6 +80,14 @@ export function admitSignature(expectedRevision: number, bedId: number): string 
 
 export function requestSignature(reason: string): string {
   return JSON.stringify({ reason: reason.trim() });
+}
+
+export function transferSignature(expectedRevision: number, bedId: number, reason: string): string {
+  return JSON.stringify({ revision: expectedRevision, bed: bedId, reason: reason.trim() });
+}
+
+export function cancelRequestSignature(expectedRevision: number): string {
+  return JSON.stringify({ revision: expectedRevision });
 }
 
 /**

@@ -7,3 +7,6 @@ from . import test_admission_transfer
 from . import test_admission_runtime
 from . import test_admission_rule_atomicity
 from . import test_admission_desk_mutations
+from . import test_admission_stay_billing
+from . import test_admission_financials
+from . import test_admission_desk_transfer

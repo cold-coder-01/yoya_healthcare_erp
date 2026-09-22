@@ -43,6 +43,8 @@ const LAYOUT = read("app/admissions/layout.tsx");
 const PAGE = read("app/admissions/page.tsx");
 const SIDEBAR = read("components/clinical/clinical-sidebar.tsx");
 const DIALOG = read("components/admissions/admit-dialog.tsx");
+const TRANSFER_DIALOG = read("components/admissions/transfer-dialog.tsx");
+const CANCEL_DIALOG = read("components/admissions/cancel-request-dialog.tsx");
 
 const ALL: ReadonlyArray<readonly [string, string]> = [
   ["admissions-workstation.tsx", WORKSTATION],
@@ -53,6 +55,8 @@ const ALL: ReadonlyArray<readonly [string, string]> = [
   ["admissions-toolbar.tsx", TOOLBAR],
   ["admission-lane-pill.tsx", PILL],
   ["admit-dialog.tsx", DIALOG],
+  ["transfer-dialog.tsx", TRANSFER_DIALOG],
+  ["cancel-request-dialog.tsx", CANCEL_DIALOG],
   ["admissions-desk-format.ts", FORMAT],
   ["layout.tsx", LAYOUT],
   ["page.tsx", PAGE],
@@ -60,29 +64,68 @@ const ALL: ReadonlyArray<readonly [string, string]> = [
 
 /* 1. One write */
 
-test("the only write is the workstation's single Admit POST", () => {
+test("the only writes are the workstation's Admit, Transfer and Cancel request POSTs", () => {
   for (const [name, source] of ALL) {
     const writes = code(source).match(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/g) ?? [];
     if (name === "admissions-workstation.tsx") {
-      assert.deepEqual(writes, ['method: "POST"'], name);
+      assert.deepEqual(writes, ['method: "POST"', 'method: "POST"', 'method: "POST"'], name);
     } else {
       assert.equal(writes.length, 0, name);
     }
   }
   const emitted = code(WORKSTATION);
-  const post = emitted.indexOf('method: "POST"');
-  assert.ok(emitted.lastIndexOf("fetch(admitPath(current.id)", post) > 0);
+  assert.ok(emitted.includes("fetch(admitPath(current.id)"));
+  assert.ok(emitted.includes("fetch(transferPath(current.id)"));
+  assert.ok(emitted.includes("fetch(cancelRequestPath(current.id)"));
 });
 
-test("there is no transfer, discharge or cancel control on any surface", () => {
-  const forbidden = /\b(Transfer|Discharge|Cancel admission|Assign bed)\b/;
+test("there is no discharge or assign-bed control on any surface", () => {
+  const forbidden = /\b(Discharge|Cancel admission|Assign bed)\b/;
   for (const [name, source] of ALL) {
     const emitted = code(source);
     for (const match of emitted.matchAll(/<button[\s\S]*?<\/button>/g)) {
       assert.doesNotMatch(match[0], forbidden, `${name}: ${match[0].slice(0, 80)}`);
     }
-    assert.doesNotMatch(emitted, /capabilities\.(assign_bed|transfer|discharge)/, name);
+    assert.doesNotMatch(emitted, /capabilities\.(assign_bed|discharge)/, name);
   }
+});
+
+test("Transfer and Cancel request are offered only on the server's capability AND the row's affordance", () => {
+  const workstation = code(WORKSTATION);
+  assert.ok(workstation.includes("const mayTransfer = session?.capabilities.transfer === true;"));
+  assert.ok(workstation.includes("const mayCancelRequest = session?.capabilities.cancel_request === true;"));
+  assert.ok(workstation.includes("{transferOpen && shownDetail && mayTransfer ? ("));
+  assert.ok(workstation.includes("{cancelOpen && shownDetail && mayCancelRequest ? ("));
+  const panel = code(PANEL);
+  assert.ok(panel.includes("{mayTransfer && detail.can_transfer && onRequestTransfer ? ("));
+  assert.ok(panel.includes("{mayCancelRequest && detail.can_cancel_request && onRequestCancel ? ("));
+});
+
+test("transfer is two steps, reviews FROM and TO, and the final click is pointer-only", () => {
+  const dialog = code(TRANSFER_DIALOG);
+  assert.ok(dialog.includes('onClick={() => setStep("confirm")}'));
+  assert.ok(dialog.includes("disabled={!selected || !cleaned}"));
+  assert.ok(dialog.includes("if (event.detail === 0 || !selected || !cleaned) return;"));
+  for (const label of ["Patient", "Admission", "From", "To", "Reason", "Revision"]) {
+    assert.ok(dialog.includes(`>${label}</dt>`), label);
+  }
+  // Destinations are the server's available beds, never the current one.
+  assert.ok(dialog.includes('bed.state === "available" && !bed.needs_review && bed.id !== currentBedId'));
+});
+
+test("cancel request explains itself and its confirm is pointer-only", () => {
+  const dialog = code(CANCEL_DIALOG);
+  assert.ok(dialog.includes("The patient has not been admitted."));
+  assert.ok(dialog.includes("No bed is occupied by this request."));
+  assert.ok(dialog.includes("The request will be cancelled."));
+  assert.ok(dialog.includes("if (event.detail === 0) return;"));
+});
+
+test("transfer and cancel reuse the kept-on-unknown token and the reload rules", () => {
+  const emitted = code(WORKSTATION);
+  assert.ok(emitted.includes('tokenFor(pendingRef.current, "transfer", current.id, signature, () => crypto.randomUUID())'));
+  assert.ok(emitted.includes('tokenFor(pendingRef.current, "cancel_request", current.id, signature, () => crypto.randomUUID())'));
+  assert.equal((emitted.match(/if \(!isResolved\(status, payload !== null\)\)/g) ?? []).length, 3);
 });
 
 test("Admit is offered only on the server's role capability AND the row's can_admit", () => {
@@ -92,7 +135,7 @@ test("Admit is offered only on the server's role capability AND the row's can_ad
   assert.ok(workstation.includes("{admitOpen && shownDetail && mayAdmit ? ("));
   const panel = code(PANEL);
   assert.ok(panel.includes("{mayAdmit && detail.can_admit && onRequestAdmit ? ("));
-  assert.equal((panel.match(/<button/g) ?? []).length, 1);
+  assert.equal((panel.match(/<button/g) ?? []).length, 3);
   // Only the workstation reads the capability; nothing else invents it.
   for (const [name, source] of ALL) {
     if (name === "admissions-workstation.tsx") continue;
@@ -105,11 +148,11 @@ test("Admit is offered only on the server's role capability AND the row's can_ad
 test("every fetch goes through a BFF path helper and no Odoo address appears", () => {
   const emitted = code(WORKSTATION);
   const fetches = [...emitted.matchAll(/fetch\(\s*([^,\n]+)/g)].map((m) => m[1].trim());
-  assert.equal(fetches.length, 7);
+  assert.equal(fetches.length, 9);
   for (const target of fetches) {
     assert.match(
       target,
-      /^(ADMISSIONS_SESSION_PATH|ADMISSIONS_WARDS_PATH|worklistPath\(|bedsPath\(|admissionPath\(|admitPath\()/,
+      /^(ADMISSIONS_SESSION_PATH|ADMISSIONS_WARDS_PATH|worklistPath\(|bedsPath\(|admissionPath\(|admitPath\(|transferPath\(|cancelRequestPath\()/,
       target,
     );
   }

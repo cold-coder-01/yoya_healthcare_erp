@@ -135,20 +135,32 @@ class TestAdmissionTransfer(AdmissionCase):
     # PART 20: audit and provenance
     # ==================================================================
     def test_transferred_by_is_server_derived_not_caller_supplied(self):
-        """The field used to carry a default the caller could simply override."""
+        """The field used to carry a default the caller could simply override.
+
+        Slice 3 closes the channel entirely: a transfer row is created ONLY by
+        action_transfer(), which stamps the actor from the session. A direct
+        create -- even under sudo(), even naming a forged actor -- is refused,
+        because every row starts a billed stay segment.
+        """
         admission = self._admitted(bed=self.bed_a)
-        forged = self.env["hospital.admission.transfer"].sudo().create(
-            {
-                "admission_id": admission.id,
-                "to_ward_id": self.ward.id,
-                "to_room_id": self.room.id,
-                "to_bed_id": self.bed_b.id,
-                "transferred_by": self.other_doctor_user.id,   # the forgery
-            }
+        with self.assertRaises(AdmissionWorkflowError) as caught:
+            self.env["hospital.admission.transfer"].sudo().create(
+                {
+                    "admission_id": admission.id,
+                    "to_ward_id": self.ward.id,
+                    "to_room_id": self.room.id,
+                    "to_bed_id": self.bed_b.id,
+                    "transferred_by": self.other_doctor_user.id,   # the forgery
+                }
+            )
+        self.assertEqual(caught.exception.code, "admission_transfer_history_refused")
+
+        admission.with_user(self.receptionist).action_transfer(
+            to_ward=self.ward, to_room=self.room, to_bed=self.bed_b, reason="moved"
         )
         self.assertEqual(
-            forged.transferred_by.id,
-            self.env.uid,
+            admission.transfer_ids.transferred_by,
+            self.receptionist,
             "Provenance must come from the session, not the payload",
         )
 
@@ -255,22 +267,18 @@ class TestBillingCompatibility(AdmissionCase):
             admission.action_generate_admission_bill()
 
     # ==================================================================
-    # PART 19: the retroactive rate bug is DEFERRED, not worsened
+    # PART 19 (Slice 0) -> FIXED in Admissions Slice 3
     # ==================================================================
-    def test_rate_segmentation_is_deferred_not_worsened(self):
-        """PINS THE KNOWN DEFECT so the later fix is a deliberate change.
+    def test_rate_segmentation_is_fixed(self):
+        """Slice 0 pinned the retroactive rate defect here, and said this test
+        should be REWRITTEN, not repaired, once the fix landed. It has.
 
-        After a transfer, the CURRENT location's daily rate is multiplied
-        across the WHOLE stay. A patient who spends most of a stay on a cheap
-        ward and one night on an expensive one is billed entirely at the
-        expensive rate.
-
-        Slice 0 does not fix it: the fix needs per-segment rates, a decision
-        about which rate applies to the segment a transfer opens, and agreement
-        with the charge engine this slice deliberately does not touch. What
-        Slice 0 guarantees is that the INPUT to that fix now reliably exists --
-        a complete, ordered, server-attributed transfer history for every move,
-        which is asserted here alongside the defect itself.
+        After a transfer the stay is no longer priced at the current rate
+        throughout: each 24-hour period is billed at the location the patient
+        was in when that period started, from the rate recorded as that
+        segment opened. The current segment's rate is still what
+        daily_rate_amount reports -- it is the rate being accrued NOW -- but it
+        no longer multiplies the stay before it.
         """
         cheap_ward = self._make_ward("Slice0 Cheap", self.department)
         cheap_ward.sudo().write({"daily_ward_rate": 100.0, "admission_fee": 0.0})
@@ -284,21 +292,28 @@ class TestBillingCompatibility(AdmissionCase):
 
         admission = self._admitted(bed=cheap_bed)
         self.assertEqual(admission.daily_rate_amount, 100.0)
-
+        # Admitted ten and a half days ago...
+        self._raw(
+            "UPDATE hospital_admission SET admission_date = admission_date - interval '10 days 12 hours' "
+            "WHERE id = %s",
+            (admission.id,),
+        )
         admission.action_transfer(
             to_ward=dear_ward, to_room=dear_room, to_bed=dear_bed
         )
+        # ...and moved exactly nine days in.
+        self._raw(
+            "UPDATE hospital_admission_transfer t SET transfer_date = a.admission_date + interval '9 days' "
+            "FROM hospital_admission a WHERE t.admission_id = a.id AND a.id = %s",
+            (admission.id,),
+        )
         admission.invalidate_recordset()
 
-        # THE DEFECT, pinned. The whole stay now prices at the dear rate.
-        self.assertEqual(
-            admission.daily_rate_amount,
-            900.0,
-            "Known Slice 0 limitation: the current location's rate applies to "
-            "the entire stay. Fixing this is a later slice; if this assertion "
-            "starts failing, that fix has landed and this test should be "
-            "rewritten rather than repaired.",
-        )
+        self.assertEqual(admission.daily_rate_amount, 900.0, "the rate accruing now")
+        # Eleven started periods: nine began on the cheap ward, two on the
+        # dear one -- not eleven dear days.
+        self.assertEqual(admission.stay_days, 11)
+        self.assertEqual(admission.bed_charge_amount, 9 * 100.0 + 2 * 900.0)
 
         # THE INPUT TO THE FIX, guaranteed. Every move is recorded, in order,
         # with both ends and a server-derived actor.

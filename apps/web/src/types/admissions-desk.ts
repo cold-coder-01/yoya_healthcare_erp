@@ -8,9 +8,12 @@
  * (boolean, or null when the admission has no visit to judge) and a clearance
  * Selection KEY. No rate, fee, charge, bill or payer.
  *
- * ONE WORKFLOW ACT (Slice 2): admit, which assigns the bed and confirms the
- * admission together. Transfer and discharge are present and always false;
- * there is no route behind them.
+ * WORKFLOW ACTS: admit (Slice 2), which assigns the bed and confirms the
+ * admission together; transfer and cancel request (Slice 3). Discharge is
+ * present and always false; there is no route behind it (Slice 4).
+ *
+ * The inpatient financial comparison (Slice 3) crosses as `financial`: a state
+ * key, three booleans and fixed review sentences. Still no amount.
  */
 import type { ApiEnvelope } from "./clinical";
 
@@ -128,6 +131,10 @@ export type AdmissionWorklistRow = {
   workflow_revision: number;
   /** AFFORDANCE ONLY: the role may admit and this record's lane allows it. */
   can_admit: boolean;
+  /** AFFORDANCE ONLY (Slice 3): the role may transfer and the patient is in a bed. */
+  can_transfer: boolean;
+  /** AFFORDANCE ONLY (Slice 3): role AND ownership, and still a draft. */
+  can_cancel_request: boolean;
   lane: AdmissionLane;
   lane_label: string;
   review_reasons: NeedsReviewReason[];
@@ -181,6 +188,27 @@ export type AdmissionClearance = {
   discharge_clearance_required: boolean;
 };
 
+/** The inpatient financial STATE (Slice 3). Never an amount. */
+export type FinancialState =
+  | "covered"
+  | "due"
+  | "refundable"
+  | "pending"
+  | "not_applicable"
+  | "needs_review";
+
+export type AdmissionFinancial = {
+  financial_state: FinancialState;
+  /** The figures need review before anything is billed or settled from them. */
+  billing_blocked: boolean;
+  /** The patient owes more than they have paid. False when blocked. */
+  settlement_required: boolean;
+  /** The patient has paid more than the actual care. Derived only: the cash
+   *  refund is the Cashier's act. False when blocked. */
+  refund_due: boolean;
+  review_reasons: { code: string; message: string }[];
+};
+
 export type AdmissionDetail = AdmissionWorklistRow & {
   admission_reason: string | null;
   diagnosis:
@@ -206,6 +234,7 @@ export type AdmissionDetail = AdmissionWorklistRow & {
     pending_radiology_requests: number | null;
   };
   clearance: AdmissionClearance;
+  financial: AdmissionFinancial;
 };
 
 export type AdmissionDetailResponse = {
@@ -280,8 +309,11 @@ export type AdmissionDeskCapabilities = {
   /** Slice 2: admit = assign bed + confirm, one act. Admitting roles only. */
   admit: boolean;
   assign_bed: boolean;
-  /** Always false: no route exists behind these yet. */
-  transfer: false;
+  /** Slice 3: the clerk, manager and admin. */
+  transfer: boolean;
+  /** Slice 3: the clerk, manager, admin -- and doctors, for their own requests. */
+  cancel_request: boolean;
+  /** Always false: no route exists behind it yet (Slice 4). */
   discharge: false;
 };
 
@@ -293,7 +325,7 @@ export type AdmissionAdmitRequest = {
 };
 
 export type AdmissionMutationOperation = {
-  type: "admit" | "request";
+  type: "admit" | "request" | "transfer" | "cancel_request";
   token: string;
   replayed: boolean;
 };
@@ -303,6 +335,24 @@ export type AdmissionAdmitResponse = {
   capabilities: AdmissionDeskCapabilities;
   workflow_revision: number;
   operation: AdmissionMutationOperation;
+};
+
+/** POST /api/admissions/[id]/transfer (Slice 3) */
+export type AdmissionTransferRequest = {
+  operation_token: string;
+  expected_revision: number;
+  bed_id: number;
+  reason: string;
+};
+
+export type AdmissionTransferResponse = AdmissionAdmitResponse;
+
+/** POST /api/admissions/[id]/cancel-request (Slice 3) */
+export type AdmissionCancelRequest = { operation_token: string; expected_revision: number };
+
+export type AdmissionCancelRequestResponse = AdmissionAdmitResponse & {
+  /** The Doctor Desk's own summary of the visit, when the caller may read it. */
+  doctor_admission: DoctorAdmissionSummary | null;
 };
 
 /** The fixed error codes both desks' admission mutations speak. */
@@ -328,12 +378,19 @@ export type AdmissionMutationErrorCode =
  * Doctor Desk handoff (Slice 2)
  * ------------------------------------------------------------------ */
 
-export type DoctorAdmissionStatus = "none" | "requested" | "admitted" | "discharged" | "cancelled";
+export type DoctorAdmissionStatus =
+  | "none"
+  | "requested"
+  | "admitted"
+  | "transferred"
+  | "discharged"
+  | "cancelled";
 
 export type DoctorAdmissionBlock = "not_authorized" | "visit_not_open" | "open_admission_exists";
 
 /** The admission block on the Doctor Desk visit detail. Never an admissions
- *  desk: no lanes, no bed board, no transfer or discharge. */
+ *  desk: no lanes, no bed board, no transfer or discharge. The doctor may
+ *  cancel their OWN draft request (Slice 3). */
 export type DoctorAdmissionSummary = {
   status: DoctorAdmissionStatus;
   status_label: string;
@@ -342,12 +399,16 @@ export type DoctorAdmissionSummary = {
     reference: string;
     state: AdmissionState;
     state_label: string;
+    /** Echoed back as expected_revision by cancel-request. */
+    workflow_revision: number;
     requested_at: string | null;
     admitted_at: string | null;
     location: AdmissionLocation;
     length_of_stay: LengthOfStay | null;
   } | null;
   can_request: boolean;
+  /** Slice 3: the doctor may withdraw their own draft request. */
+  can_cancel_request: boolean;
   request_blocked_reason: DoctorAdmissionBlock | null;
   request_blocked_message: string | null;
 };

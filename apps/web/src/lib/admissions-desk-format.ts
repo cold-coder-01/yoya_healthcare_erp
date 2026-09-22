@@ -19,6 +19,7 @@ import type {
   AdmissionDeskScope,
   AdmissionDeskSession,
   AdmissionEncounter,
+  AdmissionFinancial,
   AdmissionLocation,
   AdmissionPatient,
   BedBoardRow,
@@ -205,6 +206,31 @@ export function clearanceLabel(clearance: AdmissionClearance | null | undefined)
     return { text: "No financial clearance required.", tone: "ok" };
   }
   return { text: "Financially cleared.", tone: "ok" };
+}
+
+/**
+ * The inpatient financial STATE (Slice 3), in words. The server decides the
+ * state; this only names it. No figure exists to show, by design.
+ */
+export function financialLabel(financial: AdmissionFinancial | null | undefined): {
+  text: string;
+  tone: "neutral" | "ok" | "warn";
+} {
+  if (!financial) return { text: "The inpatient financial state is not available.", tone: "neutral" };
+  switch (financial.financial_state) {
+    case "covered":
+      return { text: "Care delivered so far is covered.", tone: "ok" };
+    case "due":
+      return { text: "More care has been delivered than is covered. Settlement is required.", tone: "warn" };
+    case "refundable":
+      return { text: "The patient has paid more than the care delivered. A refund is due at the cashier.", tone: "warn" };
+    case "pending":
+      return { text: "Nothing has been delivered or paid yet.", tone: "neutral" };
+    case "needs_review":
+      return { text: "The inpatient financial state needs review before billing.", tone: "warn" };
+    default:
+      return { text: "Not applicable: the patient has not been admitted.", tone: "neutral" };
+  }
 }
 
 /** The row's compact clearance marker. */

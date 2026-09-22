@@ -47,6 +47,7 @@
                         name="action_open_transfer_wizard"
                         string="Transfer Patient"
                         type="object"
+                        groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"
                         invisible="state not in ('admitted', 'transferred')"/>
                     <button
                         name="action_discharge"

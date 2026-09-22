@@ -7,6 +7,7 @@ import {
   ageSexLabel,
   clearanceLabel,
   encounterLabel,
+  financialLabel,
   formatLengthOfStay,
   orDash,
 } from "@/lib/admissions-desk-format";
@@ -15,10 +16,15 @@ import type { AdmissionDetail, CountAndLatest, NamedRef } from "@/types/admissio
 import AdmissionLanePill from "./admission-lane-pill";
 
 /**
- * One admission. Its ONE action (Slice 2) is "Admit to bed", offered only when
- * the SERVER says so twice over: the role's `admit` capability AND this
- * record's own `can_admit`. The browser derives neither. There is no transfer,
- * discharge or cancel control.
+ * One admission. Its actions are offered only when the SERVER says so twice
+ * over -- the role's capability AND this record's own affordance:
+ *
+ *   Admit to bed…     (Slice 2)  `admit`          + `can_admit`
+ *   Transfer patient… (Slice 3)  `transfer`       + `can_transfer`
+ *   Cancel request    (Slice 3)  `cancel_request` + `can_cancel_request`
+ *
+ * The browser derives none of them. There is no discharge control (Slice 4).
+ * The financial section shows the server's STATE only, never a figure.
  *
  * Needs-review reasons come first and in red: a broken admission must be seen
  * before anything that looks normal about it.
@@ -61,8 +67,12 @@ export default function AdmissionDetailPanel({
   empty,
   stale,
   mayAdmit = false,
+  mayTransfer = false,
+  mayCancelRequest = false,
   actionMessage = null,
   onRequestAdmit,
+  onRequestTransfer,
+  onRequestCancel,
 }: {
   detail: AdmissionDetail | null;
   loading: boolean;
@@ -71,8 +81,14 @@ export default function AdmissionDetailPanel({
   stale: boolean;
   /** The role's `admit` capability, from the server session. */
   mayAdmit?: boolean;
+  /** The role's `transfer` capability, from the server session. */
+  mayTransfer?: boolean;
+  /** The role's `cancel_request` capability, from the server session. */
+  mayCancelRequest?: boolean;
   actionMessage?: ActionMessage | null;
   onRequestAdmit?: () => void;
+  onRequestTransfer?: () => void;
+  onRequestCancel?: () => void;
 }) {
   if (error) {
     return (
@@ -90,6 +106,7 @@ export default function AdmissionDetailPanel({
   }
 
   const clearance = clearanceLabel(detail.clearance);
+  const financial = financialLabel(detail.financial);
   const diagnosis = detail.diagnosis;
 
   return (
@@ -128,6 +145,30 @@ export default function AdmissionDetailPanel({
               Admit to bed…
             </button>
             <span className="cl-micro text-slate-500">Assigns the bed and admits in one step.</span>
+          </div>
+        ) : null}
+        {mayTransfer && detail.can_transfer && onRequestTransfer ? (
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onRequestTransfer}
+              className="h-8 rounded-md bg-sky-700 px-3 cl-meta font-bold text-white hover:bg-sky-800"
+            >
+              Transfer patient…
+            </button>
+            <span className="cl-micro text-slate-500">Moves the patient to another available bed.</span>
+          </div>
+        ) : null}
+        {mayCancelRequest && detail.can_cancel_request && onRequestCancel ? (
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onRequestCancel}
+              className="h-8 rounded-md border border-red-300 bg-white px-3 cl-meta font-bold text-red-800 hover:bg-red-50"
+            >
+              Cancel request…
+            </button>
+            <span className="cl-micro text-slate-500">The patient has not been admitted yet.</span>
           </div>
         ) : null}
         {actionMessage ? (
@@ -220,6 +261,23 @@ export default function AdmissionDetailPanel({
           >
             {clearance.text}
           </p>
+        </Section>
+
+        <Section title="Inpatient financial state">
+          <p
+            className={`cl-body ${
+              financial.tone === "warn" ? "text-amber-900" : financial.tone === "ok" ? "text-emerald-800" : "text-slate-600"
+            }`}
+          >
+            {financial.text}
+          </p>
+          {detail.financial?.review_reasons.length ? (
+            <ul className="mt-1 list-disc pl-5 cl-meta text-amber-900">
+              {detail.financial.review_reasons.map((reason) => (
+                <li key={reason.code}>{reason.message}</li>
+              ))}
+            </ul>
+          ) : null}
         </Section>
 
         <Section title="Transfer history">

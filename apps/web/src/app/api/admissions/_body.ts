@@ -24,3 +24,22 @@ export function pickAdmissionRequestBody(body: Record<string, unknown>): Record<
     reason: body.reason,
   };
 }
+
+/** EXACTLY the Transfer fields (Slice 3). The destination ward and room are
+ *  derived from the bed by Odoo; no rate or amount is ever sent. */
+export function pickTransferBody(body: Record<string, unknown>): Record<string, unknown> {
+  return {
+    operation_token: body.operation_token,
+    expected_revision: body.expected_revision,
+    bed_id: body.bed_id,
+    reason: body.reason,
+  };
+}
+
+/** EXACTLY the Cancel request fields (Slice 3). */
+export function pickCancelRequestBody(body: Record<string, unknown>): Record<string, unknown> {
+  return {
+    operation_token: body.operation_token,
+    expected_revision: body.expected_revision,
+  };
+}

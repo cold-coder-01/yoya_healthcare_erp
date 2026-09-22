@@ -66,6 +66,13 @@ FORBIDDEN_KEY_WORDS = frozenset({
     "guarantee", "paid", "due", "cost",
 })
 
+# THE ONE EXCEPTION, and why (Admissions Slice 3). The inpatient financial
+# STATE crosses as a key, booleans and fixed sentences; its contract names one
+# boolean `refund_due`, whose whole word "due" the scan above forbids. It is
+# allowed BY NAME, and every test that allows it also asserts its value is a
+# boolean -- so a number can never ride in under it.
+AMOUNT_FREE_FLAG_KEYS = frozenset({"refund_due"})
+
 
 def _walk_keys(value):
     if isinstance(value, dict):
@@ -301,20 +308,25 @@ class TestAdmissionsDeskGate(AdmissionsDeskCase):
         self.assertEqual(len(ADMISSIONS_DESK_GROUPS), 5)
 
     def test_workflow_capabilities_match_the_slice(self):
-        """Slice 2 opens exactly ONE act, admit (assign_bed is the same act),
-        and only for the admitting roles. Transfer and discharge stay FALSE for
-        everyone, administrators included -- no route exists behind them."""
+        """Slice 2 opened admit (assign_bed is the same act) for the admitting
+        roles. Slice 3 opens transfer for the same roles, and cancel_request
+        for them and for doctors (their OWN requests, decided per record).
+        Discharge stays FALSE for everyone, administrators included -- no
+        route exists behind it until Slice 4."""
         for user in (self.sysadmin, self.manager, self.receptionist):
             caps = self._ok(SESSION, user)["capabilities"]
-            self.assertIs(caps["admit"], True, user.login)
-            self.assertIs(caps["assign_bed"], True, user.login)
-            for flag in ("transfer", "discharge"):
-                self.assertIs(caps[flag], False, (user.login, flag))
+            for flag in ("admit", "assign_bed", "transfer", "cancel_request"):
+                self.assertIs(caps[flag], True, (user.login, flag))
+            self.assertIs(caps["discharge"], False, user.login)
             self.assertTrue(caps["view_worklist"])
             self.assertTrue(caps["view_bed_board"])
-        for user in (self.doctor_user, self.nurse_a, self.front_desk):
+        caps = self._ok(SESSION, self.doctor_user)["capabilities"]
+        self.assertIs(caps["cancel_request"], True)
+        for flag in ("admit", "assign_bed", "transfer", "discharge"):
+            self.assertIs(caps[flag], False, flag)
+        for user in (self.nurse_a, self.front_desk):
             caps = self._ok(SESSION, user)["capabilities"]
-            for flag in ("admit", "assign_bed", "transfer", "discharge"):
+            for flag in ("admit", "assign_bed", "transfer", "cancel_request", "discharge"):
                 self.assertIs(caps[flag], False, (user.login, flag))
 
     def test_the_session_carries_only_operational_metadata(self):
@@ -536,8 +548,16 @@ class TestAdmissionsDeskDetail(AdmissionsDeskCase):
         ]
         for payload in payloads:
             for key in _walk_keys(payload):
+                if key in AMOUNT_FREE_FLAG_KEYS:
+                    continue
                 words = set(key.lower().split("_"))
                 self.assertFalse(words & FORBIDDEN_KEY_WORDS, key)
+        financial = payloads[2]["admission"]["financial"]
+        self.assertIsInstance(financial["refund_due"], bool)
+        self.assertEqual(
+            set(financial),
+            {"financial_state", "billing_blocked", "settlement_required", "refund_due", "review_reasons"},
+        )
 
     def test_no_note_bodies_are_serialized(self):
         data = self._ok(DETAIL % self.adm_mine.id)["admission"]
@@ -640,19 +660,22 @@ class TestAdmissionsDeskReadOnly(AdmissionsDeskCase):
     # 6. READ ONLY
     # ==================================================================
     def test_no_route_accepts_a_write(self):
-        """The read routes refuse a POST, and transfer/discharge/cancel do not
-        exist. /admit (Slice 2) exists but refuses a malformed body before it
-        reads a row -- covered fully in test_admissions_desk_mutations_api."""
+        """The read routes refuse a POST, and discharge / bare cancel /
+        assign-bed do not exist. /admit (Slice 2), /transfer and
+        /cancel-request (Slice 3) exist but refuse a malformed body before
+        they read a row -- covered fully in the mutation suites."""
         self.authenticate(self.manager.login, self.PASSWORD)
         base = DETAIL % self.adm_mine.id
         for route in (SESSION, WORKLIST, WARDS, BEDS, base,
-                      base + "/discharge", base + "/transfer", base + "/cancel", base + "/assign-bed"):
+                      base + "/discharge", base + "/cancel", base + "/assign-bed"):
             with self.subTest(route=route):
                 response = self.url_open(route, data=json.dumps({}), headers={"Content-Type": "application/json"})
                 self.assertIn(response.status_code, (404, 405), route)
-        response = self.url_open(base + "/admit", data=json.dumps({}), headers={"Content-Type": "application/json"})
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(json.loads(response.text)["error"]["code"], "admission_invalid_payload")
+        for route in (base + "/admit", base + "/transfer", base + "/cancel-request"):
+            with self.subTest(route=route):
+                response = self.url_open(route, data=json.dumps({}), headers={"Content-Type": "application/json"})
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(json.loads(response.text)["error"]["code"], "admission_invalid_payload")
 
     def test_viewing_writes_nothing(self):
         self.env.flush_all()

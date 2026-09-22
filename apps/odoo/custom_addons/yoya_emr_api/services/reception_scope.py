@@ -648,18 +648,44 @@ def may_admissions_admit(env):
     return may_admissions_desk(env) and _in_any(env, ADMISSIONS_ADMIT_GROUPS)
 
 
+# WHO MAY TRANSFER (Admissions Slice 3). MIRRORS hospital_admission's
+# DESK_TRANSFER_GROUPS, which action_transfer() itself enforces on every
+# channel; test_admissions_desk_transfer_api asserts the two agree. The doctor,
+# the ward nurse and the front-desk nurse open the desk but never move a bed.
+ADMISSIONS_TRANSFER_GROUPS = (GROUP_RECEPTIONIST, GROUP_MANAGER, GROUP_SYSADMIN)
+
+
+def may_admissions_transfer(env):
+    return may_admissions_desk(env) and _in_any(env, ADMISSIONS_TRANSFER_GROUPS)
+
+
+# WHO MAY ATTEMPT TO CANCEL A REQUEST (Slice 3): the admissions clerk and
+# oversight for any draft, and a doctor -- but for a doctor this is the GROUP
+# half only. Whether THIS doctor may cancel THIS request is ownership, decided
+# per record by hospital.admission._desk_may_cancel_request() and re-checked
+# inside the mutation.
+ADMISSIONS_CANCEL_REQUEST_GROUPS = (
+    GROUP_RECEPTIONIST, GROUP_DOCTOR, GROUP_MANAGER, GROUP_SYSADMIN,
+)
+
+
+def may_admissions_cancel_request(env):
+    return may_admissions_desk(env) and _in_any(env, ADMISSIONS_CANCEL_REQUEST_GROUPS)
+
+
 def admissions_desk_capability_flags(env):
     """What the Admissions Desk may do. Every flag mirrors a server-side guard.
 
-    SLICE 2 turns on exactly ONE act: admit, which assigns the bed and confirms
-    the admission together (assign_bed therefore equals admit -- there is no
-    separate "assign without admitting" route). Transfer and discharge stay
-    present and FALSE for every role, administrators included, because no
-    route exists behind them yet.
+    SLICE 2 turned on admit, which assigns the bed and confirms the admission
+    together (assign_bed therefore equals admit -- there is no separate "assign
+    without admitting" route). SLICE 3 adds transfer and cancel_request.
+    Discharge stays present and FALSE for every role, administrators
+    included, because no route exists behind it yet (Slice 4).
 
     These say which ACTS the role may attempt. Whether ONE admission may be
-    admitted is its own `can_admit`, and the model re-checks everything under
-    its locks on every call.
+    admitted, transferred or cancelled is its own `can_admit`, `can_transfer`
+    or `can_cancel_request`, and the model re-checks everything under its
+    locks on every call.
     """
     allowed = may_admissions_desk(env)
     admit = may_admissions_admit(env)
@@ -669,7 +695,8 @@ def admissions_desk_capability_flags(env):
         "view_bed_board": allowed,
         "admit": admit,
         "assign_bed": admit,
-        "transfer": False,
+        "transfer": may_admissions_transfer(env),
+        "cancel_request": may_admissions_cancel_request(env),
         "discharge": False,
     }
 

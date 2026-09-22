@@ -190,10 +190,11 @@ test("the typed capability and row carry the admit gate and the revision", () =>
  * Doctor Desk: Request admission
  * ------------------------------------------------------------------ */
 
-test("the doctor card has one write, to the request path, and never picks a bed", () => {
+test("the doctor card has two writes -- request and cancel own request -- and never picks a bed", () => {
   const writes = CARD.match(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/g) ?? [];
-  assert.deepEqual(writes, ['method: "POST"']);
+  assert.deepEqual(writes, ['method: "POST"', 'method: "POST"']);
   assert.ok(CARD.includes("fetch(admissionRequestPath(appointmentId)"));
+  assert.ok(CARD.includes("fetch(cancelRequestPath(admission.id)"));
   assert.ok(CARD.includes("admissionRequestBody(cleaned, token)"));
   assert.doesNotMatch(CARD, /bed_id|bedsPath|ward_id|role="radio"/);
 });
@@ -225,8 +226,8 @@ test("the card shows the server's result at once and is mounted on both doctor v
  * Scope: no transfer, no discharge, no billing
  * ------------------------------------------------------------------ */
 
-test("no Slice 2 surface offers transfer, discharge or cancel, or names money", () => {
-  const forbidden = /\b(Transfer|Discharge|Cancel admission)\b/;
+test("no admissions surface offers discharge, and none names money", () => {
+  const forbidden = /\b(Discharge|Cancel admission)\b/;
   const money = /\b(amount|price|tariff|daily_rate|invoice|ETB|Birr)\b/i;
   for (const [name, source] of [
     ["admit-dialog", DIALOG],
@@ -238,6 +239,8 @@ test("no Slice 2 surface offers transfer, discharge or cancel, or names money", 
     }
     assert.doesNotMatch(source, money, name);
   }
-  assert.equal(existsSync(new URL("../app/api/admissions/[id]/transfer", import.meta.url)), false);
+  // Slice 3 adds transfer and cancel-request; discharge is Slice 4.
+  assert.equal(existsSync(new URL("../app/api/admissions/[id]/transfer", import.meta.url)), true);
+  assert.equal(existsSync(new URL("../app/api/admissions/[id]/cancel-request", import.meta.url)), true);
   assert.equal(existsSync(new URL("../app/api/admissions/[id]/discharge", import.meta.url)), false);
 });

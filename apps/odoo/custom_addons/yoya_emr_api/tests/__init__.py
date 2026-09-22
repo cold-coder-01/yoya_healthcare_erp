@@ -28,3 +28,4 @@ from . import test_pharmacy_desk_api
 from . import test_pharmacy_desk_mutations_api
 from . import test_admissions_desk_api
 from . import test_admissions_desk_mutations_api
+from . import test_admissions_desk_transfer_api

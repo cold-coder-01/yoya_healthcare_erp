@@ -1,23 +1,30 @@
-"""Admissions Desk API (Admissions Slices 1-2).
+"""Admissions Desk API (Admissions Slices 1-3).
 
     GET  /yoya-emr/api/v1/admissions/session
     GET  /yoya-emr/api/v1/admissions/worklist   ?lane= &ward_id= &q= &limit=
     GET  /yoya-emr/api/v1/admissions/<id>
     GET  /yoya-emr/api/v1/admissions/wards
     GET  /yoya-emr/api/v1/admissions/beds       ?ward_id= &room_id= &state= &q=
-    POST /yoya-emr/api/v1/admissions/<id>/admit (Slice 2)
+    POST /yoya-emr/api/v1/admissions/<id>/admit           (Slice 2)
+    POST /yoya-emr/api/v1/admissions/<id>/transfer        (Slice 3)
+    POST /yoya-emr/api/v1/admissions/<id>/cancel-request  (Slice 3)
 
-ONE WRITE. Admit assigns the bed and confirms the admission as a single atomic
-act; there is no separate assign-bed route, so a bed is never "held" by a
-draft. Transfer, discharge and cancel are not registered. The Doctor Desk's
-admission REQUEST lives in controllers/doctor.py, beside the visit it belongs
-to. Viewing creates no audit row.
+THREE WRITES. Admit assigns the bed and confirms the admission as a single
+atomic act; there is no separate assign-bed route, so a bed is never "held" by
+a draft. Transfer moves an admitted patient to another bed. Cancel-request
+withdraws a DRAFT request, from either desk. Discharge is not registered
+(Slice 4). The Doctor Desk's admission REQUEST lives in controllers/doctor.py,
+beside the visit it belongs to. Viewing creates no audit row.
 
-THE CONTROLLER DECIDES NOTHING ABOUT WORKFLOW. The admit route checks the role,
-resolves the admission through the caller's own record rules, and hands the
-payload to hospital.admission._desk_admit(), which owns locking, idempotency,
-the revision check, the bed checks and the Slice 0 confirmation. The
-controller writes no field and calls no sudo().
+THE CONTROLLER DECIDES NOTHING ABOUT WORKFLOW. Each write route checks the
+role, resolves the admission through the caller's own record rules, and hands
+the payload to the model's own desk method (_desk_admit, _desk_transfer,
+_desk_cancel_request), which owns locking, idempotency, the revision check,
+the bed checks and the Slice 0 transition. The controller writes no field and
+calls no sudo().
+
+The detail payload carries `financial` (Slice 3): the inpatient financial
+state as a key, three booleans and fixed review sentences. No amount.
 
 ONE SAVEPOINT PER MUTATION: the model call and the response serialization run
 inside it; refusals are mapped to fixed codes OUTSIDE it, after everything has
@@ -61,6 +68,8 @@ from odoo.addons.hospital_admission.models.admission_authority import (
 
 from ..services.admission_mutations import (
     ADMIT_KEYS,
+    CANCEL_REQUEST_KEYS,
+    TRANSFER_KEYS,
     canonical_token,
     desk_error,
     integrity_code,
@@ -75,6 +84,7 @@ from ..services.admissions_desk_serializers import (
     build_ward_rollups,
     classify_batch,
     serialize_detail,
+    serialize_doctor_admission,
     serialize_row,
     serialize_session,
     transfer_counts,
@@ -91,7 +101,9 @@ from ..services.reception_scope import (
     admissions_desk_capability_flags,
     admissions_desk_role_flags,
     may_admissions_admit,
+    may_admissions_cancel_request,
     may_admissions_desk,
+    may_admissions_transfer,
 )
 
 _logger = logging.getLogger(__name__)
@@ -293,10 +305,12 @@ class YoyaEmrAdmissionsController(http.Controller):
         admissions = env["hospital.admission"].browse([item[0].id for item in page])
         counts = transfer_counts(admissions)
         may_admit = may_admissions_admit(env)
+        may_transfer = may_admissions_transfer(env)
+        may_cancel = may_admissions_cancel_request(env)
         rows = [
             serialize_row(
                 admission, lane, reasons, encounter, counts.get(admission.id, 0),
-                may_admit=may_admit,
+                may_admit=may_admit, may_transfer=may_transfer, may_cancel=may_cancel,
             )
             for admission, lane, reasons, encounter in page
         ]
@@ -394,7 +408,12 @@ class YoyaEmrAdmissionsController(http.Controller):
         if not record:
             raise ApiError("admission_not_found", "Admission not found.", 404)
         return success_response({
-            "admission": serialize_detail(record, may_admit=may_admissions_admit(env)),
+            "admission": serialize_detail(
+                record,
+                may_admit=may_admissions_admit(env),
+                may_transfer=may_admissions_transfer(env),
+                may_cancel=may_admissions_cancel_request(env),
+            ),
             "capabilities": admissions_desk_capability_flags(env),
         })
 
@@ -419,40 +438,134 @@ class YoyaEmrAdmissionsController(http.Controller):
             raise desk_error("admission_not_authorized")
         body = mutation_body(ADMIT_KEYS)
         record = _load_admission_for_mutation(env, admission_id)
+        return _run_desk_mutation(
+            env, record, "admit", body,
+            lambda: record._desk_admit(
+                body["bed_id"], body["operation_token"], body["expected_revision"]
+            ),
+        )
 
-        try:
-            with env.cr.savepoint():
-                admission, replayed = record._desk_admit(
-                    body["bed_id"], body["operation_token"], body["expected_revision"]
-                )
-                payload = serialize_detail(admission, may_admit=True)
-        except PG_CONCURRENCY_EXCEPTIONS_TO_RETRY:
-            raise
-        except AdmissionDeskError as error:
-            raise desk_error(error.code) from None
-        except IntegrityError as error:
-            raise desk_error(integrity_code(error)) from None
-        except AccessError:
-            raise desk_error("admission_not_authorized") from None
-        except (UserError, ValidationError):
-            # A deeper layer refused in its own words. Logged, answered with a
-            # fixed sentence; the savepoint has already rolled everything back.
-            _logger.warning(
-                "Admissions admit refused for admission=%s uid=%s", record.id, env.uid,
-                exc_info=True,
+    # ------------------------------------------------------------------
+    # Slice 3: transfer to another bed
+    # ------------------------------------------------------------------
+    @http.route(
+        "%s/<int:admission_id>/transfer" % ADMISSIONS_API,
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @admissions_endpoint
+    def admissions_transfer(self, admission_id, **params):
+        """Move an admitted patient to another bed.
+
+        Body: {"operation_token": uuid, "expected_revision": int, "bed_id": int,
+        "reason": text}. Exactly those keys. The destination ward and room are
+        derived from the bed. hospital.admission._desk_transfer() owns the
+        locks, the replay, the revision, the bed checks and the Slice 0
+        transition (release, occupy, immutable history with the destination's
+        rate snapshot).
+        """
+        env = request.env
+        if not may_admissions_transfer(env):
+            raise desk_error("admission_not_authorized")
+        body = mutation_body(TRANSFER_KEYS)
+        record = _load_admission_for_mutation(env, admission_id)
+        return _run_desk_mutation(
+            env, record, "transfer", body,
+            lambda: record._desk_transfer(
+                body["bed_id"], body["reason"], body["operation_token"], body["expected_revision"]
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # Slice 3: cancel a DRAFT admission request
+    # ------------------------------------------------------------------
+    @http.route(
+        "%s/<int:admission_id>/cancel-request" % ADMISSIONS_API,
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @admissions_endpoint
+    def admissions_cancel_request(self, admission_id, **params):
+        """Withdraw an admission request that has not been admitted.
+
+        Body: {"operation_token": uuid, "expected_revision": int}. Exactly those
+        keys. The admissions clerk and oversight may cancel any request; a
+        doctor only their own (hospital.admission._desk_may_cancel_request).
+        Used by BOTH desks, so the response also carries the Doctor Desk's own
+        summary of the visit when the caller can read that visit.
+        """
+        env = request.env
+        if not may_admissions_cancel_request(env):
+            raise desk_error("admission_not_authorized")
+        body = mutation_body(CANCEL_REQUEST_KEYS)
+        record = _load_admission_for_mutation(env, admission_id)
+        return _run_desk_mutation(
+            env, record, "cancel_request", body,
+            lambda: record._desk_cancel_request(
+                body["operation_token"], body["expected_revision"]
+            ),
+            with_doctor_summary=True,
+        )
+
+
+def _run_desk_mutation(env, record, operation_type, body, call, with_doctor_summary=False):
+    """THE one shape every Admissions Desk mutation runs in.
+
+    ONE SAVEPOINT: the model call and the response serialization run inside
+    it, so a refusal anywhere rolls every write back. Refusals are mapped to
+    fixed codes OUTSIDE it. Serialization and lock failures are re-raised
+    untouched so the HTTP layer replays the request in a fresh transaction,
+    where the operation token answers it.
+    """
+    doctor_summary = None
+    try:
+        with env.cr.savepoint():
+            admission, replayed = call()
+            payload = serialize_detail(
+                admission,
+                may_admit=may_admissions_admit(env),
+                may_transfer=may_admissions_transfer(env),
+                may_cancel=may_admissions_cancel_request(env),
             )
-            raise desk_error("admission_integrity_error") from None
-        except Exception:
-            _logger.exception("Admissions admit failed for admission=%s", record.id)
-            raise desk_error("admission_mutation_failed") from None
+            if with_doctor_summary:
+                # Under the CALLER's rules, and without sudo(): the id is a
+                # column of the admission the caller already reads, and the
+                # appointment itself is searched through their own rules. A
+                # clerk who cannot read it simply gets no doctor summary.
+                appointment_id = admission.appointment_id.id
+                appointment = env["hospital.appointment"].search(
+                    [("id", "=", appointment_id)], limit=1
+                ) if appointment_id else None
+                if appointment:
+                    doctor_summary = serialize_doctor_admission(appointment)
+    except PG_CONCURRENCY_EXCEPTIONS_TO_RETRY:
+        raise
+    except AdmissionDeskError as error:
+        raise desk_error(error.code) from None
+    except IntegrityError as error:
+        raise desk_error(integrity_code(error)) from None
+    except AccessError:
+        raise desk_error("admission_not_authorized") from None
+    except (UserError, ValidationError):
+        # A deeper layer refused in its own words. Logged, answered with a
+        # fixed sentence; the savepoint has already rolled everything back.
+        _logger.warning(
+            "Admissions %s refused for admission=%s uid=%s", operation_type, record.id, env.uid,
+            exc_info=True,
+        )
+        raise desk_error("admission_integrity_error") from None
+    except Exception:
+        _logger.exception("Admissions %s failed for admission=%s", operation_type, record.id)
+        raise desk_error("admission_mutation_failed") from None
 
-        return success_response({
-            "admission": payload,
-            "capabilities": admissions_desk_capability_flags(env),
-            "workflow_revision": payload["workflow_revision"],
-            "operation": {
-                "type": "admit",
-                "token": canonical_token(body["operation_token"]),
-                "replayed": bool(replayed),
-            },
-        })
+    data = {
+        "admission": payload,
+        "capabilities": admissions_desk_capability_flags(env),
+        "workflow_revision": payload["workflow_revision"],
+        "operation": {
+            "type": operation_type,
+            "token": canonical_token(body["operation_token"]),
+            "replayed": bool(replayed),
+        },
+    }
+    if with_doctor_summary:
+        data["doctor_admission"] = doctor_summary
+    return success_response(data)

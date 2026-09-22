@@ -59,6 +59,12 @@ the encounter-wide verdict of hospital.billing.engine.check_financial_clearance,
 computed there, not here -- plus a sentence from a CLOSED SET OF LITERALS
 defined below. No nursing note body, MAR entry, care plan text or diagnosis
 history is serialized; nursing appears as counts and latest timestamps.
+
+The inpatient financial comparison (Slice 3: actual delivered care vs the money
+available against it) crosses the same way -- `financial`: a state key, three
+booleans and fixed review sentences from the model's own amount-free
+projection. The amounts stay in hospital_admission, for the money roles'
+own workflows.
 """
 import logging
 
@@ -442,17 +448,38 @@ def transfer_counts(admissions):
 # bed named; never needs_review -- a broken record is reviewed, not admitted.
 ADMITTABLE_LANES = ("awaiting_bed", "draft")
 
+# Lanes a patient may be transferred from (Slice 3): in a bed and healthy. A
+# needs_review admission is reviewed first -- moving a patient whose bed
+# pointer already disagrees would move the disagreement.
+TRANSFERABLE_LANES = ("admitted", "transferred")
 
-def serialize_row(admission, lane, reasons, encounter, transfers=0, now=None, may_admit=False):
+# Lanes a request may be cancelled from (Slice 3): the draft lanes only. After
+# admission a stay ends by discharge, never by un-requesting it.
+CANCELLABLE_LANES = ("awaiting_bed", "draft")
+
+
+def _may_cancel_this(admission, lane, may_cancel):
+    """Role half AND ownership half. The ownership test is the model's own."""
+    if not (may_cancel and lane in CANCELLABLE_LANES):
+        return False
+    return bool(_safe(admission._desk_may_cancel_request, default=False))
+
+
+def serialize_row(
+    admission, lane, reasons, encounter, transfers=0, now=None,
+    may_admit=False, may_transfer=False, may_cancel=False,
+):
     return {
         "id": admission.id,
         "reference": admission.name,
         "state": admission.state,
-        # Optimistic concurrency: echoed back by the admit action.
+        # Optimistic concurrency: echoed back by every desk mutation.
         "workflow_revision": admission.workflow_revision,
-        # AFFORDANCE ONLY. The role may admit AND this record is in a lane that
-        # can be admitted. The model re-checks every condition under its locks.
+        # AFFORDANCES ONLY. The role may act AND this record is in a lane that
+        # allows it. The model re-checks every condition under its locks.
         "can_admit": bool(may_admit and lane in ADMITTABLE_LANES),
+        "can_transfer": bool(may_transfer and lane in TRANSFERABLE_LANES),
+        "can_cancel_request": _may_cancel_this(admission, lane, may_cancel),
         "state_label": _selection_label(admission, "state"),
         "lane": lane,
         "lane_label": lane_label(lane),
@@ -526,7 +553,43 @@ def serialize_transfer(transfer):
     }
 
 
-def serialize_detail(admission, may_admit=False):
+# The inpatient FINANCIAL STATE (Slice 3), as the desk may show it: a state,
+# three booleans and fixed review sentences, from
+# hospital.admission._inpatient_financial_status(). No amount crosses here --
+# the model's projection has none, and this adds none. If the projection
+# cannot be read at all, the desk says so rather than guessing "covered".
+FINANCIAL_UNAVAILABLE = {
+    "financial_state": "needs_review",
+    "billing_blocked": True,
+    "settlement_required": False,
+    "refund_due": False,
+    "review_reasons": [
+        {
+            "code": "financial_unavailable",
+            "message": "The inpatient financial state could not be determined.",
+        }
+    ],
+}
+
+
+def serialize_financial(admission):
+    status = _safe(admission._inpatient_financial_status, default=None)
+    if status is None:
+        _logger.warning("Admissions desk: financial status unavailable for admission=%s", admission.id)
+        return dict(FINANCIAL_UNAVAILABLE)
+    return {
+        "financial_state": status["financial_state"],
+        "billing_blocked": bool(status["billing_blocked"]),
+        "settlement_required": bool(status["settlement_required"]),
+        "refund_due": bool(status["refund_due"]),
+        "review_reasons": [
+            {"code": reason["code"], "message": reason["message"]}
+            for reason in status["review_reasons"]
+        ],
+    }
+
+
+def serialize_detail(admission, may_admit=False, may_transfer=False, may_cancel=False):
     """One admission, for a caller who can already read it."""
     env = admission.env
     [(record, lane, reasons, encounter)] = classify_batch(admission)
@@ -570,7 +633,8 @@ def serialize_detail(admission, may_admit=False):
 
     return dict(
         serialize_row(
-            admission, lane, reasons, encounter, transfers=len(transfers), may_admit=may_admit
+            admission, lane, reasons, encounter, transfers=len(transfers),
+            may_admit=may_admit, may_transfer=may_transfer, may_cancel=may_cancel,
         ),
         admission_reason=admission.admission_reason or None,
         diagnosis=diagnosis,
@@ -592,6 +656,7 @@ def serialize_detail(admission, may_admit=False):
             ),
         },
         clearance=serialize_clearance(encounter),
+        financial=serialize_financial(admission),
     )
 
 
@@ -825,7 +890,8 @@ def serialize_session(env, roles, capabilities):
 DOCTOR_ADMISSION_STATUS = {
     "draft": ("requested", "Admission requested - awaiting bed"),
     "admitted": ("admitted", "Inpatient - admitted"),
-    "transferred": ("admitted", "Inpatient - admitted"),
+    # Slice 3: a moved patient is shown as moved, at their CURRENT location.
+    "transferred": ("transferred", "Inpatient - transferred"),
     "discharged": ("discharged", "Discharged"),
     "cancelled": ("cancelled", "Admission request cancelled"),
 }
@@ -886,15 +952,26 @@ def serialize_doctor_admission(appointment, now=None):
     )
     status, label = DOCTOR_ADMISSION_STATUS.get(admission.state, ("none", "Not admitted")) if admission else ("none", "Not admitted")
 
+    # Slice 3: the doctor may withdraw their OWN request while it is still a
+    # draft. Affordance only; the model decides again under its lock.
+    can_cancel = bool(
+        admission
+        and admission.state == "draft"
+        and _safe(admission._desk_may_cancel_request, default=False)
+    )
+
     return {
         "status": status,
         "status_label": label,
+        "can_cancel_request": can_cancel,
         "admission": (
             {
                 "id": admission.id,
                 "reference": admission.name,
                 "state": admission.state,
                 "state_label": _selection_label(admission, "state"),
+                # Echoed back as expected_revision by cancel-request.
+                "workflow_revision": admission.workflow_revision,
                 "requested_at": datetime_value(admission.create_date),
                 "admitted_at": (
                     datetime_value(admission.admission_date)

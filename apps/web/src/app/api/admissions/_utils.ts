@@ -1,8 +1,9 @@
 /**
  * Shared bits for the Admissions Desk BFF routes (Admissions Slice 1).
  *
- * READS ARE GET. The ONE write (Slice 2) is POST .../admit, whose body is
- * rebuilt from exactly three fields by pickAdmitBody (see _body.ts).
+ * READS ARE GET. The writes are POSTs -- .../admit (Slice 2), .../transfer and
+ * .../cancel-request (Slice 3) -- whose bodies are rebuilt from exactly the
+ * allowed fields by the pickers in _body.ts, through ONE POST helper.
  *
  * `server-only` keeps these -- and the Odoo session cookie they read -- out of
  * every client bundle. The browser never holds an Odoo session and never has a
@@ -48,7 +49,8 @@ export function parseAdmissionId(raw: string) {
   return { ok: true as const, value: admissionId };
 }
 
-/** A POST with a rebuilt body, bound to this desk's label. Used ONLY by admit. */
+/** A POST with a rebuilt body, bound to this desk's label. Used ONLY by the
+ *  mutation routes, each of which rebuilds its body first. */
 export function postOdooApiWithBody<T>(
   sessionId: string,
   path: string,
@@ -74,4 +76,9 @@ export async function readMutationBody(request: Request) {
   return { ok: true as const, body: body as Record<string, unknown> };
 }
 
-export { pickAdmitBody, pickAdmissionRequestBody } from "./_body";
+export {
+  pickAdmitBody,
+  pickAdmissionRequestBody,
+  pickCancelRequestBody,
+  pickTransferBody,
+} from "./_body";

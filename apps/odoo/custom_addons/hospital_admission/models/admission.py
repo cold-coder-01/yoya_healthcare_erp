@@ -13,20 +13,29 @@ from .admission_authority import (
     ADMISSION_ATTRIBUTION_FIELDS,
     ADMISSION_IDENTITY_FIELDS,
     ADMISSION_LOCATION_FIELDS,
+    ADMISSION_MONEY_READ,
+    ADMISSION_RATE_SNAPSHOT_FIELDS,
     ADMISSION_TIMELINE_FIELDS,
     ENCOUNTER_ADMISSIBLE_STATES,
     DESK_ADMIT_GROUPS,
+    DESK_CANCEL_REQUEST_GROUPS,
     DESK_REASON_MAX_LENGTH,
     DESK_REQUEST_OVERSIGHT_GROUPS,
     DESK_TOKEN_MAX_LENGTH,
+    DESK_TRANSFER_GROUPS,
     G_DOCTOR,
+    RATE_BASIS_SELECTION,
+    RATE_SNAPSHOT_ORIGIN_SELECTION,
     AdmissionDeskError,
     AdmissionWorkflowError,
     admission_billing_capability,
     admission_operation_capability,
     admission_revision_capability,
+    admission_transfer_history_capability,
     desk_code_for,
+    has_admission_rate_snapshot_capability,
     has_admission_revision_capability,
+    has_admission_transfer_history_capability,
     admission_location_capability,
     admission_workflow_capability,
     changed_fields,
@@ -34,6 +43,7 @@ from .admission_authority import (
     has_admission_billing_capability,
     has_admission_location_capability,
     has_admission_workflow_capability,
+    resolve_location_rate,
 )
 
 
@@ -308,50 +318,40 @@ class HospitalAdmission(models.Model):
                 rec.stay_days = 1 if start else 0
 
     @api.depends(
-        "stay_days",
+        "state", "stay_days", "admission_date", "discharge_date",
         "ward_id", "ward_id.admission_fee", "ward_id.daily_ward_rate",
         "room_id", "room_id.daily_room_rate",
         "bed_id", "bed_id.daily_bed_rate",
+        "transfer_ids", "transfer_ids.transfer_date",
     )
     def _compute_admission_billing(self):
-        # DELIBERATELY UNCHANGED IN THIS SLICE.
-        #
-        # This multiplies the CURRENT location's daily rate by the WHOLE stay,
-        # so a patient who spends nine days on a general ward and one in ICU is
-        # billed ten ICU days. That is a real defect and it is recorded as
-        # PART 19 of the slice report.
-        #
-        # It is not fixed here because the fix is a billing change, not an
-        # authority change: it needs per-segment rates derived from the
-        # transfer history, a decision about which rate applies to the segment
-        # a transfer opens, and agreement with the charge engine that Slice 0
-        # deliberately does not touch. Rewriting it inside an authority slice
-        # would put a billing change behind a security review.
-        #
-        # What this slice DOES guarantee is that it is not made worse: the
-        # transfer workflow now writes a complete, ordered, server-attributed
-        # hospital.admission.transfer row for every move, which is exactly the
-        # input a segmentation fix needs and which did not reliably exist
-        # before. test_rate_segmentation_is_deferred_not_worsened pins the
-        # current behaviour so the later fix is a deliberate change.
+        """SEGMENTED (Admissions Slice 3). The retroactive-rate defect Slice 0
+        pinned is fixed here: once a stay has started, every figure comes from
+        _bed_stay_breakdown(), which prices each segment of the stay at the
+        rate recorded when that segment opened.
+
+          admission_fee_amount   the OPENING ward's fee, recorded at admission
+          daily_rate_amount      the CURRENT segment's recorded daily rate
+          bed_charge_amount      the sum of every segment's own charge
+          total_admission_charge fee + bed charge
+
+        A DRAFT has no stay yet, so it keeps the legacy live preview: the rate
+        of the location it names, times the planned stay. That is an estimate,
+        and nothing bills from it.
+        """
         for rec in self:
-            ward = rec.ward_id
-            room = rec.room_id
-            bed = rec.bed_id
-
-            rec.admission_fee_amount = ward.admission_fee if ward else 0.0
-
-            if bed and bed.daily_bed_rate > 0:
-                rec.daily_rate_amount = bed.daily_bed_rate
-            elif room and room.daily_room_rate > 0:
-                rec.daily_rate_amount = room.daily_room_rate
-            elif ward:
-                rec.daily_rate_amount = ward.daily_ward_rate
-            else:
-                rec.daily_rate_amount = 0.0
-
-            rec.bed_charge_amount = rec.daily_rate_amount * rec.stay_days
-            rec.total_admission_charge = rec.admission_fee_amount + rec.bed_charge_amount
+            if rec.state in ("draft", "cancelled"):
+                daily_rate, _basis = resolve_location_rate(rec.ward_id, rec.room_id, rec.bed_id)
+                rec.admission_fee_amount = rec.ward_id.admission_fee if rec.ward_id else 0.0
+                rec.daily_rate_amount = daily_rate
+                rec.bed_charge_amount = daily_rate * rec.stay_days
+                rec.total_admission_charge = rec.admission_fee_amount + rec.bed_charge_amount
+                continue
+            breakdown = rec._bed_stay_breakdown()
+            rec.admission_fee_amount = breakdown["admission_fee"]
+            rec.daily_rate_amount = breakdown["current_daily_rate"]
+            rec.bed_charge_amount = breakdown["bed_total"]
+            rec.total_admission_charge = breakdown["total"]
 
     # ------------------------------------------------------------------
     # CONSTRAINTS
@@ -620,38 +620,45 @@ class HospitalAdmission(models.Model):
                 "Invalid stay duration. Please check admission and discharge dates."
             )
 
+        # ONE LINE PER BILLED SEGMENT (Admissions Slice 3). The legacy code
+        # wrote one line of (whole stay x current rate); every segment now
+        # carries its own recorded rate and its own days, so a transfer can no
+        # longer reprice the stay before it. Segments that bill zero days (a
+        # stay entirely inside a period already started elsewhere) or have no
+        # rate produce no line, as a zero rate did before.
+        breakdown = self._bed_stay_breakdown()
         bill_lines = []
 
-        if self.admission_fee_amount > 0:
+        if breakdown["admission_fee"] > 0:
             bill_lines.append((0, 0, {
                 "description": f"Admission Fee - {self.name}",
                 "source_type": "admission",
                 "quantity": 1.0,
-                "unit_price": self.admission_fee_amount,
+                "unit_price": breakdown["admission_fee"],
                 "source_model": "hospital.admission",
                 "source_record_id": self.id,
                 "sequence": 10,
             }))
 
-        if self.daily_rate_amount > 0:
+        for segment in breakdown["segments"]:
+            if segment["days"] <= 0 or segment["daily_rate"] <= 0:
+                continue
             parts = [
-                self.ward_id.display_name if self.ward_id else "",
-                self.room_id.name if self.room_id else "",
-                self.bed_id.display_name if self.bed_id else "",
+                segment["ward"].display_name if segment["ward"] else "",
+                segment["room"].name if segment["room"] else "",
+                segment["bed"].display_name if segment["bed"] else "",
             ]
-            location_desc = " / ".join(p for p in parts if p)
+            location_desc = " / ".join(p for p in parts if p) or self.name
             bill_lines.append((0, 0, {
                 "description": (
-                    f"Bed Stay Charge - {location_desc} - {int(stay_days)} day(s)"
-                    if location_desc
-                    else f"Bed Stay Charge - {self.name} - {int(stay_days)} day(s)"
+                    f"Bed Stay Charge - {location_desc} - {segment['days']} day(s)"
                 ),
                 "source_type": "admission",
-                "quantity": float(stay_days),
-                "unit_price": self.daily_rate_amount,
+                "quantity": float(segment["days"]),
+                "unit_price": segment["daily_rate"],
                 "source_model": "hospital.admission",
                 "source_record_id": self.id,
-                "sequence": 20,
+                "sequence": 20 + segment["index"],
             }))
 
         if not bill_lines:
@@ -727,6 +734,13 @@ class HospitalAdmission(models.Model):
             if vals.get("workflow_revision") and not has_admission_revision_capability():
                 # An admission starts at revision 0; only the desk workflow moves it.
                 raise AdmissionWorkflowError("admission_state_write_refused")
+            if (
+                any(vals.get(name) for name in ADMISSION_RATE_SNAPSHOT_FIELDS)
+                and not has_admission_rate_snapshot_capability()
+            ):
+                # A stay rate is recorded when the patient enters a bed, never
+                # supplied by whoever creates the row.
+                raise AdmissionWorkflowError("admission_rate_snapshot_write_refused")
             if vals.get("name", "New") == "New":
                 vals["name"] = (
                     self.env["ir.sequence"].next_by_code("hospital.admission.sequence") or "New"
@@ -808,6 +822,18 @@ class HospitalAdmission(models.Model):
                 and changed_fields(rec, ("bill_id",), vals)
             ):
                 raise AdmissionWorkflowError("admission_bill_write_refused")
+
+            # ── stay rate snapshot: recorded by the workflow only ──
+            #
+            # Checked in EVERY tier, drafts included: a draft carrying a
+            # hand-written rate would be admitted at it. Compared on a sudo()
+            # view because the fields are readable only by the money roles,
+            # and whether a write CHANGES them is not a question of who asks.
+            if (
+                changed_fields(rec.sudo(), ADMISSION_RATE_SNAPSHOT_FIELDS, vals)
+                and not has_admission_rate_snapshot_capability()
+            ):
+                raise AdmissionWorkflowError("admission_rate_snapshot_write_refused")
 
             # ── identity: settled from creation, never relinked ────
             #
@@ -1012,6 +1038,10 @@ class HospitalAdmission(models.Model):
             self._occupy_bed(self.bed_id)
 
         self._write_state("admitted")
+        # The stay's opening rate, frozen in the same locked transaction that
+        # put the patient in the bed (Admissions Slice 3). From here on, an
+        # edit to the catalogue rate cannot reprice this segment.
+        self._take_opening_rate_snapshot()
         return True
 
     def action_discharge(self):
@@ -1103,6 +1133,21 @@ class HospitalAdmission(models.Model):
             },
         }
 
+    @api.model
+    def _may_transfer(self):
+        """Role only. action_transfer() checks everything else under its locks."""
+        user = self.env.user
+        return any(user.has_group(group) for group in DESK_TRANSFER_GROUPS)
+
+    def _assert_may_transfer(self):
+        """env.su passes: server-side system code (an upgrade, a test fixture,
+        another module's workflow) must still be able to move a patient, the
+        same rule charge_line._assert_group() applies. An RPC caller cannot
+        reach sudo(), so this admits no ordinary user."""
+        if self.env.su or self._may_transfer():
+            return
+        raise AdmissionWorkflowError("admission_transfer_not_authorized")
+
     def action_transfer(self, to_ward, to_room, to_bed, reason=None):
         """THE transfer transition. A real model method, not wizard code.
 
@@ -1113,9 +1158,26 @@ class HospitalAdmission(models.Model):
         The wizard now collects input and calls this; the authority lives on
         the model that owns the facts.
 
-        No API route is registered for it in this slice. That is Slice 3.
+        ADMISSIONS SLICE 3 adds, inside the same locks:
+
+          * WHO. Only DESK_TRANSFER_GROUPS may move a patient, on every channel
+            -- the backend wizard, RPC and the desk alike. Server-side system
+            code (env.su) still may, as it may everywhere else in billing.
+          * WHEN. The move is stamped now, and now must not precede the start of
+            the segment it closes; otherwise the history would describe a stay
+            that runs backwards.
+          * AT WHAT RATE. The destination's daily rate is frozen on the transfer
+            row as it is created. The segment that row opens is priced from it
+            forever after, whatever the catalogue says later.
+          * HOW THE HISTORY IS WRITTEN. Only here, under
+            admission_transfer_history_capability(); the row is immutable
+            afterwards (HospitalAdmissionTransfer.write / unlink).
+
+        The Admissions Desk calls this from _desk_transfer(), which adds the
+        revision, the operation token and the desk error vocabulary.
         """
         self.ensure_one()
+        self._assert_may_transfer()
         if self.state not in ADMISSION_ACTIVE_STATES:
             raise UserError(
                 "Transfer is only allowed for Admitted or Transferred admissions."
@@ -1146,6 +1208,15 @@ class HospitalAdmission(models.Model):
             # that records a move that did not happen.
             raise AdmissionWorkflowError("admission_bed_not_available")
 
+        # The segment this move closes started at the last transfer, or at
+        # admission. A clock that reads earlier than that is refused rather
+        # than recorded: a backwards segment cannot be priced.
+        moved_at = fields.Datetime.now()
+        last_move = self._stay_transfers()[-1:]
+        segment_start = last_move.transfer_date if last_move else self.admission_date
+        if segment_start and moved_at < segment_start:
+            raise AdmissionWorkflowError("admission_timeline_incoherent")
+
         # Release before occupy: ownership of the old bed is verified first, so
         # a transfer from a bed this admission does not hold cannot take a new
         # bed and strand the old one.
@@ -1153,21 +1224,31 @@ class HospitalAdmission(models.Model):
             self._release_bed("transfer")
         self._occupy_bed(to_bed)
 
-        self.env["hospital.admission.transfer"].create(
-            {
-                "admission_id": self.id,
-                "transfer_date": fields.Datetime.now(),
-                "from_ward_id": old_bed.ward_id.id if old_bed and old_bed.ward_id else False,
-                "from_room_id": old_bed.room_id.id if old_bed and old_bed.room_id else False,
-                "from_bed_id": old_bed.id if old_bed else False,
-                "to_ward_id": to_ward.id,
-                "to_room_id": to_room.id,
-                "to_bed_id": to_bed.id,
-                "reason": reason,
-                # NOT taken from the caller. See the field's own comment.
-                "transferred_by": self.env.user.id,
-            }
-        )
+        # The destination's rate, frozen as the segment opens.
+        daily_rate, basis = resolve_location_rate(to_ward, to_room, to_bed)
+        # sudo() ON THE CREATE, behind the capability: the admissions clerk
+        # holds read-only access to transfer history and must not be given
+        # more -- a raw create would bypass every check above. The capability
+        # is the authority; transferred_by is still the real user, because
+        # sudo() keeps the uid.
+        with admission_transfer_history_capability():
+            self.env["hospital.admission.transfer"].sudo().create(
+                {
+                    "admission_id": self.id,
+                    "transfer_date": moved_at,
+                    "from_ward_id": old_bed.ward_id.id if old_bed and old_bed.ward_id else False,
+                    "from_room_id": old_bed.room_id.id if old_bed and old_bed.room_id else False,
+                    "from_bed_id": old_bed.id if old_bed else False,
+                    "to_ward_id": to_ward.id,
+                    "to_room_id": to_room.id,
+                    "to_bed_id": to_bed.id,
+                    "reason": reason,
+                    "rate_snapshot_taken": True,
+                    "rate_snapshot_origin": "workflow",
+                    "to_rate_basis": basis,
+                    "to_daily_rate": daily_rate,
+                }
+            )
 
         self._write_location(to_ward, to_room, to_bed)
         self._write_state("transferred")
@@ -1530,6 +1611,172 @@ class HospitalAdmission(models.Model):
             raise AdmissionDeskError("admission_integrity_error")
         return self._desk_finish("admit", token, digest)
 
+    # ------------------------------------------------------------------
+    # Admissions Desk: transfer to another bed (Admissions Slice 3)
+    # ------------------------------------------------------------------
+    def _desk_transfer(self, bed_id, reason, operation_token, expected_revision):
+        """Move an admitted patient to another bed. Returns (admission, replayed).
+
+        The destination WARD and ROOM are derived from the bed, never taken from
+        the client. The transition itself is Slice 0's action_transfer() --
+        release, occupy, immutable history with the destination's rate
+        snapshot, location, state -- so this adds only what the desk needs:
+        authorization before any row is read, the revision, idempotency, the
+        choice of bed, and one error vocabulary.
+
+        THE LOCK SET IS DECIDED BEFORE THE LOCK. The old bed is read, then the
+        old and new beds are locked together in ascending id order (the rule
+        that keeps a mirror-image swap from deadlocking). If, once locked, the
+        admission turns out to be in a DIFFERENT bed from the one read, someone
+        moved the patient in between: that is a revision conflict, answered
+        before anything is touched -- never a second lock taken out of order.
+        """
+        self.ensure_one()
+        if not self._may_transfer():
+            raise AdmissionDeskError("admission_not_authorized")
+        token = self._desk_clean_token(operation_token)
+        revision = self._desk_clean_revision(expected_revision)
+        bed_id = self._desk_clean_id(bed_id, missing_code="admission_bed_required")
+        reason = self._desk_clean_reason(reason)
+
+        bed = self.env["hospital.bed"].with_context(active_test=False).search(
+            [("id", "=", bed_id)], limit=1
+        )
+        if not bed:
+            raise AdmissionDeskError("admission_bed_unavailable")
+
+        seen_bed = self.bed_id
+        try:
+            self._lock_for_occupancy(seen_bed | bed)
+        except AdmissionWorkflowError:
+            raise AdmissionDeskError("admission_not_found") from None
+
+        digest = self._desk_digest(
+            "transfer",
+            {
+                "admission": self.id,
+                "bed": bed.id,
+                "expected_revision": revision,
+                "reason": reason,
+            },
+        )
+        if self._desk_find_replay("transfer", token, digest):
+            return self, True
+
+        if self.workflow_revision != revision:
+            raise AdmissionDeskError("admission_revision_conflict")
+        if self.state not in ADMISSION_ACTIVE_STATES:
+            raise AdmissionDeskError("admission_invalid_state")
+        if self.bed_id != seen_bed:
+            raise AdmissionDeskError("admission_revision_conflict")
+        if not self.bed_id:
+            # An active admission with no bed is a broken record; there is no
+            # "from" to release and no segment to close. Reviewed, not moved.
+            raise AdmissionDeskError("admission_integrity_error")
+        if bed == self.bed_id:
+            raise AdmissionDeskError("admission_bed_unavailable")
+
+        # The destination, re-read under the lock.
+        if bed.current_admission_id or bed._active_admission():
+            raise AdmissionDeskError("admission_bed_conflict")
+        if not bed.active or bed.state != "available":
+            raise AdmissionDeskError("admission_bed_unavailable")
+        if bed.company_id and bed.company_id != self.company_id:
+            raise AdmissionDeskError("admission_company_mismatch")
+        if not bed.room_id or not bed.ward_id or bed.room_id.ward_id != bed.ward_id:
+            raise AdmissionDeskError("admission_location_mismatch")
+
+        old_bed = self.bed_id
+        try:
+            self.action_transfer(bed.ward_id, bed.room_id, bed, reason=reason)
+        except AdmissionWorkflowError as error:
+            raise AdmissionDeskError(desk_code_for(error.code)) from None
+
+        self.env.flush_all()
+        self.env.invalidate_all()
+        if (
+            self.state != "transferred"
+            or self.bed_id != bed
+            or bed.state != "occupied"
+            or bed.current_admission_id != self
+            or old_bed.current_admission_id == self
+        ):
+            raise AdmissionDeskError("admission_integrity_error")
+        return self._desk_finish("transfer", token, digest)
+
+    # ------------------------------------------------------------------
+    # Admissions Desk / Doctor Desk: cancel a DRAFT request (Slice 3)
+    # ------------------------------------------------------------------
+    def _desk_may_cancel_request(self):
+        """AFFORDANCE AND AUTHORITY, role + ownership. The admissions clerk and
+        oversight may cancel any request; a doctor only one whose physician
+        they are. sudo() reads the physician's user: the ownership test is a
+        property of the data, and it only ever refuses."""
+        self.ensure_one()
+        user = self.env.user
+        if any(user.has_group(group) for group in DESK_CANCEL_REQUEST_GROUPS):
+            return True
+        return bool(
+            user.has_group(G_DOCTOR)
+            and self.sudo().physician_id.user_id == user
+        )
+
+    def _desk_cancel_request(self, operation_token, expected_revision):
+        """Cancel a draft admission request. Returns (admission, replayed).
+
+        DRAFT ONLY. A patient who is in a bed is discharged or transferred,
+        never "un-requested" -- that path would free a bed with no clinical act
+        behind it. A draft holds no bed (Slice 2 assigns and admits in one act),
+        and a draft found holding one is an integrity fault, not something to
+        clean up quietly.
+
+        Uses Slice 0's action_cancel(). Afterwards the visit whose completion
+        Slice 2 DEFERRED because of this request is re-run through its own
+        completion path (hospital.encounter._release_deferred_completion), in
+        the same transaction, and only if nothing else still holds it open.
+        """
+        self.ensure_one()
+        if not self._desk_may_cancel_request():
+            raise AdmissionDeskError("admission_not_authorized")
+        token = self._desk_clean_token(operation_token)
+        revision = self._desk_clean_revision(expected_revision)
+
+        try:
+            self._lock_for_occupancy(self.bed_id)
+        except AdmissionWorkflowError:
+            raise AdmissionDeskError("admission_not_found") from None
+
+        digest = self._desk_digest(
+            "cancel_request", {"admission": self.id, "expected_revision": revision}
+        )
+        if self._desk_find_replay("cancel_request", token, digest):
+            return self, True
+
+        if self.workflow_revision != revision:
+            raise AdmissionDeskError("admission_revision_conflict")
+        if self.state != "draft":
+            raise AdmissionDeskError("admission_invalid_state")
+        if self.bed_id and (
+            self.bed_id.current_admission_id == self or self.bed_id._active_admission() == self
+        ):
+            raise AdmissionDeskError("admission_integrity_error")
+
+        try:
+            self.action_cancel()
+        except AdmissionWorkflowError as error:
+            raise AdmissionDeskError(desk_code_for(error.code)) from None
+
+        self.env.flush_all()
+        self.env.invalidate_all()
+        if self.state != "cancelled":
+            raise AdmissionDeskError("admission_integrity_error")
+        result = self._desk_finish("cancel_request", token, digest)
+
+        encounter = self.sudo().encounter_id
+        if encounter:
+            encounter._release_deferred_completion(self)
+        return result
+
     def unlink(self):
         for rec in self:
             if rec.state not in ("draft", "cancelled"):
@@ -1580,23 +1827,66 @@ class HospitalAdmissionTransfer(models.Model):
         readonly=True,
     )
 
+    # ── Destination rate snapshot (Admissions Slice 3) ──────────
+    #
+    # The segment this row OPENS is priced from these, never from the
+    # catalogue. Minimum facts only: the daily rate and which catalogue level
+    # it came from. Readable by the money roles only.
+    rate_snapshot_taken = fields.Boolean(
+        string="Destination Rate Recorded", readonly=True, groups=ADMISSION_MONEY_READ,
+    )
+    rate_snapshot_origin = fields.Selection(
+        RATE_SNAPSHOT_ORIGIN_SELECTION,
+        string="Destination Rate Origin", readonly=True, groups=ADMISSION_MONEY_READ,
+    )
+    to_rate_basis = fields.Selection(
+        RATE_BASIS_SELECTION,
+        string="Destination Rate Basis", readonly=True, groups=ADMISSION_MONEY_READ,
+    )
+    to_daily_rate = fields.Float(
+        string="Destination Daily Rate", digits=(16, 2), readonly=True,
+        groups=ADMISSION_MONEY_READ,
+    )
+
     @api.model_create_multi
     def create(self, vals_list):
+        """ONLY action_transfer() creates history (Admissions Slice 3).
+
+        Every row starts a new billed stay segment. A row created anywhere else
+        -- a nurse's ACL, an import, a sudo() script -- would reprice the stay
+        without a patient having moved, so the capability is required
+        whatever the caller's rights.
+        """
+        if not has_admission_transfer_history_capability():
+            raise AdmissionWorkflowError("admission_transfer_history_refused")
         for vals in vals_list:
             vals["transferred_by"] = self.env.uid
         return super().create(vals_list)
 
     def write(self, vals):
-        """Transfer history is a record of something that happened.
+        """Transfer history is a record of something that happened. IMMUTABLE.
 
-        A nurse holds create and write on this model, so before this guard the
-        history of where a patient had been could be rewritten after the fact.
+        A nurse holds create and write on this model, so before Slice 0's guard
+        the history of where a patient had been could be rewritten after the
+        fact. Slice 3 closes the rest: the dates, both ends and the rate
+        snapshot are what the stay is billed from, so nothing on a transfer row
+        changes once written. Echoing the current value is not a change.
         """
         if "transferred_by" in vals:
             for rec in self:
                 if vals["transferred_by"] != rec.transferred_by.id:
                     raise AdmissionWorkflowError("admission_identity_write_refused")
+        names = [name for name in vals if name in self._fields]
+        for rec in self.sudo():
+            if changed_fields(rec, names, vals):
+                raise AdmissionWorkflowError("admission_transfer_history_refused")
         return super().write(vals)
+
+    def unlink(self):
+        """History is not deleted. A draft or cancelled admission that is itself
+        deleted takes its rows with it through the database cascade, which does
+        not pass through here."""
+        raise AdmissionWorkflowError("admission_transfer_history_refused")
 
 
 class HospitalAdmissionTransferWizard(models.TransientModel):

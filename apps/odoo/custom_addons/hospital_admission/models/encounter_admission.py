@@ -25,6 +25,7 @@ what financial clearance is required first. That is discharge policy and it
 belongs to Slice 4.
 """
 from odoo import api, fields, models
+from odoo.exceptions import UserError
 
 from .admission_authority import (
     ADMISSION_ACTIVE_STATES,
@@ -130,6 +131,73 @@ class HospitalEncounter(models.Model):
         remaining = self - deferred
         if remaining:
             return super(HospitalEncounter, remaining).action_complete()
+        return True
+
+    def _completion_was_deferred(self):
+        """Whether action_complete() above is what kept this visit open.
+
+        DERIVED, NOT STORED. Completion is triggered by exactly one event --
+        hospital_billing's hospital.appointment.action_done(), which completes
+        an ACTIVE visit unconditionally once the consultation is done. So a
+        visit that is still active while its appointment is done was held open
+        by the deferral and by nothing else. A stored flag would have to be
+        backfilled for every visit deferred before this slice, and could
+        disagree with the two facts it summarises.
+        """
+        self.ensure_one()
+        encounter = self.sudo()
+        return (
+            encounter.state == "active"
+            and bool(encounter.appointment_id)
+            and encounter.appointment_id.state == "done"
+        )
+
+    def _release_deferred_completion(self, cancelled_admission):
+        """Re-run the completion Slice 2 deferred, now that the admission
+        request which deferred it has been cancelled (Admissions Slice 3).
+
+        SAFE BY CONSTRUCTION:
+
+          * only a visit whose completion was actually deferred is touched --
+            a consultation still in progress stays in progress;
+          * it goes through action_complete() -- the same path the
+            consultation would have taken -- so this very override runs again
+            and defers again if ANY other admission is still open on the visit;
+          * any other refusal on that path is caught inside a savepoint and
+            leaves the visit active and the refusal audited: cancelling a
+            request is never blocked or undone by a visit that cannot close
+            yet, and a visit with another blocker is never forced closed.
+
+        sudo(): the canceller may be the admissions clerk, whose record rules
+        and ACLs on hospital.encounter do not cover completing a visit; the
+        consultation completion path runs its encounter step the same way
+        (hospital_billing appointment.action_done -> encounter.sudo()).
+        """
+        self.ensure_one()
+        encounter = self.sudo()
+        if not encounter._completion_was_deferred():
+            return False
+        if encounter._open_admissions():
+            return False
+        try:
+            with self.env.cr.savepoint():
+                encounter.action_complete()
+        except UserError:
+            encounter._log_audit(
+                "update",
+                "Completion of visit %s was not released after admission request %s "
+                "was cancelled: the visit could not be completed yet."
+                % (encounter.name, cancelled_admission.name),
+            )
+            return False
+        encounter.invalidate_recordset(["state"])
+        if encounter.state == "active":
+            return False
+        encounter._log_audit(
+            "update",
+            "Deferred completion of visit %s released: admission request %s was "
+            "cancelled." % (encounter.name, cancelled_admission.name),
+        )
         return True
 
     def _check_can_close(self):

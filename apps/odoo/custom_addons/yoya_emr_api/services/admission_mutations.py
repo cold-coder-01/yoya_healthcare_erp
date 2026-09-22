@@ -1,5 +1,5 @@
 """The Admissions mutation contract shared by the Admissions Desk and the
-Doctor Desk (Admissions Slice 2).
+Doctor Desk (Admissions Slices 2-3: request, admit, transfer, cancel request).
 
 ONE ERROR VOCABULARY. The MODEL chooses the code (hospital_admission's
 AdmissionDeskError); this module only chooses the HTTP status and rebuilds the
@@ -38,6 +38,9 @@ MUTATION_FAILED_MESSAGE = "The admission action could not be completed. Nothing 
 
 ADMIT_KEYS = frozenset({"operation_token", "expected_revision", "bed_id"})
 REQUEST_KEYS = frozenset({"operation_token", "reason"})
+# Admissions Slice 3. The destination ward and room are derived from the bed.
+TRANSFER_KEYS = frozenset({"operation_token", "expected_revision", "bed_id", "reason"})
+CANCEL_REQUEST_KEYS = frozenset({"operation_token", "expected_revision"})
 
 
 def desk_error(code):
