@@ -19,11 +19,16 @@ import AdmissionLanePill from "./admission-lane-pill";
  * One admission. Its actions are offered only when the SERVER says so twice
  * over -- the role's capability AND this record's own affordance:
  *
- *   Admit to bed…     (Slice 2)  `admit`          + `can_admit`
- *   Transfer patient… (Slice 3)  `transfer`       + `can_transfer`
- *   Cancel request    (Slice 3)  `cancel_request` + `can_cancel_request`
+ *   Admit to bed…        (Slice 2)  `admit`          + `can_admit`
+ *   Transfer patient…    (Slice 3)  `transfer`       + `can_transfer`
+ *   Cancel request       (Slice 3)  `cancel_request` + `can_cancel_request`
+ *   Finalize discharge…  (Slice 4)  `discharge`      + `discharge.can_finalize_discharge`
  *
- * The browser derives none of them. There is no discharge control (Slice 4).
+ * Preview sits first in the same row. It is read only and ungated because it
+ * renders nothing but this already-authorised payload.
+ *
+ * The browser derives none of them. The doctor's medical readiness is shown,
+ * never set, here: it is the Doctor Desk's act.
  * The financial section shows the server's STATE only, never a figure.
  *
  * Needs-review reasons come first and in red: a broken admission must be seen
@@ -69,10 +74,13 @@ export default function AdmissionDetailPanel({
   mayAdmit = false,
   mayTransfer = false,
   mayCancelRequest = false,
+  mayDischarge = false,
   actionMessage = null,
   onRequestAdmit,
   onRequestTransfer,
   onRequestCancel,
+  onRequestFinalize,
+  onRequestPreview,
 }: {
   detail: AdmissionDetail | null;
   loading: boolean;
@@ -85,10 +93,15 @@ export default function AdmissionDetailPanel({
   mayTransfer?: boolean;
   /** The role's `cancel_request` capability, from the server session. */
   mayCancelRequest?: boolean;
+  /** The role's `discharge` capability, from the server session. */
+  mayDischarge?: boolean;
   actionMessage?: ActionMessage | null;
   onRequestAdmit?: () => void;
   onRequestTransfer?: () => void;
   onRequestCancel?: () => void;
+  onRequestFinalize?: () => void;
+  /** Opens the read-only Quick Preview. Never gated: it shows only this payload. */
+  onRequestPreview?: () => void;
 }) {
   if (error) {
     return (
@@ -135,42 +148,61 @@ export default function AdmissionDetailPanel({
             Showing the last loaded version; the refresh did not complete.
           </p>
         ) : null}
-        {mayAdmit && detail.can_admit && onRequestAdmit ? (
-          <div className="mt-2 flex items-center gap-2">
+        {/* ONE action row: Preview (read only, always) beside whichever
+            workflow actions the server offered. The hint lines became titles
+            so the row stays one line tall. */}
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {onRequestPreview ? (
+            <button
+              type="button"
+              onClick={onRequestPreview}
+              title="Read-only summary of this admission."
+              className="h-8 rounded-md border border-sky-300 bg-white px-3 cl-meta font-bold text-sky-800 hover:bg-sky-50"
+            >
+              Preview
+            </button>
+          ) : null}
+          {mayAdmit && detail.can_admit && onRequestAdmit ? (
             <button
               type="button"
               onClick={onRequestAdmit}
+              title="Assigns the bed and admits in one step."
               className="h-8 rounded-md bg-sky-700 px-3 cl-meta font-bold text-white hover:bg-sky-800"
             >
               Admit to bed…
             </button>
-            <span className="cl-micro text-slate-500">Assigns the bed and admits in one step.</span>
-          </div>
-        ) : null}
-        {mayTransfer && detail.can_transfer && onRequestTransfer ? (
-          <div className="mt-2 flex items-center gap-2">
+          ) : null}
+          {mayTransfer && detail.can_transfer && onRequestTransfer ? (
             <button
               type="button"
               onClick={onRequestTransfer}
+              title="Moves the patient to another available bed."
               className="h-8 rounded-md bg-sky-700 px-3 cl-meta font-bold text-white hover:bg-sky-800"
             >
               Transfer patient…
             </button>
-            <span className="cl-micro text-slate-500">Moves the patient to another available bed.</span>
-          </div>
-        ) : null}
-        {mayCancelRequest && detail.can_cancel_request && onRequestCancel ? (
-          <div className="mt-2 flex items-center gap-2">
+          ) : null}
+          {mayDischarge && detail.discharge?.can_finalize_discharge && onRequestFinalize ? (
+            <button
+              type="button"
+              onClick={onRequestFinalize}
+              title="Releases the bed and completes the visit."
+              className="h-8 rounded-md bg-emerald-700 px-3 cl-meta font-bold text-white hover:bg-emerald-800"
+            >
+              Finalize discharge…
+            </button>
+          ) : null}
+          {mayCancelRequest && detail.can_cancel_request && onRequestCancel ? (
             <button
               type="button"
               onClick={onRequestCancel}
+              title="The patient has not been admitted yet."
               className="h-8 rounded-md border border-red-300 bg-white px-3 cl-meta font-bold text-red-800 hover:bg-red-50"
             >
               Cancel request…
             </button>
-            <span className="cl-micro text-slate-500">The patient has not been admitted yet.</span>
-          </div>
-        ) : null}
+          ) : null}
+        </div>
         {actionMessage ? (
           <p
             role="status"
@@ -262,6 +294,30 @@ export default function AdmissionDetailPanel({
             {clearance.text}
           </p>
         </Section>
+
+        {detail.discharge ? (
+          <Section title="Discharge">
+            <p className={`cl-body ${detail.discharge.medical_ready ? "text-violet-900" : "text-slate-600"}`}>
+              {detail.discharge.medical_ready
+                ? `Medical: ready for discharge${detail.discharge.medical_ready_by ? ` · ${detail.discharge.medical_ready_by}` : ""} · ${formatHospitalDateTime(detail.discharge.medical_ready_at, "—")}`
+                : "Medical: not yet declared ready by the doctor."}
+            </p>
+            {detail.discharge.blocking.length ? (
+              <ul className="mt-1 list-disc pl-5 cl-meta text-red-800">
+                {detail.discharge.blocking.map((check) => (
+                  <li key={check.code}>{check.message}</li>
+                ))}
+              </ul>
+            ) : null}
+            {detail.discharge.warnings.length ? (
+              <ul className="mt-1 list-disc pl-5 cl-meta text-amber-900">
+                {detail.discharge.warnings.map((check) => (
+                  <li key={check.code}>{check.message}</li>
+                ))}
+              </ul>
+            ) : null}
+          </Section>
+        ) : null}
 
         <Section title="Inpatient financial state">
           <p

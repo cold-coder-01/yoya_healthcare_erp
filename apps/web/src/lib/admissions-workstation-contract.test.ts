@@ -45,6 +45,7 @@ const SIDEBAR = read("components/clinical/clinical-sidebar.tsx");
 const DIALOG = read("components/admissions/admit-dialog.tsx");
 const TRANSFER_DIALOG = read("components/admissions/transfer-dialog.tsx");
 const CANCEL_DIALOG = read("components/admissions/cancel-request-dialog.tsx");
+const FINALIZE_DIALOG = read("components/admissions/finalize-discharge-dialog.tsx");
 
 const ALL: ReadonlyArray<readonly [string, string]> = [
   ["admissions-workstation.tsx", WORKSTATION],
@@ -57,6 +58,7 @@ const ALL: ReadonlyArray<readonly [string, string]> = [
   ["admit-dialog.tsx", DIALOG],
   ["transfer-dialog.tsx", TRANSFER_DIALOG],
   ["cancel-request-dialog.tsx", CANCEL_DIALOG],
+  ["finalize-discharge-dialog.tsx", FINALIZE_DIALOG],
   ["admissions-desk-format.ts", FORMAT],
   ["layout.tsx", LAYOUT],
   ["page.tsx", PAGE],
@@ -64,11 +66,11 @@ const ALL: ReadonlyArray<readonly [string, string]> = [
 
 /* 1. One write */
 
-test("the only writes are the workstation's Admit, Transfer and Cancel request POSTs", () => {
+test("the only writes are the workstation's Admit, Transfer, Cancel request and Finalize discharge POSTs", () => {
   for (const [name, source] of ALL) {
     const writes = code(source).match(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/g) ?? [];
     if (name === "admissions-workstation.tsx") {
-      assert.deepEqual(writes, ['method: "POST"', 'method: "POST"', 'method: "POST"'], name);
+      assert.deepEqual(writes, ['method: "POST"', 'method: "POST"', 'method: "POST"', 'method: "POST"'], name);
     } else {
       assert.equal(writes.length, 0, name);
     }
@@ -77,17 +79,36 @@ test("the only writes are the workstation's Admit, Transfer and Cancel request P
   assert.ok(emitted.includes("fetch(admitPath(current.id)"));
   assert.ok(emitted.includes("fetch(transferPath(current.id)"));
   assert.ok(emitted.includes("fetch(cancelRequestPath(current.id)"));
+  assert.ok(emitted.includes("fetch(finalizeDischargePath(current.id)"));
 });
 
-test("there is no discharge or assign-bed control on any surface", () => {
-  const forbidden = /\b(Discharge|Cancel admission|Assign bed)\b/;
+test("the only discharge control is Finalize discharge, and there is no assign-bed control", () => {
+  // Slice 4: the Admissions Desk FINALIZES; it never declares medical
+  // readiness (the Doctor Desk's act) and never "discharges" by another name.
+  const forbidden = /\b(Discharge patient|Request discharge|Cancel admission|Assign bed)\b/;
   for (const [name, source] of ALL) {
     const emitted = code(source);
     for (const match of emitted.matchAll(/<button[\s\S]*?<\/button>/g)) {
       assert.doesNotMatch(match[0], forbidden, `${name}: ${match[0].slice(0, 80)}`);
     }
-    assert.doesNotMatch(emitted, /capabilities\.(assign_bed|discharge)/, name);
+    const allowed = name === "admissions-workstation.tsx";
+    assert.doesNotMatch(emitted, /capabilities\.assign_bed/, name);
+    if (!allowed) assert.doesNotMatch(emitted, /capabilities\.discharge/, name);
   }
+});
+
+test("Finalize discharge is offered only on the server's capability AND the record's affordance", () => {
+  const workstation = code(WORKSTATION);
+  assert.ok(workstation.includes("const mayDischarge = session?.capabilities.discharge === true;"));
+  assert.ok(workstation.includes("{finalizeOpen && shownDetail && mayDischarge ? ("));
+  const panel = code(PANEL);
+  assert.ok(panel.includes("{mayDischarge && detail.discharge?.can_finalize_discharge && onRequestFinalize ? ("));
+  const dialog = code(FINALIZE_DIALOG);
+  assert.ok(dialog.includes("if (event.detail === 0) return;"));
+  for (const label of ["Patient", "Admission", "Ward / room / bed", "Medical", "Financial", "Revision"]) {
+    assert.ok(dialog.includes(`>${label}</dt>`), label);
+  }
+  assert.ok(dialog.includes("financialLabel(detail.financial)"));
 });
 
 test("Transfer and Cancel request are offered only on the server's capability AND the row's affordance", () => {
@@ -125,7 +146,7 @@ test("transfer and cancel reuse the kept-on-unknown token and the reload rules",
   const emitted = code(WORKSTATION);
   assert.ok(emitted.includes('tokenFor(pendingRef.current, "transfer", current.id, signature, () => crypto.randomUUID())'));
   assert.ok(emitted.includes('tokenFor(pendingRef.current, "cancel_request", current.id, signature, () => crypto.randomUUID())'));
-  assert.equal((emitted.match(/if \(!isResolved\(status, payload !== null\)\)/g) ?? []).length, 3);
+  assert.equal((emitted.match(/if \(!isResolved\(status, payload !== null\)\)/g) ?? []).length, 4);
 });
 
 test("Admit is offered only on the server's role capability AND the row's can_admit", () => {
@@ -135,7 +156,8 @@ test("Admit is offered only on the server's role capability AND the row's can_ad
   assert.ok(workstation.includes("{admitOpen && shownDetail && mayAdmit ? ("));
   const panel = code(PANEL);
   assert.ok(panel.includes("{mayAdmit && detail.can_admit && onRequestAdmit ? ("));
-  assert.equal((panel.match(/<button/g) ?? []).length, 3);
+  // Four workflow actions plus the read-only Preview.
+  assert.equal((panel.match(/<button/g) ?? []).length, 5);
   // Only the workstation reads the capability; nothing else invents it.
   for (const [name, source] of ALL) {
     if (name === "admissions-workstation.tsx") continue;
@@ -148,11 +170,11 @@ test("Admit is offered only on the server's role capability AND the row's can_ad
 test("every fetch goes through a BFF path helper and no Odoo address appears", () => {
   const emitted = code(WORKSTATION);
   const fetches = [...emitted.matchAll(/fetch\(\s*([^,\n]+)/g)].map((m) => m[1].trim());
-  assert.equal(fetches.length, 9);
+  assert.equal(fetches.length, 10);
   for (const target of fetches) {
     assert.match(
       target,
-      /^(ADMISSIONS_SESSION_PATH|ADMISSIONS_WARDS_PATH|worklistPath\(|bedsPath\(|admissionPath\(|admitPath\(|transferPath\(|cancelRequestPath\()/,
+      /^(ADMISSIONS_SESSION_PATH|ADMISSIONS_WARDS_PATH|worklistPath\(|bedsPath\(|admissionPath\(|admitPath\(|transferPath\(|cancelRequestPath\(|finalizeDischargePath\()/,
       target,
     );
   }

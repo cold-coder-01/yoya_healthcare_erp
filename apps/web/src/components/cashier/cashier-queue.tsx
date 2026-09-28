@@ -2,10 +2,15 @@
 
 import type {
   CashierActiveServiceRow,
+  CashierInpatientRow,
   CashierWorklistRow,
 } from "@/types/cashier";
 import {
   cashierLabel,
+  inpatientLaneLabel,
+  inpatientLaneTone,
+  inpatientLocation,
+  inpatientStateLabel,
   laneLabel,
   laneTone,
   money,
@@ -16,12 +21,19 @@ import {
 type Props = {
   rows: CashierWorklistRow[];
   activeServiceRows: CashierActiveServiceRow[];
+  inpatientRows: CashierInpatientRow[];
+  /** Which sections the lane chip leaves visible. */
+  showOutpatient: boolean;
+  showInpatient: boolean;
   selectedId: number | null;
+  selectedInpatientId: number | null;
   loading: boolean;
   error: string | null;
   truncated: boolean;
   activeServiceTruncated: boolean;
+  inpatientTruncated: boolean;
   onSelect: (appointmentId: number) => void;
+  onSelectInpatient: (admissionId: number) => void;
 };
 
 /**
@@ -51,12 +63,18 @@ type Props = {
 export default function CashierQueue({
   rows,
   activeServiceRows,
+  inpatientRows,
+  showOutpatient,
+  showInpatient,
   selectedId,
+  selectedInpatientId,
   loading,
   error,
   truncated,
   activeServiceTruncated,
+  inpatientTruncated,
   onSelect,
+  onSelectInpatient,
 }: Props) {
   if (loading) {
     return (
@@ -74,13 +92,16 @@ export default function CashierQueue({
     );
   }
 
-  if (!rows.length && !activeServiceRows.length) {
+  const visibleOutpatient = showOutpatient ? rows.length + activeServiceRows.length : 0;
+  const visibleInpatient = showInpatient ? inpatientRows.length : 0;
+  if (!visibleOutpatient && !visibleInpatient) {
     return (
       <div className="p-4 text-sm text-slate-500">
         <p className="font-medium text-slate-700">Nothing awaiting payment.</p>
         <p className="mt-1 leading-5">
           Visits appear here once triage is complete and money is still owed,
-          or when an ordered service has not been paid for.
+          when an ordered service has not been paid for, or when an inpatient
+          account has a balance to settle.
         </p>
       </div>
     );
@@ -89,6 +110,61 @@ export default function CashierQueue({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto">
+        {showInpatient ? (
+          <QueueSection
+            title="Inpatient settlement"
+            hint="Current inpatient accounts. Not filtered by the date above."
+            count={inpatientRows.length}
+            truncated={inpatientTruncated}
+            empty="No inpatient accounts to settle."
+          >
+            {inpatientRows.map((row) => (
+              <li key={`inpatient-${row.admission.id}`}>
+                <QueueButton
+                  selected={row.admission.id === selectedInpatientId}
+                  onSelect={() => onSelectInpatient(row.admission.id)}
+                >
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="truncate text-sm font-semibold text-slate-900">
+                      {row.patient.name}
+                    </span>
+                    <span className="shrink-0 font-mono text-sm font-semibold tabular-nums text-slate-900">
+                      {money(
+                        row.lane === "refund_due"
+                          ? row.refundable_balance
+                          : row.remaining_due,
+                      )}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 flex items-center justify-between gap-2">
+                    <span className="truncate font-mono text-[11px] text-slate-500">
+                      {row.patient.identification_code ?? "-"} ·{" "}
+                      {row.encounter.name} · {row.admission.name}
+                    </span>
+                    <span
+                      className={`shrink-0 rounded border px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide ${inpatientLaneTone(
+                        row.lane,
+                      )}`}
+                    >
+                      {inpatientLaneLabel(row.lane)}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-1">
+                    <span className="rounded border border-sky-300 bg-sky-50 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-sky-800">
+                      {inpatientStateLabel(row.admission)}
+                    </span>
+                    <span className="truncate font-mono text-[10px] text-slate-500">
+                      {inpatientLocation(row.location)}
+                    </span>
+                  </div>
+                </QueueButton>
+              </li>
+            ))}
+          </QueueSection>
+        ) : null}
+
+        {showOutpatient ? (
+        <>
         <QueueSection
           title="Initial clearance"
           hint="Triage complete, payment due before the doctor."
@@ -198,6 +274,8 @@ export default function CashierQueue({
             );
           })}
         </QueueSection>
+        </>
+        ) : null}
       </div>
     </div>
   );

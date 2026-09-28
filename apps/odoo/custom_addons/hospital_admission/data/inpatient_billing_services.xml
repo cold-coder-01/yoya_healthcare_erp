@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Admissions Slice 4: the billing services the inpatient STAY is charged
+    under on the unified charge engine.
+
+    WHY SERVICES AND NOT BARE CHARGE LINES. Payer agreements decide coverage by
+    matching a benefit rule to a charge's service_id. A bed-day charge with no
+    service could only ever fall to an agreement's default policy; with one, an
+    Insurance/Credit Officer can write "bed stay covered 80%" like any other
+    rule.
+
+    PRICE. default_price stays 0: every stay charge carries its OWN unit price,
+    the rate snapshot recorded when its segment opened. The catalogue ward /
+    room / bed rates are the price list; these services only classify.
+
+    prepayment_required = False: a bed-day is charged as it is DELIVERED
+    (delivery basis), never demanded before the patient is in the bed.
+
+    noupdate: an administrator may rename them or attach a tax treatment; an
+    upgrade must not undo that.
+-->
+<odoo noupdate="1">
+    <record id="billing_service_inpatient_bed_day" model="hospital.billing.service">
+        <field name="name">Inpatient bed stay (per day)</field>
+        <field name="code">INPATIENT-BED-DAY</field>
+        <field name="service_type">admission</field>
+        <field name="default_price">0.0</field>
+        <field name="prepayment_required" eval="False"/>
+        <field name="tax_treatment">exempt</field>
+    </record>
+    <record id="billing_service_admission_fee" model="hospital.billing.service">
+        <field name="name">Inpatient admission fee</field>
+        <field name="code">INPATIENT-ADMISSION-FEE</field>
+        <field name="service_type">admission</field>
+        <field name="default_price">0.0</field>
+        <field name="prepayment_required" eval="False"/>
+        <field name="tax_treatment">exempt</field>
+    </record>
+</odoo>

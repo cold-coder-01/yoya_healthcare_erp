@@ -190,9 +190,10 @@ test("the typed capability and row carry the admit gate and the revision", () =>
  * Doctor Desk: Request admission
  * ------------------------------------------------------------------ */
 
-test("the doctor card has two writes -- request and cancel own request -- and never picks a bed", () => {
+test("the doctor card has three writes -- request, discharge request, cancel own request -- and never picks a bed", () => {
   const writes = CARD.match(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/g) ?? [];
-  assert.deepEqual(writes, ['method: "POST"', 'method: "POST"']);
+  assert.deepEqual(writes, ['method: "POST"', 'method: "POST"', 'method: "POST"']);
+  assert.ok(CARD.includes("fetch(dischargeRequestPath(appointmentId)"));
   assert.ok(CARD.includes("fetch(admissionRequestPath(appointmentId)"));
   assert.ok(CARD.includes("fetch(cancelRequestPath(admission.id)"));
   assert.ok(CARD.includes("admissionRequestBody(cleaned, token)"));
@@ -219,15 +220,18 @@ test("the card shows the server's result at once and is mounted on both doctor v
   assert.ok(CARD.includes("setReturned({ basis: initial, value: payload.data.admission })"));
   assert.ok(PATIENT_PANEL.includes("<DoctorAdmissionCard"));
   assert.ok(PATIENT_PANEL.includes("summary={detail.admission}"));
-  assert.ok(CONSULTATION.includes("<DoctorAdmissionCard key={appointmentId} appointmentId={appointmentId} summary={detail.admission} compact />"));
+  assert.ok(CONSULTATION.includes("<DoctorAdmissionCard"));
+  assert.ok(CONSULTATION.includes("summary={detail.admission}"));
+  assert.ok(CONSULTATION.includes("compact"));
 });
 
 /* ------------------------------------------------------------------ *
  * Scope: no transfer, no discharge, no billing
  * ------------------------------------------------------------------ */
 
-test("no admissions surface offers discharge, and none names money", () => {
-  const forbidden = /\b(Discharge|Cancel admission)\b/;
+test("no doctor or admit surface finalizes a discharge, and none names money", () => {
+  // Slice 4: the doctor REQUESTS discharge; only the Admissions Desk finalizes.
+  const forbidden = /\b(Finalize discharge|Discharge patient|Cancel admission)\b/;
   const money = /\b(amount|price|tariff|daily_rate|invoice|ETB|Birr)\b/i;
   for (const [name, source] of [
     ["admit-dialog", DIALOG],
@@ -243,4 +247,5 @@ test("no admissions surface offers discharge, and none names money", () => {
   assert.equal(existsSync(new URL("../app/api/admissions/[id]/transfer", import.meta.url)), true);
   assert.equal(existsSync(new URL("../app/api/admissions/[id]/cancel-request", import.meta.url)), true);
   assert.equal(existsSync(new URL("../app/api/admissions/[id]/discharge", import.meta.url)), false);
+  assert.equal(existsSync(new URL("../app/api/admissions/[id]/finalize-discharge", import.meta.url)), true);
 });

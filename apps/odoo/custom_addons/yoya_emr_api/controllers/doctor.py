@@ -67,6 +67,7 @@ from odoo.exceptions import AccessError, UserError, ValidationError
 from odoo.service.model import PG_CONCURRENCY_EXCEPTIONS_TO_RETRY
 
 from odoo.addons.hospital_admission.models.admission_authority import (
+    ADMISSION_ACTIVE_STATES,
     AdmissionDeskError,
 )
 from odoo.http import request
@@ -89,6 +90,7 @@ from odoo.addons.yoya_clinical_bridge.models.radiology_request import (
 )
 
 from ..services.admission_mutations import (
+    DISCHARGE_REQUEST_KEYS,
     REQUEST_KEYS as ADMISSION_REQUEST_KEYS,
     canonical_token as admission_canonical_token,
     desk_error as admission_desk_error,
@@ -1799,6 +1801,74 @@ class YoyaEmrDoctorController(http.Controller):
             "admission": payload,
             "operation": {
                 "type": "request",
+                "token": admission_canonical_token(body["operation_token"]),
+                "replayed": bool(replayed),
+            },
+        })
+
+    # ------------------------------------------------------------------
+    # Admissions Slice 4: declare the inpatient medically ready
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>/discharge-request",
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @doctor_endpoint
+    def visit_discharge_request(self, appointment_id, **params):
+        """The doctor's CLINICAL discharge decision for this visit's inpatient.
+
+        Body: {"operation_token": uuid, "expected_revision": int, "summary":
+        text}. Exactly those keys. It records medical readiness and the
+        discharge summary; it frees no bed, completes no visit and touches no
+        money -- the Admissions Desk finalizes the discharge. The admission is
+        found through THIS visit, under the doctor's own record rules, and
+        hospital.admission._desk_request_medical_discharge() re-checks that the
+        caller is its physician (or oversight).
+        """
+        env = request.env
+        _require_doctor_desk(env)
+        body = admission_mutation_body(DISCHARGE_REQUEST_KEYS)
+        appointment = _load_visit(env, appointment_id)
+
+        # The visit's active inpatient stay, as the doctor's rules show it.
+        visit_id = appointment.encounter_id.id
+        domain = [("appointment_id", "=", appointment.id)]
+        if visit_id:
+            domain = ["|", ("appointment_id", "=", appointment.id), ("encounter_id", "=", visit_id)]
+        admission = env["hospital.admission"].search(
+            domain + [("state", "in", list(ADMISSION_ACTIVE_STATES))], order="id desc", limit=1
+        )
+        if not admission:
+            raise admission_desk_error("admission_not_found")
+
+        try:
+            with env.cr.savepoint():
+                admission, replayed = admission._desk_request_medical_discharge(
+                    body["summary"], body["operation_token"], body["expected_revision"]
+                )
+                payload = serialize_doctor_admission(appointment)
+        except PG_CONCURRENCY_EXCEPTIONS_TO_RETRY:
+            raise
+        except AdmissionDeskError as error:
+            raise admission_desk_error(error.code) from None
+        except IntegrityError as error:
+            raise admission_desk_error(admission_integrity_code(error)) from None
+        except AccessError:
+            raise admission_desk_error("admission_not_authorized") from None
+        except (UserError, ValidationError):
+            _logger.warning(
+                "Discharge request refused for appointment=%s uid=%s",
+                appointment.id, env.uid, exc_info=True,
+            )
+            raise admission_desk_error("admission_integrity_error") from None
+        except Exception:
+            _logger.exception("Discharge request failed for appointment=%s", appointment.id)
+            raise admission_desk_error("admission_mutation_failed") from None
+
+        return success_response({
+            "admission": payload,
+            "operation": {
+                "type": "medical_discharge",
                 "token": admission_canonical_token(body["operation_token"]),
                 "replayed": bool(replayed),
             },

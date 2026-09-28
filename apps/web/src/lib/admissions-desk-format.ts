@@ -38,6 +38,7 @@ export const ADMISSION_LANE_ORDER: readonly string[] = [
   "needs_review",
   "awaiting_bed",
   "draft",
+  "discharge_pending",
   "admitted",
   "transferred",
   "discharged",
@@ -48,6 +49,7 @@ export const ADMISSION_ACTIVE_LANE_ORDER: readonly string[] = [
   "needs_review",
   "awaiting_bed",
   "draft",
+  "discharge_pending",
   "admitted",
   "transferred",
 ];
@@ -60,6 +62,7 @@ const LANE_LABELS: Record<string, string> = {
   needs_review: "Needs review",
   awaiting_bed: "Awaiting bed",
   draft: "Draft",
+  discharge_pending: "Ready for discharge",
   admitted: "Admitted",
   transferred: "Transferred",
   discharged: "Discharged",
@@ -71,6 +74,7 @@ const LANE_CODES: Record<string, string> = {
   needs_review: "REV",
   awaiting_bed: "BED?",
   draft: "DRF",
+  discharge_pending: "DSC?",
   admitted: "ADM",
   transferred: "TRF",
   discharged: "DIS",
@@ -81,6 +85,7 @@ const LANE_TONES: Record<string, string> = {
   needs_review: "border-red-300 bg-red-50 text-red-800",
   awaiting_bed: "border-amber-300 bg-amber-50 text-amber-900",
   draft: "border-slate-300 bg-slate-50 text-slate-700",
+  discharge_pending: "border-violet-300 bg-violet-50 text-violet-900",
   admitted: "border-sky-300 bg-sky-50 text-sky-900",
   transferred: "border-indigo-300 bg-indigo-50 text-indigo-900",
   discharged: "border-emerald-300 bg-emerald-50 text-emerald-900",
@@ -219,11 +224,11 @@ export function financialLabel(financial: AdmissionFinancial | null | undefined)
   if (!financial) return { text: "The inpatient financial state is not available.", tone: "neutral" };
   switch (financial.financial_state) {
     case "covered":
-      return { text: "Care delivered so far is covered.", tone: "ok" };
+      return { text: "Covered. Care delivered so far is paid or authorized.", tone: "ok" };
     case "due":
-      return { text: "More care has been delivered than is covered. Settlement is required.", tone: "warn" };
+      return { text: "Payment required at the cashier before discharge.", tone: "warn" };
     case "refundable":
-      return { text: "The patient has paid more than the care delivered. A refund is due at the cashier.", tone: "warn" };
+      return { text: "Refund due: the patient paid more than the care delivered. The cashier returns it.", tone: "warn" };
     case "pending":
       return { text: "Nothing has been delivered or paid yet.", tone: "neutral" };
     case "needs_review":

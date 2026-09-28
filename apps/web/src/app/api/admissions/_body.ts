@@ -36,6 +36,24 @@ export function pickTransferBody(body: Record<string, unknown>): Record<string, 
   };
 }
 
+/** EXACTLY the Finalize discharge fields (Slice 4): nothing but the token and
+ *  the revision. Readiness, bed, visit and money are re-derived by Odoo. */
+export function pickFinalizeDischargeBody(body: Record<string, unknown>): Record<string, unknown> {
+  return {
+    operation_token: body.operation_token,
+    expected_revision: body.expected_revision,
+  };
+}
+
+/** EXACTLY the Doctor discharge-request fields (Slice 4). */
+export function pickDischargeRequestBody(body: Record<string, unknown>): Record<string, unknown> {
+  return {
+    operation_token: body.operation_token,
+    expected_revision: body.expected_revision,
+    summary: body.summary,
+  };
+}
+
 /** EXACTLY the Cancel request fields (Slice 3). */
 export function pickCancelRequestBody(body: Record<string, unknown>): Record<string, unknown> {
   return {

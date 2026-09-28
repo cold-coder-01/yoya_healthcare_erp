@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import FrontDeskUserMenu from "@/components/front-desk/front-desk-user-menu";
+import FullscreenToggle from "@/components/workstation/fullscreen-toggle";
 import { loadReceptionSession } from "@/lib/reception-session.server";
 
 /**
@@ -31,7 +32,10 @@ export default async function InsuranceCreditLayout({
         <span className="truncate text-sm font-bold uppercase tracking-wide text-emerald-800">
           {brand}
         </span>
-        <FrontDeskUserMenu userName={session?.userName ?? null} roleLabel={roleLabel} />
+        <div className="flex shrink-0 items-center gap-1">
+          <FullscreenToggle />
+          <FrontDeskUserMenu userName={session?.userName ?? null} roleLabel={roleLabel} />
+        </div>
       </header>
       <main className="min-h-0 flex-1 p-3">{children}</main>
     </div>

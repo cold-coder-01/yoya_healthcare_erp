@@ -1,6 +1,9 @@
 import type { ReactNode } from "react";
 
 import AdmissionsUserMenu from "@/components/admissions/admissions-user-menu";
+import FullscreenToggle from "@/components/workstation/fullscreen-toggle";
+import WorkstationNav from "@/components/navigation/workstation-nav";
+import { ADMISSIONS_ROUTE, frontOfHouseNavItems } from "@/lib/reception-roles";
 import { loadReceptionSession } from "@/lib/reception-session.server";
 
 /**
@@ -24,6 +27,9 @@ export default async function AdmissionsLayout({ children }: { children: ReactNo
 
   const userName = session?.userName ?? "";
   const initial = userName.trim().charAt(0).toUpperCase() || "·";
+  // The way back to Front Desk for the front-of-house roles. A ward-only nurse
+  // or a doctor gets no tabs: they hold no front-desk authority to return to.
+  const navItems = frontOfHouseNavItems(session?.roles ?? null, ADMISSIONS_ROUTE);
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-slate-100 text-slate-950">
@@ -38,13 +44,14 @@ export default async function AdmissionsLayout({ children }: { children: ReactNo
           <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.1em] text-slate-600">
             Admissions Desk
           </span>
-          <span className="shrink-0 rounded border border-slate-200 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.1em] text-slate-500">
-            Read only
-          </span>
+          <WorkstationNav items={navItems} accent="sky" />
         </div>
 
-        {/* Always rendered: a ward-only nurse has no other shell to sign out from. */}
-        <AdmissionsUserMenu userName={userName} initial={initial} />
+        <div className="flex shrink-0 items-center gap-1">
+          <FullscreenToggle />
+          {/* Always rendered: a ward-only nurse has no other shell to sign out from. */}
+          <AdmissionsUserMenu userName={userName} initial={initial} />
+        </div>
       </header>
 
       <main className="min-h-0 flex-1 overflow-auto p-3">{children}</main>

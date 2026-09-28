@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import FullscreenToggle from "@/components/workstation/fullscreen-toggle";
 import { loadReceptionSession } from "@/lib/reception-session.server";
 
 /**
@@ -43,19 +44,22 @@ export default async function RadiologyLayout({
           </span>
         </div>
 
-        {userName ? (
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="truncate text-[12px] font-semibold text-slate-700">
-              {userName}
-            </span>
-            <span
-              aria-hidden
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-teal-700 text-[11px] font-bold text-white"
-            >
-              {initial}
-            </span>
-          </div>
-        ) : null}
+        <div className="flex min-w-0 items-center gap-1">
+          <FullscreenToggle />
+          {userName ? (
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="truncate text-[12px] font-semibold text-slate-700">
+                {userName}
+              </span>
+              <span
+                aria-hidden
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-teal-700 text-[11px] font-bold text-white"
+              >
+                {initial}
+              </span>
+            </div>
+          ) : null}
+        </div>
       </header>
 
       <main className="min-h-0 flex-1 overflow-hidden p-3">{children}</main>

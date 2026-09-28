@@ -146,7 +146,10 @@ class TestActualDeliveredCharges(FinancialCase):
         pending.action_submit_request()
         self.assertEqual(done.state, "done")
         summary = self._summary(admission)
-        self.assertEqual(summary["procedures_actual"], 250.0)
+        # Slice 4: the procedure is on the visit's billing account, counted
+        # once there -- not again as a legacy procedure.
+        self.assertEqual(summary["charge_engine_actual"], 250.0)
+        self.assertEqual(summary["procedures_actual"], 0.0)
         self.assertEqual(summary["actual_delivered"], 250.0)
 
 
@@ -222,14 +225,18 @@ class TestPrepaymentComparison(FinancialCase):
         draft.action_cancel()
         self.assertEqual(self._status(draft)["financial_state"], "not_applicable")
 
-    def test_a_sponsored_stay_needs_review_rather_than_billing_the_patient(self):
+    def test_a_legacy_payer_visit_follows_the_clearance_authoritys_whole_bill_credit(self):
+        """Slice 4: the stay is on the charge engine, so a legacy third-party
+        visit is judged exactly as check_financial_clearance() judges it --
+        whole-bill payer credit, no cash from the patient."""
         admission, encounter = self._inpatient(self.cheap_bed)
         self._raw("UPDATE hospital_encounter SET payer_type = 'insurance' WHERE id = %s", (encounter.id,))
+        summary = self._summary(admission)
+        self.assertEqual(summary["payer_authorized"], summary["actual_delivered"])
+        self.assertEqual(summary["patient_responsibility"], 0.0)
         status = self._status(admission)
-        self.assertEqual(status["financial_state"], "needs_review")
-        self.assertTrue(status["billing_blocked"])
+        self.assertEqual(status["financial_state"], "covered")
         self.assertFalse(status["settlement_required"])
-        self.assertIn("sponsor_coverage_unresolved", [r["code"] for r in status["review_reasons"]])
 
     def test_the_status_carries_no_amount(self):
         admission, _ = self._inpatient(self.dear_bed)

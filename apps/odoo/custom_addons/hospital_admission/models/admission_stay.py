@@ -310,29 +310,43 @@ class HospitalAdmissionStay(models.Model):
         return segments, list(dict.fromkeys(reasons))
 
     @api.model
+    def _period_owners(self, segments):
+        """THE bed-day policy, in one place: [(k, period_start, segment)].
+
+        Period k starts at admission + 24h * k; there are stay_period_count()
+        of them; each belongs to the LAST segment that had started by the
+        period's start. Everything that counts or charges bed-days -- the
+        allocator below, the charge posting, the financial summary -- reads
+        this, so a future policy change is a change here and nowhere else.
+        """
+        if not segments:
+            return []
+        start = segments[0]["start"]
+        total = stay_period_count(start, segments[-1]["end"])
+        owners = []
+        cursor = 0
+        for k in range(total):
+            period_start = start + DAY * k
+            # Segment 0 starts at `start`, so one has always started.
+            while (
+                cursor + 1 < len(segments)
+                and segments[cursor + 1]["start"] <= period_start
+            ):
+                cursor += 1
+            owners.append((k, period_start, segments[cursor]))
+        return owners
+
+    @api.model
     def _allocate_stay_days(self, segments):
         """Bill each 24-hour period ONCE, at the segment it STARTS in.
 
         Mutates and returns `segments`, adding `days` to each. The total equals
         stay_period_count(first start, last end) -- the legacy day count.
         """
-        if not segments:
-            return segments
-        start = segments[0]["start"]
-        total = stay_period_count(start, segments[-1]["end"])
         for segment in segments:
             segment["days"] = 0
-        cursor = 0
-        for k in range(total):
-            period_start = start + DAY * k
-            # Advance to the LAST segment that has started by this period's
-            # start. Segment 0 starts at `start`, so one always has.
-            while (
-                cursor + 1 < len(segments)
-                and segments[cursor + 1]["start"] <= period_start
-            ):
-                cursor += 1
-            segments[cursor]["days"] += 1
+        for _k, _period_start, segment in self._period_owners(segments):
+            segment["days"] += 1
         return segments
 
     def _bed_stay_breakdown(self, now=None):
@@ -370,3 +384,120 @@ class HospitalAdmissionStay(models.Model):
             "current_daily_rate": segments[-1]["daily_rate"] if segments else 0.0,
             "review_reasons": reasons,
         }
+
+    # ------------------------------------------------------------------
+    # POSTING THE STAY TO THE CHARGE ENGINE (Admissions Slice 4)
+    # ------------------------------------------------------------------
+    #
+    # ONE CHARGE PER BILLED 24-HOUR PERIOD, plus one for the admission fee, on
+    # the visit's hospital.billing.account -- the same account every other
+    # service of the episode is charged to. There is no second ledger.
+    #
+    # WHY ONE CHARGE PER PERIOD, NOT ONE PER SEGMENT. A payer's share is decided
+    # ONCE per charge, on that charge's value at the moment it is decided
+    # (hospital.billing.engine.resolve_charge_coverage). A segment charge that
+    # grew day by day would carry a share decided on day one forever. A period
+    # never grows: it is one day, at one rate, delivered once, so it is priced
+    # and covered exactly once and never needs rewriting.
+    #
+    # SOURCE IDENTITY. hospital.admission : <admission id> : <period k> : bed_day
+    # -- the engine's own key format. k counts from the admission time, so a
+    # period is the same period after a restart, a retry, a transfer or a
+    # discharge. The segment a period belongs to cannot change once the period
+    # has started (a transfer only ever opens LATER periods), so neither can its
+    # rate. The engine additionally freezes unit_price on re-emit.
+    STAY_SOURCE_MODEL = "hospital.admission"
+    BED_DAY_EVENT = "bed_day"
+    ADMISSION_FEE_EVENT = "admission_fee"
+
+    def _stay_charges(self):
+        """Every charge this admission's stay has posted, cancelled or not."""
+        self.ensure_one()
+        return (
+            self.env["hospital.charge.line"]
+            .sudo()
+            .with_context(active_test=False)
+            .search(
+                [
+                    ("source_model", "=", self.STAY_SOURCE_MODEL),
+                    ("source_res_id", "=", self.id),
+                    ("source_event", "in", (self.BED_DAY_EVENT, self.ADMISSION_FEE_EVENT)),
+                ]
+            )
+        )
+
+    def _post_stay_charge(self, engine, encounter, event, line_id, description, service, price):
+        charge = engine.create_or_update_charge(
+            encounter,
+            self.STAY_SOURCE_MODEL,
+            self.id,
+            event,
+            description,
+            source_line_id=line_id,
+            service=service or None,
+            qty_requested=1.0,
+            unit_price=price,
+        )
+        if charge.charge_state in ("cancelled", "reversed"):
+            return charge
+        engine.activate_charge(charge)
+        if charge.qty_delivered < 1.0 - 1e-6:
+            engine.mark_charge_delivered(charge, qty_delivered=1.0)
+        return charge
+
+    def _sync_stay_charges(self, now=None):
+        """Post every bed-day that has STARTED by `now`, and the admission fee.
+
+        IDEMPOTENT: an already-posted period is found by its key and left as it
+        is; only periods that have started since the last sync are added. Safe
+        to call from the transfer, the medical discharge and the final
+        discharge, in any order and any number of times.
+
+        Returns the stay charges. Does nothing for an admission with no visit
+        (legacy history) or whose visit can no longer take charges.
+
+        sudo() through the engine, as every clinical module calls it: the
+        admissions clerk holds no write on charge lines, and the engine is the
+        authority on how a charge is created, activated and delivered.
+        """
+        self.ensure_one()
+        admission = self.sudo()
+        Charge = self.env["hospital.charge.line"]
+        if admission.state not in STAY_STATES or not admission.encounter_id:
+            return Charge.browse()
+        encounter = admission.encounter_id
+        if encounter.state in ("closed", "cancelled"):
+            return Charge.browse()
+
+        engine = self.env["hospital.billing.engine"].sudo()
+        bed_service = self.env.ref(
+            "hospital_admission.billing_service_inpatient_bed_day", raise_if_not_found=False
+        )
+        fee_service = self.env.ref(
+            "hospital_admission.billing_service_admission_fee", raise_if_not_found=False
+        )
+        breakdown = admission._bed_stay_breakdown(now)
+
+        if breakdown["admission_fee"] > 0:
+            admission._post_stay_charge(
+                engine, encounter, self.ADMISSION_FEE_EVENT, 0,
+                "Admission fee - %s" % admission.name,
+                fee_service, breakdown["admission_fee"],
+            )
+
+        for k, _period_start, segment in self._period_owners(breakdown["segments"]):
+            if segment["daily_rate"] <= 0:
+                continue
+            place = " / ".join(
+                part for part in (
+                    segment["ward"].display_name if segment["ward"] else "",
+                    segment["room"].name if segment["room"] else "",
+                    segment["bed"].display_name if segment["bed"] else "",
+                ) if part
+            )
+            admission._post_stay_charge(
+                engine, encounter, self.BED_DAY_EVENT, k,
+                "Bed day %s - %s - %s" % (k + 1, place or admission.name, admission.name),
+                bed_service, segment["daily_rate"],
+            )
+        return admission._stay_charges()

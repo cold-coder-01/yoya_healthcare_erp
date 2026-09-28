@@ -1,5 +1,6 @@
 """The Admissions mutation contract shared by the Admissions Desk and the
-Doctor Desk (Admissions Slices 2-3: request, admit, transfer, cancel request).
+Doctor Desk (Admissions Slices 2-4: request, admit, transfer, cancel request,
+medical discharge, final discharge).
 
 ONE ERROR VOCABULARY. The MODEL chooses the code (hospital_admission's
 AdmissionDeskError); this module only chooses the HTTP status and rebuilds the
@@ -31,6 +32,11 @@ DESK_STATUS = {
     "admission_encounter_required": 422,
     "admission_company_mismatch": 422,
     "admission_location_mismatch": 422,
+    # Admissions Slice 4: discharge gates. 409 -- the request was well formed;
+    # the admission is not in a condition to accept it yet.
+    "admission_not_medically_ready": 409,
+    "admission_settlement_required": 409,
+    "admission_financial_review_required": 409,
     # The one code the HTTP layer owns: an unexpected failure, rolled back.
     "admission_mutation_failed": 500,
 }
@@ -41,6 +47,10 @@ REQUEST_KEYS = frozenset({"operation_token", "reason"})
 # Admissions Slice 3. The destination ward and room are derived from the bed.
 TRANSFER_KEYS = frozenset({"operation_token", "expected_revision", "bed_id", "reason"})
 CANCEL_REQUEST_KEYS = frozenset({"operation_token", "expected_revision"})
+# Admissions Slice 4. The doctor writes the discharge summary; the clerk sends
+# nothing but the token and the revision -- every gate is re-derived server-side.
+DISCHARGE_REQUEST_KEYS = frozenset({"operation_token", "expected_revision", "summary"})
+FINALIZE_DISCHARGE_KEYS = frozenset({"operation_token", "expected_revision"})
 
 
 def desk_error(code):

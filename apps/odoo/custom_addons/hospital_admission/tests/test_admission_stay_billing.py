@@ -96,6 +96,13 @@ class TestStaySegments(StayCase):
 
         admission.action_discharge()
         self._set_times(admission, now - 50 * H, discharged_at=now)
+        # Slice 4: a visit-bound stay is billed on the visit's billing account;
+        # the legacy admission bill is refused so it cannot bill it twice.
+        with self.assertRaises(AdmissionWorkflowError) as caught:
+            admission.action_generate_admission_bill()
+        self.assertEqual(caught.exception.code, "admission_legacy_bill_superseded")
+        # A visit-less (legacy) stay still bills one line per segment.
+        self._raw("UPDATE hospital_admission SET encounter_id = NULL WHERE id = %s", (admission.id,))
         admission.action_generate_admission_bill()
         lines = admission.bill_id.line_ids.sorted("sequence")
         self.assertEqual(len(lines), 2)
@@ -195,6 +202,7 @@ class TestStaySegments(StayCase):
         breakdown = self._breakdown(admission)
         self.assertEqual(breakdown["total_days"], 1)
         self.assertFalse(breakdown["segments"][0]["ongoing"])
+        self._raw("UPDATE hospital_admission SET encounter_id = NULL WHERE id = %s", (admission.id,))
         admission.action_generate_admission_bill()
         stay_line = admission.bill_id.line_ids.filtered(lambda l: l.unit_price == 100.0)
         self.assertEqual(stay_line.quantity, 1.0)

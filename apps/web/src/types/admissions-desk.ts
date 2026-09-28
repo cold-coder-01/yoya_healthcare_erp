@@ -24,6 +24,7 @@ export const ADMISSION_LANES = [
   "needs_review",
   "awaiting_bed",
   "draft",
+  "discharge_pending",
   "admitted",
   "transferred",
   "discharged",
@@ -37,6 +38,7 @@ export const ADMISSION_ACTIVE_LANES = [
   "needs_review",
   "awaiting_bed",
   "draft",
+  "discharge_pending",
   "admitted",
   "transferred",
 ] as const;
@@ -135,6 +137,8 @@ export type AdmissionWorklistRow = {
   can_transfer: boolean;
   /** AFFORDANCE ONLY (Slice 3): role AND ownership, and still a draft. */
   can_cancel_request: boolean;
+  /** Slice 4: the doctor has declared the patient medically ready. */
+  medical_discharge_ready: boolean;
   lane: AdmissionLane;
   lane_label: string;
   review_reasons: NeedsReviewReason[];
@@ -209,6 +213,21 @@ export type AdmissionFinancial = {
   review_reasons: { code: string; message: string }[];
 };
 
+/** The model's discharge checks (Slice 4). Fixed sentences; never an amount. */
+export type DischargeCheck = { code: string; message: string };
+
+export type AdmissionDischarge = {
+  medical_ready: boolean;
+  medical_ready_at: string | null;
+  medical_ready_by: string | null;
+  /** Conditions that stop the discharge (besides money, which is `financial`). */
+  blocking: DischargeCheck[];
+  /** Unfinished work the operator should know about. Never blocks. */
+  warnings: DischargeCheck[];
+  /** AFFORDANCE ONLY: role, lane, no blocking check, figures not under review. */
+  can_finalize_discharge: boolean;
+};
+
 export type AdmissionDetail = AdmissionWorklistRow & {
   admission_reason: string | null;
   diagnosis:
@@ -235,6 +254,8 @@ export type AdmissionDetail = AdmissionWorklistRow & {
   };
   clearance: AdmissionClearance;
   financial: AdmissionFinancial;
+  /** Slice 4. Null once the stay is over (or before it starts). */
+  discharge: AdmissionDischarge | null;
 };
 
 export type AdmissionDetailResponse = {
@@ -313,8 +334,8 @@ export type AdmissionDeskCapabilities = {
   transfer: boolean;
   /** Slice 3: the clerk, manager, admin -- and doctors, for their own requests. */
   cancel_request: boolean;
-  /** Always false: no route exists behind it yet (Slice 4). */
-  discharge: false;
+  /** Slice 4: the ADMINISTRATIVE final discharge (clerk, manager, admin). */
+  discharge: boolean;
 };
 
 /** POST /api/admissions/[id]/admit */
@@ -325,7 +346,7 @@ export type AdmissionAdmitRequest = {
 };
 
 export type AdmissionMutationOperation = {
-  type: "admit" | "request" | "transfer" | "cancel_request";
+  type: "admit" | "request" | "transfer" | "cancel_request" | "medical_discharge" | "final_discharge";
   token: string;
   replayed: boolean;
 };
@@ -355,6 +376,11 @@ export type AdmissionCancelRequestResponse = AdmissionAdmitResponse & {
   doctor_admission: DoctorAdmissionSummary | null;
 };
 
+/** POST /api/admissions/[id]/finalize-discharge (Slice 4) */
+export type AdmissionFinalizeDischargeRequest = { operation_token: string; expected_revision: number };
+
+export type AdmissionFinalizeDischargeResponse = AdmissionAdmitResponse;
+
 /** The fixed error codes both desks' admission mutations speak. */
 export type AdmissionMutationErrorCode =
   | "admission_not_found"
@@ -372,6 +398,9 @@ export type AdmissionMutationErrorCode =
   | "admission_location_mismatch"
   | "admission_active_conflict"
   | "admission_integrity_error"
+  | "admission_not_medically_ready"
+  | "admission_settlement_required"
+  | "admission_financial_review_required"
   | "admission_mutation_failed";
 
 /* ------------------------------------------------------------------ *
@@ -383,6 +412,7 @@ export type DoctorAdmissionStatus =
   | "requested"
   | "admitted"
   | "transferred"
+  | "discharge_pending"
   | "discharged"
   | "cancelled";
 
@@ -399,16 +429,22 @@ export type DoctorAdmissionSummary = {
     reference: string;
     state: AdmissionState;
     state_label: string;
-    /** Echoed back as expected_revision by cancel-request. */
+    /** Echoed back as expected_revision by cancel-request and discharge-request. */
     workflow_revision: number;
     requested_at: string | null;
     admitted_at: string | null;
     location: AdmissionLocation;
     length_of_stay: LengthOfStay | null;
+    medical_discharge_at: string | null;
+    discharged_at: string | null;
   } | null;
   can_request: boolean;
   /** Slice 3: the doctor may withdraw their own draft request. */
   can_cancel_request: boolean;
+  /** Slice 4: the doctor may declare their inpatient medically ready. */
+  can_request_discharge: boolean;
+  /** Unfinished work to review before requesting discharge. Never blocks. */
+  discharge_warnings: DischargeCheck[];
   request_blocked_reason: DoctorAdmissionBlock | null;
   request_blocked_message: string | null;
 };
@@ -420,6 +456,15 @@ export type DoctorAdmissionRequestResponse = {
   admission: DoctorAdmissionSummary;
   operation: AdmissionMutationOperation;
 };
+
+/** POST /api/doctor/visits/[appointmentId]/discharge-request (Slice 4) */
+export type DoctorDischargeRequest = {
+  operation_token: string;
+  expected_revision: number;
+  summary: string;
+};
+
+export type DoctorDischargeRequestResponse = DoctorAdmissionRequestResponse;
 
 export type AdmissionDeskRoles = {
   receptionist: boolean;

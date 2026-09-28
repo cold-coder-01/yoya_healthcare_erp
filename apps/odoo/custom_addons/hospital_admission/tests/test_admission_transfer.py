@@ -246,17 +246,22 @@ class TestBillingCompatibility(AdmissionCase):
     # ==================================================================
     # PART 18: adding the bridge must not break legacy billing
     # ==================================================================
-    def test_bill_generation_still_works_after_the_bridge(self):
+    def _visitless_discharged(self):
+        """Slice 4: the legacy bill is for stays with NO visit (history)."""
         admission = self._admitted()
         admission.action_discharge()
+        self._raw("UPDATE hospital_admission SET encounter_id = NULL WHERE id = %s", (admission.id,))
+        return admission
+
+    def test_bill_generation_still_works_after_the_bridge(self):
+        admission = self._visitless_discharged()
         admission.action_generate_admission_bill()
         self.assertTrue(admission.bill_id)
         self.assertEqual(admission.billing_state, "billed")
         self.assertEqual(len(admission.bill_id.line_ids), 2)
 
     def test_a_second_bill_is_refused(self):
-        admission = self._admitted()
-        admission.action_discharge()
+        admission = self._visitless_discharged()
         admission.action_generate_admission_bill()
         with self.assertRaises(UserError):
             admission.action_generate_admission_bill()

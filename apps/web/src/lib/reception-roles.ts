@@ -213,6 +213,56 @@ export function canUseAdmissionsDesk(roles: ReceptionRoles | null): boolean {
 }
 
 /**
+ * The front-of-house pair: Front Desk <-> Admissions, in both sidebarless
+ * headers.
+ *
+ * EXPLICIT FLAGS ONLY: Front Desk Nurse, Receptionist, Manager, System
+ * Administrator. Every one of them is in BOTH server tuples -- FRONT_DESK_GROUPS
+ * and ADMISSIONS_DESK_GROUPS (a Front Desk Nurse through the Nurse group it
+ * implies) -- so neither link is ever offered to someone the API would refuse.
+ *
+ * Deliberately NARROWER than canUseAdmissionsDesk:
+ *   * `doctor` is absent -- the Doctor Desk drives admission from its own card;
+ *   * `nurse` is absent -- a dedicated ward nurse works /admissions only and
+ *     has no front-desk authority to be sent back to. Manager and admin read
+ *     nurse/doctor TRUE too, which is why the wide flags are not used here.
+ *
+ * Navigation only. /front-desk and /admissions stay gated server-side by
+ * may_front_desk() and may_admissions_desk().
+ */
+export function canUseFrontOfHouseNav(roles: ReceptionRoles | null): boolean {
+  if (!roles) {
+    return false;
+  }
+  return (
+    roles.front_desk_nurse ||
+    roles.receptionist ||
+    roles.manager ||
+    roles.system_administrator
+  );
+}
+
+export type WorkstationNavItem = {
+  label: string;
+  href: string;
+  current: boolean;
+};
+
+/** The header tabs for `currentRoute`; empty when the user gets none. */
+export function frontOfHouseNavItems(
+  roles: ReceptionRoles | null,
+  currentRoute: string,
+): WorkstationNavItem[] {
+  if (!canUseFrontOfHouseNav(roles)) {
+    return [];
+  }
+  return [
+    { label: "Front Desk", href: FRONT_DESK_ROUTE },
+    { label: "Admissions", href: ADMISSIONS_ROUTE },
+  ].map((item) => ({ ...item, current: item.href === currentRoute }));
+}
+
+/**
  * Registration links (Reception Queue, New Visit).
  *
  * A Front Desk Nurse is included because registration IS part of their job:

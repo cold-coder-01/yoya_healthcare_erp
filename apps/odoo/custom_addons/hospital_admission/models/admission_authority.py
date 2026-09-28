@@ -371,6 +371,34 @@ ADMISSION_ERROR_MESSAGES = {
         "The transfer time would fall before the start of the patient's current stay "
         "segment. Nothing was changed."
     ),
+    # Admissions Slice 4.
+    "admission_medical_discharge_write_refused": (
+        "Medical readiness for discharge is recorded by the doctor's discharge request "
+        "and cannot be written directly. Nothing was changed."
+    ),
+    "admission_discharge_not_authorized": (
+        "Only the admissions clerk, a hospital manager or a system administrator may "
+        "discharge an admitted patient. Nothing was changed."
+    ),
+    "admission_not_medically_ready": (
+        "The patient has not been declared medically ready for discharge. Nothing was "
+        "changed."
+    ),
+    "admission_settlement_required": (
+        "The inpatient account has a balance to settle before discharge. Nothing was "
+        "changed."
+    ),
+    "admission_financial_review_required": (
+        "The inpatient account needs review before discharge. Nothing was changed."
+    ),
+    "admission_encounter_not_completable": (
+        "The visit linked to this admission is not in a state that can be completed. "
+        "Nothing was changed."
+    ),
+    "admission_legacy_bill_superseded": (
+        "This stay is billed on the visit's billing account; a separate legacy "
+        "admission bill would bill it twice."
+    ),
 }
 
 
@@ -508,6 +536,42 @@ def has_admission_transfer_history_capability():
     return _admission_transfer_history_var.get()
 
 
+# ===========================================================================
+# ADMISSIONS SLICE 4: medical discharge and final discharge
+# ===========================================================================
+#
+# MEDICAL DISCHARGE IS A FACT ON THE ADMISSION, NOT A NEW STATE. A patient who
+# is medically ready is still physically in the bed until the administrative
+# discharge succeeds, so every invariant keyed on ADMISSION_ACTIVE_STATES --
+# the one-active-admission and one-admission-per-bed indexes, bed ownership,
+# the ward nurse's census, encounter coherence -- must go on holding for them.
+# A new state would have had to be threaded through all of those; three
+# workflow-owned fields do not.
+#
+# Written only under medical_discharge_capability(), raised by
+# _desk_request_medical_discharge() (the doctor's act) and by the final
+# discharge (which clears nothing but stamps the stay closed).
+_medical_discharge_var = contextvars.ContextVar(
+    "hospital_admission_medical_discharge_capability", default=False
+)
+
+
+def medical_discharge_capability():
+    """Raised ONLY by the medical-discharge workflow methods."""
+    return _raised(_medical_discharge_var)
+
+
+def has_medical_discharge_capability():
+    return _medical_discharge_var.get()
+
+
+ADMISSION_MEDICAL_DISCHARGE_FIELDS = (
+    "medical_discharge_ready",
+    "medical_discharge_at",
+    "medical_discharge_by_id",
+)
+
+
 # WHO MAY DO WHAT, decided in the MODEL so every channel obeys it. The HTTP gate
 # in yoya_emr_api is a fail-fast in front of these, never the only control.
 G_RECEPTIONIST = "hospital_management.group_hospital_receptionist"
@@ -537,6 +601,16 @@ DESK_TRANSFER_GROUPS = (G_RECEPTIONIST, G_MANAGER, G_SYSADMIN)
 # cancel THEIR OWN request -- checked against the admission's physician, not the
 # group alone.
 DESK_CANCEL_REQUEST_GROUPS = (G_RECEPTIONIST, G_MANAGER, G_SYSADMIN)
+
+# Declare a patient MEDICALLY ready for discharge (Slice 4): the admission's
+# own physician -- checked against the admission, not the group alone -- or
+# oversight. A clinical decision; it frees no bed and settles nothing.
+DESK_MEDICAL_DISCHARGE_OVERSIGHT_GROUPS = (G_MANAGER, G_SYSADMIN)
+
+# FINALIZE the discharge (Slice 4): the people who put a patient into a bed and
+# move them between beds. Not the doctor (who declares medical readiness), not
+# the ward nurse, not the cashier (who settles money, not beds).
+DESK_FINAL_DISCHARGE_GROUPS = (G_RECEPTIONIST, G_MANAGER, G_SYSADMIN)
 
 # Who may READ a rate snapshot on the ORM. The desk never serializes one; this
 # keeps the figure off the backend form for clinical roles as well.
@@ -595,6 +669,19 @@ DESK_ERROR_MESSAGES = {
         "This admission contains inconsistent data and must be reviewed before "
         "it can be admitted."
     ),
+    # Admissions Slice 4.
+    "admission_not_medically_ready": (
+        "The patient has not been declared medically ready for discharge by their "
+        "doctor."
+    ),
+    "admission_settlement_required": (
+        "The inpatient account still has a balance to settle at the cashier before "
+        "the patient can be discharged."
+    ),
+    "admission_financial_review_required": (
+        "The inpatient account needs review before the patient can be discharged."
+    ),
+    "admission_summary_required": "Write a discharge summary before requesting discharge.",
 }
 
 
@@ -625,6 +712,12 @@ SLICE0_TO_DESK = {
     "admission_location_incoherent": "admission_location_mismatch",
     "admission_patient_already_admitted": "admission_active_conflict",
     "admission_transfer_not_authorized": "admission_not_authorized",
+    "admission_discharge_not_authorized": "admission_not_authorized",
+    "admission_not_medically_ready": "admission_not_medically_ready",
+    "admission_settlement_required": "admission_settlement_required",
+    "admission_financial_review_required": "admission_financial_review_required",
+    "admission_encounter_not_completable": "admission_encounter_mismatch",
+    "admission_bed_not_owned": "admission_integrity_error",
 }
 
 

@@ -10,3 +10,5 @@ from . import test_admission_desk_mutations
 from . import test_admission_stay_billing
 from . import test_admission_financials
 from . import test_admission_desk_transfer
+from . import test_admission_discharge
+from . import test_admission_cashier_settlement

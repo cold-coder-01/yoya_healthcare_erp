@@ -315,9 +315,9 @@ class TestAdmissionsDeskGate(AdmissionsDeskCase):
         route exists behind it until Slice 4."""
         for user in (self.sysadmin, self.manager, self.receptionist):
             caps = self._ok(SESSION, user)["capabilities"]
-            for flag in ("admit", "assign_bed", "transfer", "cancel_request"):
+            # Slice 4: discharge is the ADMINISTRATIVE final discharge.
+            for flag in ("admit", "assign_bed", "transfer", "cancel_request", "discharge"):
                 self.assertIs(caps[flag], True, (user.login, flag))
-            self.assertIs(caps["discharge"], False, user.login)
             self.assertTrue(caps["view_worklist"])
             self.assertTrue(caps["view_bed_board"])
         caps = self._ok(SESSION, self.doctor_user)["capabilities"]
@@ -671,7 +671,8 @@ class TestAdmissionsDeskReadOnly(AdmissionsDeskCase):
             with self.subTest(route=route):
                 response = self.url_open(route, data=json.dumps({}), headers={"Content-Type": "application/json"})
                 self.assertIn(response.status_code, (404, 405), route)
-        for route in (base + "/admit", base + "/transfer", base + "/cancel-request"):
+        for route in (base + "/admit", base + "/transfer", base + "/cancel-request",
+                      base + "/finalize-discharge"):
             with self.subTest(route=route):
                 response = self.url_open(route, data=json.dumps({}), headers={"Content-Type": "application/json"})
                 self.assertEqual(response.status_code, 400)

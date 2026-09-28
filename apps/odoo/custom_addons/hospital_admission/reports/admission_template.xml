@@ -170,19 +170,28 @@
                             <tr>
                                 <td>Stay Days</td>
                                 <td><span t-field="doc.stay_days"/></td>
-                                <td>Daily Rate</td>
-                                <td><span t-field="doc.daily_rate_amount"/></td>
+                                <td></td>
+                                <td></td>
                             </tr>
-                            <tr>
-                                <td>Admission Fee</td>
-                                <td><span t-field="doc.admission_fee_amount"/></td>
-                                <td>Bed Charge</td>
-                                <td><span t-field="doc.bed_charge_amount"/></td>
-                            </tr>
-                            <tr>
-                                <td>Total Admission Charge</td>
-                                <td colspan="3"><span t-field="doc.total_admission_charge"/></td>
-                            </tr>
+                            <!-- Money rows only for the roles allowed to read them
+                                 (Admissions Slice 4); a clinical user printing the
+                                 summary gets the clinical record without prices. -->
+                            <t t-if="doc._may_read_stay_money()">
+                                <tr>
+                                    <td>Daily Rate</td>
+                                    <td colspan="3"><span t-field="doc.daily_rate_amount"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Admission Fee</td>
+                                    <td><span t-field="doc.admission_fee_amount"/></td>
+                                    <td>Bed Charge</td>
+                                    <td><span t-field="doc.bed_charge_amount"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Total Admission Charge</td>
+                                    <td colspan="3"><span t-field="doc.total_admission_charge"/></td>
+                                </tr>
+                            </t>
                         </table>
 
                         <!-- Transfer History -->

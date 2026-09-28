@@ -8,13 +8,18 @@ from psycopg2 import IntegrityError
 from odoo import api, fields, models
 from odoo.exceptions import UserError, AccessError, ValidationError
 
+from odoo.addons.hospital_billing.models.charge_line import OPERATIONAL_MONEY_READ
+
 from .admission_authority import (
     ADMISSION_ACTIVE_STATES,
     ADMISSION_ATTRIBUTION_FIELDS,
     ADMISSION_IDENTITY_FIELDS,
     ADMISSION_LOCATION_FIELDS,
+    ADMISSION_MEDICAL_DISCHARGE_FIELDS,
     ADMISSION_MONEY_READ,
     ADMISSION_RATE_SNAPSHOT_FIELDS,
+    DESK_FINAL_DISCHARGE_GROUPS,
+    DESK_MEDICAL_DISCHARGE_OVERSIGHT_GROUPS,
     ADMISSION_TIMELINE_FIELDS,
     ENCOUNTER_ADMISSIBLE_STATES,
     DESK_ADMIT_GROUPS,
@@ -34,6 +39,8 @@ from .admission_authority import (
     admission_transfer_history_capability,
     desk_code_for,
     has_admission_rate_snapshot_capability,
+    has_medical_discharge_capability,
+    medical_discharge_capability,
     has_admission_revision_capability,
     has_admission_transfer_history_capability,
     admission_location_capability,
@@ -162,6 +169,22 @@ class HospitalAdmission(models.Model):
     # never saw. Writable only under admission_revision_capability().
     workflow_revision = fields.Integer(default=0, readonly=True, copy=False)
 
+    # ── Medical discharge (Admissions Slice 4) ──────────────────
+    #
+    # The doctor's CLINICAL decision that the patient may leave. Not a state:
+    # the patient is still in the bed, still on the ward census, still the
+    # bed's owner, until the administrative discharge succeeds. Written only by
+    # _desk_request_medical_discharge() under medical_discharge_capability().
+    medical_discharge_ready = fields.Boolean(
+        string="Medically Ready for Discharge", readonly=True, copy=False, tracking=True,
+    )
+    medical_discharge_at = fields.Datetime(
+        string="Medical Discharge Requested At", readonly=True, copy=False,
+    )
+    medical_discharge_by_id = fields.Many2one(
+        "res.users", string="Medical Discharge By", readonly=True, copy=False,
+    )
+
     # ── Billing linkage ─────────────────────────────────────────
     bill_id = fields.Many2one(
         "hospital.patient.bill",
@@ -191,6 +214,13 @@ class HospitalAdmission(models.Model):
     )
 
     # ── Billing preview (computed) ───────────────────────────────
+    #
+    # MONEY, so readable only by the roles hospital_billing already lets see
+    # operational money (OPERATIONAL_MONEY_READ: cashier, receptionist,
+    # accountant, manager, system administrator). Before Admissions Slice 4
+    # every clinical role that could open an admission in the backend saw the
+    # stay's price on the Billing tab and the printed summary. stay_days is a
+    # count of days, not money, and stays visible.
     stay_days = fields.Float(
         compute="_compute_stay_days",
         string="Stay Days",
@@ -199,24 +229,28 @@ class HospitalAdmission(models.Model):
     )
     admission_fee_amount = fields.Float(
         compute="_compute_admission_billing",
+        groups=OPERATIONAL_MONEY_READ,
         string="Admission Fee",
         digits=(16, 2),
         store=False,
     )
     daily_rate_amount = fields.Float(
         compute="_compute_admission_billing",
+        groups=OPERATIONAL_MONEY_READ,
         string="Daily Rate",
         digits=(16, 2),
         store=False,
     )
     bed_charge_amount = fields.Float(
         compute="_compute_admission_billing",
+        groups=OPERATIONAL_MONEY_READ,
         string="Bed Charge",
         digits=(16, 2),
         store=False,
     )
     total_admission_charge = fields.Float(
         compute="_compute_admission_billing",
+        groups=OPERATIONAL_MONEY_READ,
         string="Total Admission Charge",
         digits=(16, 2),
         store=False,
@@ -596,8 +630,25 @@ class HospitalAdmission(models.Model):
     # BILLING ACTIONS
     # ------------------------------------------------------------------
 
+    def _may_read_stay_money(self):
+        """For the printed summary: may this user see the stay's prices?"""
+        user = self.env.user
+        return self.env.su or any(
+            user.has_group(group) for group in OPERATIONAL_MONEY_READ.split(",")
+        )
+
     def action_generate_admission_bill(self):
+        """LEGACY bill -- for admissions with NO visit only (Admissions Slice 4).
+
+        An admission bound to a visit posts its stay to that visit's billing
+        account as one charge per bed-day (_sync_stay_charges), which is where
+        it is settled. A legacy hospital.patient.bill for the same stay would
+        bill it a second time, so it is refused. Historical visit-less
+        admissions keep this path, and every legacy bill stays readable.
+        """
         self.ensure_one()
+        if self.encounter_id:
+            raise AdmissionWorkflowError("admission_legacy_bill_superseded")
         if self.state != "discharged":
             raise UserError("Admission bill can only be generated after discharge.")
         # Serialize bill generation against itself. Two operators pressing
@@ -735,6 +786,11 @@ class HospitalAdmission(models.Model):
                 # An admission starts at revision 0; only the desk workflow moves it.
                 raise AdmissionWorkflowError("admission_state_write_refused")
             if (
+                any(vals.get(name) for name in ADMISSION_MEDICAL_DISCHARGE_FIELDS)
+                and not has_medical_discharge_capability()
+            ):
+                raise AdmissionWorkflowError("admission_medical_discharge_write_refused")
+            if (
                 any(vals.get(name) for name in ADMISSION_RATE_SNAPSHOT_FIELDS)
                 and not has_admission_rate_snapshot_capability()
             ):
@@ -834,6 +890,13 @@ class HospitalAdmission(models.Model):
                 and not has_admission_rate_snapshot_capability()
             ):
                 raise AdmissionWorkflowError("admission_rate_snapshot_write_refused")
+
+            # ── medical discharge: the doctor's workflow only ──────
+            if (
+                changed_fields(rec, ADMISSION_MEDICAL_DISCHARGE_FIELDS, vals)
+                and not has_medical_discharge_capability()
+            ):
+                raise AdmissionWorkflowError("admission_medical_discharge_write_refused")
 
             # ── identity: settled from creation, never relinked ────
             #
@@ -1045,22 +1108,33 @@ class HospitalAdmission(models.Model):
         return True
 
     def action_discharge(self):
+        """The backend Discharge button, and any ORM caller.
+
+        ADMISSIONS SLICE 4: for a USER this is the full administrative
+        discharge -- _finalize_discharge(), with the doctor's medical readiness,
+        the settlement gate, the final stay posting, bed release and encounter
+        completion -- the same core the Admissions Desk runs. A button in the
+        back office must not be a way around the checks the desk enforces.
+
+        Server-side system code (env.su: an upgrade, a data fix, a fixture)
+        keeps Slice 0's structural discharge, which locks, releases the bed only
+        if owned and stamps the time, and decides no business policy. An RPC
+        caller cannot reach sudo(), so no user gets that path.
+        """
         for rec in self:
-            rec._discharge_one()
+            if self.env.su:
+                rec._discharge_one()
+            else:
+                rec._finalize_discharge()
         return True
 
     def _discharge_one(self):
-        """Structurally safe discharge. Business policy is a LATER slice.
+        """STRUCTURAL discharge (Slice 0). System code only -- see action_discharge.
 
-        What this slice guarantees: the transition is authoritative, the rows
-        are locked, the bed is released only if this admission holds it, and
-        the timestamp is stamped by the workflow rather than accepted from a
-        caller.
-
-        What this slice deliberately does NOT add: discharge_pending, doctor
-        sign-off, billing clearance and pending lab/imaging checks. Those are
-        business policy, they need the encounter bridge this slice is building
-        in order to be expressible at all, and they belong to Slice 4.
+        Guarantees: the transition is authoritative, the rows are locked, the
+        bed is released only if this admission holds it, and the timestamp is
+        stamped by the workflow rather than accepted from a caller. Decides no
+        business policy: that is _finalize_discharge().
         """
         self.ensure_one()
         if self.state not in ADMISSION_ACTIVE_STATES:
@@ -1776,6 +1850,301 @@ class HospitalAdmission(models.Model):
         if encounter:
             encounter._release_deferred_completion(self)
         return result
+
+    # ==================================================================
+    # ADMISSIONS SLICE 4: MEDICAL DISCHARGE AND FINAL DISCHARGE
+    # ==================================================================
+    #
+    #   _desk_request_medical_discharge  the DOCTOR's clinical decision: the
+    #                                    patient may go. Records readiness and
+    #                                    the discharge summary, posts the stay
+    #                                    to date. Frees nothing, settles nothing.
+    #   _desk_finalize_discharge         the ADMISSIONS CLERK's act: re-checks
+    #                                    readiness, posts the final stay,
+    #                                    applies the settlement gate, then
+    #                                    discharges, releases the bed and
+    #                                    completes the visit -- atomically.
+    #
+    # Between the two the patient is still in the bed, on the census and the
+    # bed's owner: medical readiness is a fact, not a state.
+
+    # ------------------------------------------------------------------
+    # Clinical discharge checks
+    # ------------------------------------------------------------------
+    DISCHARGE_WARNING_MESSAGES = {
+        "pending_laboratory": "Laboratory work on this visit is not finished.",
+        "pending_radiology": "Imaging on this visit is not finished.",
+        "pending_procedures": "A procedure on this admission is not finished.",
+        "pending_medication": "A pharmacy dispense on this visit is not finished.",
+    }
+    DISCHARGE_BLOCKING_MESSAGES = {
+        "not_medically_ready": "The doctor has not declared the patient medically ready.",
+        "bed_not_owned": "The admission's bed records a different admission.",
+        "encounter_not_completable": "The linked visit is not in a state that can be completed.",
+    }
+
+    def _count_open(self, model, domain):
+        if model not in self.env:
+            return 0
+        return self.env[model].sudo().search_count(domain)
+
+    def _discharge_checks(self):
+        """(blocking codes, warning codes). Amount-free, fixed vocabulary.
+
+        WHAT BLOCKS, AND WHY ONLY THIS. The codebase states no rule that
+        unfinished laboratory, imaging, procedure or pharmacy work must hold a
+        patient in a bed -- no workflow in any module refuses on it. Inventing
+        one here would be a clinical detention policy nobody decided. So those
+        are WARNINGS the doctor and the clerk see before they confirm. What
+        BLOCKS is only what this module's own invariants require: the doctor's
+        readiness, bed ownership, and a visit that can actually be completed.
+        The settlement gate is separate (_discharge_financial_refusal).
+
+        sudo(): whether work is still open is a property of the visit, and the
+        admissions clerk's rights on the laboratory or pharmacy do not change
+        it. Only counts leave this method.
+        """
+        self.ensure_one()
+        admission = self.sudo()
+        blocking, warnings = [], []
+        if not admission.medical_discharge_ready:
+            blocking.append("not_medically_ready")
+        bed = admission.bed_id
+        if bed and bed.current_admission_id != admission:
+            blocking.append("bed_not_owned")
+        encounter = admission.encounter_id
+        if encounter and encounter.state != "active":
+            blocking.append("encounter_not_completable")
+
+        if encounter:
+            open_by_visit = (
+                ("hospital.laboratory.request", ("requested", "sample_collected", "in_progress"),
+                 "pending_laboratory"),
+                ("hospital.radiology.request", ("requested", "scheduled", "in_progress"),
+                 "pending_radiology"),
+                ("hospital.pharmacy.dispense", ("draft", "ready", "partial"), "pending_medication"),
+            )
+            for model, states, code in open_by_visit:
+                if model in self.env and "encounter_id" in self.env[model]._fields:
+                    if self._count_open(
+                        model, [("encounter_id", "=", encounter.id), ("state", "in", list(states))]
+                    ):
+                        warnings.append(code)
+        if self._count_open(
+            "hospital.procedure.request",
+            [("admission_id", "=", admission.id),
+             ("state", "in", ["requested", "scheduled", "in_progress"])],
+        ):
+            warnings.append("pending_procedures")
+        return blocking, warnings
+
+    # ------------------------------------------------------------------
+    # Doctor: medical discharge
+    # ------------------------------------------------------------------
+    def _desk_may_request_medical_discharge(self):
+        """The admission's OWN physician, or oversight. sudo() reads the
+        physician's user: ownership is a property of the data."""
+        self.ensure_one()
+        user = self.env.user
+        if any(user.has_group(group) for group in DESK_MEDICAL_DISCHARGE_OVERSIGHT_GROUPS):
+            return True
+        return bool(user.has_group(G_DOCTOR) and self.sudo().physician_id.user_id == user)
+
+    def _desk_request_medical_discharge(self, summary, operation_token, expected_revision):
+        """Declare the patient medically ready for discharge. Returns
+        (admission, replayed).
+
+        Records WHO and WHEN, and the discharge summary the doctor writes. Also
+        posts the stay to date to the visit's billing account, so the cashier
+        sees the stay as it stands. It does NOT free the bed, change the state,
+        complete the visit or touch money: that is the final discharge.
+        """
+        self.ensure_one()
+        if not self._desk_may_request_medical_discharge():
+            raise AdmissionDeskError("admission_not_authorized")
+        token = self._desk_clean_token(operation_token)
+        revision = self._desk_clean_revision(expected_revision)
+        summary = self._desk_clean_reason(summary)
+
+        try:
+            self._lock_for_occupancy(self.bed_id)
+        except AdmissionWorkflowError:
+            raise AdmissionDeskError("admission_not_found") from None
+
+        digest = self._desk_digest(
+            "medical_discharge",
+            {"admission": self.id, "expected_revision": revision, "summary": summary},
+        )
+        if self._desk_find_replay("medical_discharge", token, digest):
+            return self, True
+
+        if self.workflow_revision != revision:
+            raise AdmissionDeskError("admission_revision_conflict")
+        if self.state not in ADMISSION_ACTIVE_STATES or self.medical_discharge_ready:
+            raise AdmissionDeskError("admission_invalid_state")
+
+        now = fields.Datetime.now()
+        with medical_discharge_capability():
+            self.write({
+                "medical_discharge_ready": True,
+                "medical_discharge_at": now,
+                "medical_discharge_by_id": self.env.uid,
+                "discharge_summary": summary,
+            })
+        try:
+            self._sync_stay_charges(now)
+        except AdmissionWorkflowError as error:
+            raise AdmissionDeskError(desk_code_for(error.code)) from None
+        self._audit(
+            patient_id=self.patient_id.id,
+            model_name=self._name,
+            record_id=self.id,
+            action_type="update",
+            description="Admission %s declared medically ready for discharge." % self.name,
+        )
+        return self._desk_finish("medical_discharge", token, digest)
+
+    # ------------------------------------------------------------------
+    # Admissions Desk: final administrative discharge
+    # ------------------------------------------------------------------
+    @api.model
+    def _may_finalize_discharge(self):
+        user = self.env.user
+        return any(user.has_group(group) for group in DESK_FINAL_DISCHARGE_GROUPS)
+
+    def _finalize_discharge(self):
+        """THE administrative discharge. One transaction; the caller's savepoint
+        (or the request's transaction) rolls every step back on any refusal.
+
+          1. authority          DESK_FINAL_DISCHARGE_GROUPS (or system code)
+          2. lock               admission row + its bed, Slice 0's order
+          3. re-check           active, medically ready, bed owned, visit active
+          4. post the stay      every bed-day started by NOW, one time stamp
+          5. settlement gate    the SAME summary the desk shows, after posting
+          6. discharge          release the bed (only if owned), state + time
+          7. complete the visit through its own lifecycle
+
+        Returns the amount-free financial status the discharge was taken on.
+        """
+        self.ensure_one()
+        if not (self.env.su or self._may_finalize_discharge()):
+            raise AdmissionWorkflowError("admission_discharge_not_authorized")
+        if self.state not in ADMISSION_ACTIVE_STATES:
+            raise UserError("Only Admitted or Transferred admissions can be discharged.")
+
+        self._lock_for_occupancy(self.bed_id)
+
+        if self.state not in ADMISSION_ACTIVE_STATES:
+            raise UserError("Only Admitted or Transferred admissions can be discharged.")
+        if not self.medical_discharge_ready:
+            raise AdmissionWorkflowError("admission_not_medically_ready")
+        if self.bed_id and self.bed_id.current_admission_id != self:
+            raise AdmissionWorkflowError("admission_bed_not_owned")
+        encounter = self.sudo().encounter_id
+        if encounter and encounter.state != "active":
+            raise AdmissionWorkflowError("admission_encounter_not_completable")
+
+        # ONE instant for the whole act: the stay is posted through it, the
+        # gate is judged at it, and the discharge is stamped with it -- so the
+        # posted stay and the recorded stay cannot differ by a period.
+        now = fields.Datetime.now()
+        self._sync_stay_charges(now)
+        self.env.flush_all()
+        summary = self._inpatient_financial_summary(now)
+        refusal = self._discharge_financial_refusal(summary)
+        if refusal:
+            raise AdmissionWorkflowError(refusal)
+
+        if self.bed_id:
+            self._release_bed("discharge")
+        self._write_state("discharged", {"discharge_date": now})
+
+        if encounter:
+            # The visit's OWN completion path (hospital_management + this
+            # module's override, which now finds no open admission). sudo():
+            # the clerk's rights on hospital.encounter do not cover completing a
+            # visit, and the consultation completion path runs it the same way.
+            encounter.action_complete()
+            encounter.invalidate_recordset(["state"])
+            if encounter.state != "completed":
+                raise AdmissionWorkflowError("admission_encounter_not_completable")
+
+        status = self._status_from_summary(summary)
+        self._audit(
+            patient_id=self.patient_id.id,
+            model_name=self._name,
+            record_id=self.id,
+            action_type="state_change",
+            old_value="admitted",
+            new_value="discharged",
+            description="Admission %s discharged (financial state: %s)."
+            % (self.name, status["financial_state"]),
+        )
+        return status
+
+    def _desk_post_stay_to_date(self):
+        """Post every bed-day started so far, as its own act. Returns the stay
+        charges.
+
+        WHY THIS EXISTS. The final discharge posts the stay and applies the
+        settlement gate in ONE transaction, so a refusal rolls its posting back
+        too. If a new 24-hour period started after the cashier settled, the
+        refused discharge would leave nothing new for the cashier to collect
+        against. The desk therefore posts the stay to date on its own after a
+        settlement refusal. It is idempotent (every period has one key), moves
+        no bed, changes no state and bumps no revision -- it records care that
+        has already been delivered, which is what every clinical module does as
+        its care happens.
+        """
+        self.ensure_one()
+        if not (self.env.su or self._may_finalize_discharge()):
+            raise AdmissionWorkflowError("admission_discharge_not_authorized")
+        if self.state not in ADMISSION_ACTIVE_STATES:
+            return self.env["hospital.charge.line"].browse()
+        self._lock_for_occupancy(self.env["hospital.bed"])
+        return self._sync_stay_charges(fields.Datetime.now())
+
+    def _desk_finalize_discharge(self, operation_token, expected_revision):
+        """The Admissions Desk's final discharge. Returns (admission, replayed).
+
+        Adds to _finalize_discharge() only what the desk needs: authorization
+        before any row is read, the revision, idempotency and one error
+        vocabulary. A replay of a completed discharge answers from the ledger
+        and changes nothing.
+        """
+        self.ensure_one()
+        if not self._may_finalize_discharge():
+            raise AdmissionDeskError("admission_not_authorized")
+        token = self._desk_clean_token(operation_token)
+        revision = self._desk_clean_revision(expected_revision)
+
+        try:
+            self._lock_for_occupancy(self.bed_id)
+        except AdmissionWorkflowError:
+            raise AdmissionDeskError("admission_not_found") from None
+
+        digest = self._desk_digest(
+            "final_discharge", {"admission": self.id, "expected_revision": revision}
+        )
+        if self._desk_find_replay("final_discharge", token, digest):
+            return self, True
+
+        if self.workflow_revision != revision:
+            raise AdmissionDeskError("admission_revision_conflict")
+        if self.state not in ADMISSION_ACTIVE_STATES:
+            raise AdmissionDeskError("admission_invalid_state")
+
+        bed = self.bed_id
+        try:
+            self._finalize_discharge()
+        except AdmissionWorkflowError as error:
+            raise AdmissionDeskError(desk_code_for(error.code)) from None
+
+        self.env.flush_all()
+        self.env.invalidate_all()
+        if self.state != "discharged" or (bed and bed.current_admission_id == self):
+            raise AdmissionDeskError("admission_integrity_error")
+        return self._desk_finish("final_discharge", token, digest)
 
     def unlink(self):
         for rec in self:

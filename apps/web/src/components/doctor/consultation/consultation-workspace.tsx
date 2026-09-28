@@ -649,7 +649,13 @@ export default function ConsultationWorkspace({
       {/* ---- Admission: request only; the Admissions Desk assigns the bed ---- */}
       {detail.admission ? (
         <div className="shrink-0 border-b border-slate-200 bg-white px-3 py-1.5">
-          <DoctorAdmissionCard key={appointmentId} appointmentId={appointmentId} summary={detail.admission} compact />
+          <DoctorAdmissionCard
+            key={appointmentId}
+            appointmentId={appointmentId}
+            summary={detail.admission}
+            patientName={detail.patient?.name ?? null}
+            compact
+          />
         </div>
       ) : null}
 

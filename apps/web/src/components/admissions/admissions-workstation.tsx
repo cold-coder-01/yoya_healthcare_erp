@@ -10,6 +10,9 @@ import {
   cancelRequestBody,
   cancelRequestPath,
   cancelRequestSignature,
+  finalizeDischargeBody,
+  finalizeDischargePath,
+  finalizeDischargeSignature,
   isResolved,
   needsBedRefresh,
   needsReload,
@@ -38,6 +41,7 @@ import type {
   AdmissionDeskSession,
   AdmissionDetail,
   AdmissionDetailResponse,
+  AdmissionFinalizeDischargeResponse,
   AdmissionLaneSummary,
   AdmissionTransferResponse,
   AdmissionWorklistResponse,
@@ -49,8 +53,10 @@ import type {
   WardsResponse,
 } from "@/types/admissions-desk";
 
+import AdmissionPreviewDialog from "./admission-preview-dialog";
 import AdmitDialog from "./admit-dialog";
 import CancelRequestDialog from "./cancel-request-dialog";
+import FinalizeDischargeDialog from "./finalize-discharge-dialog";
 import TransferDialog from "./transfer-dialog";
 import AdmissionDetailPanel from "./admission-detail-panel";
 import AdmissionsQueue from "./admissions-queue";
@@ -64,13 +70,14 @@ import WardOccupancyStrip from "./ward-occupancy-strip";
  * WARD STRIP and LANE TABS on top; the CENSUS left and the PINNED ADMISSION
  * right; the BED BOARD below. Every read is a GET to /api/admissions/*.
  *
- * THREE WRITES, ONE SHAPE: Admit to bed (Slice 2), Transfer patient and Cancel
- * request (Slice 3) -- POSTs to /api/admissions/[id]/{admit,transfer,
- * cancel-request}, each sent ONCE per confirmed action with one operation
- * token. If the outcome is unknown the token is kept, so a retry replays
+ * FOUR WRITES, ONE SHAPE: Admit to bed (Slice 2), Transfer patient and Cancel
+ * request (Slice 3), Finalize discharge (Slice 4) -- POSTs to
+ * /api/admissions/[id]/{admit,transfer,cancel-request,finalize-discharge},
+ * each sent ONCE per confirmed action with one operation token. If the outcome is unknown the token is kept, so a retry replays
  * rather than acting twice. The returned admission is PINNED and shown as-is
  * -- it is the authoritative result -- and the census, wards and bed board are
- * then reloaded. Discharge does not exist here (Slice 4).
+ * then reloaded. The doctor's medical readiness is set on the Doctor Desk, never
+ * here.
  *
  * NOTHING LOADS BEFORE THE ROLE IS KNOWN. The session is read first; a caller
  * the server refuses sees "This is not your workstation" and no census, bed or
@@ -119,6 +126,9 @@ export default function AdmissionsWorkstation() {
   const [detailStale, setDetailStale] = useState(false);
   const detailRef = useRef<AdmissionDetail | null>(null);
 
+  /* ---- Quick Preview: read only, renders shownDetail, never fetches ---- */
+  const [previewOpen, setPreviewOpen] = useState(false);
+
   /* ---- Admit (Slice 2) ---- */
   const [admitOpen, setAdmitOpen] = useState(false);
   const [admitBeds, setAdmitBeds] = useState<BedBoardRow[]>([]);
@@ -134,6 +144,10 @@ export default function AdmissionsWorkstation() {
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelBusy, setCancelBusy] = useState(false);
   const [cancelMessage, setCancelMessage] = useState<ActionMessage | null>(null);
+  /* ---- Finalize discharge (Slice 4) ---- */
+  const [finalizeOpen, setFinalizeOpen] = useState(false);
+  const [finalizeBusy, setFinalizeBusy] = useState(false);
+  const [finalizeMessage, setFinalizeMessage] = useState<ActionMessage | null>(null);
   /** The act whose outcome is unknown; a retry of the same request reuses it. */
   const pendingRef = useRef<PendingAdmissionOperation | null>(null);
   useEffect(() => {
@@ -328,6 +342,7 @@ export default function AdmissionsWorkstation() {
   const mayAdmit = session?.capabilities.admit === true;
   const mayTransfer = session?.capabilities.transfer === true;
   const mayCancelRequest = session?.capabilities.cancel_request === true;
+  const mayDischarge = session?.capabilities.discharge === true;
 
   /* ---------------- admit ---------------- */
   const loadAvailableBeds = useCallback(async () => {
@@ -580,6 +595,81 @@ export default function AdmissionsWorkstation() {
     }
   }, [cancelBusy, shownDetail]);
 
+  /* ---------------- quick preview ---------------- */
+  const openPreview = useCallback(() => setPreviewOpen(true), []);
+  const closePreview = useCallback(() => setPreviewOpen(false), []);
+
+  /* ---------------- finalize discharge (Slice 4) ---------------- */
+  const openFinalize = useCallback(() => {
+    setActionMessage(null);
+    setFinalizeMessage(null);
+    setFinalizeOpen(true);
+  }, []);
+
+  const closeFinalize = useCallback(() => {
+    if (finalizeBusy) return;
+    setFinalizeOpen(false);
+    setFinalizeMessage(null);
+  }, [finalizeBusy]);
+
+  const submitFinalize = useCallback(async () => {
+    const current = shownDetail;
+    if (!current || finalizeBusy) return;
+    const signature = finalizeDischargeSignature(current.workflow_revision);
+    const token = tokenFor(pendingRef.current, "final_discharge", current.id, signature, () => crypto.randomUUID());
+    pendingRef.current = { kind: "final_discharge", targetId: current.id, signature, token };
+
+    setFinalizeBusy(true);
+    let status: number | null = null;
+    let payload: ApiEnvelope<AdmissionFinalizeDischargeResponse> | null = null;
+    try {
+      const response = await fetch(finalizeDischargePath(current.id), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(finalizeDischargeBody(current.workflow_revision, token)),
+        cache: "no-store",
+      });
+      status = response.status;
+      payload = (await response.json()) as ApiEnvelope<AdmissionFinalizeDischargeResponse>;
+    } catch {
+      payload = null;
+    } finally {
+      setFinalizeBusy(false);
+    }
+
+    if (!isResolved(status, payload !== null)) {
+      setFinalizeMessage({ tone: "amber", text: UNKNOWN_OUTCOME_NOTICE });
+      return;
+    }
+    pendingRef.current = null;
+
+    if (payload && payload.success) {
+      const updated = payload.data.admission;
+      setDetail(updated);
+      setDetailStale(false);
+      setPinnedId(updated.id);
+      setSelectedId(updated.id);
+      setFinalizeOpen(false);
+      setFinalizeMessage(null);
+      setActionMessage({
+        tone: "green",
+        text: payload.data.operation.replayed
+          ? `Already discharged: ${updated.reference}.`
+          : `Discharged ${updated.reference}. The bed is free.`,
+      });
+      setRefreshToken((value) => value + 1);
+      return;
+    }
+
+    setFinalizeMessage({
+      tone: "red",
+      text: messageFromPayload(payload, "The discharge could not be completed. Nothing was changed."),
+    });
+    if (needsReload(codeFromPayload(payload))) {
+      setRefreshToken((value) => value + 1);
+    }
+  }, [finalizeBusy, shownDetail]);
+
   if (deskAllowed === false) {
     return (
       <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 cl-body text-amber-900">
@@ -639,10 +729,13 @@ export default function AdmissionsWorkstation() {
           mayAdmit={mayAdmit}
           mayTransfer={mayTransfer}
           mayCancelRequest={mayCancelRequest}
+          mayDischarge={mayDischarge}
           actionMessage={actionMessage}
           onRequestAdmit={openAdmit}
           onRequestTransfer={openTransfer}
           onRequestCancel={openCancel}
+          onRequestFinalize={openFinalize}
+          onRequestPreview={openPreview}
         />
       </div>
 
@@ -687,6 +780,20 @@ export default function AdmissionsWorkstation() {
           message={cancelMessage}
           onConfirm={() => void submitCancel()}
           onClose={closeCancel}
+        />
+      ) : null}
+
+      {previewOpen && shownDetail ? (
+        <AdmissionPreviewDialog detail={shownDetail} onClose={closePreview} />
+      ) : null}
+
+      {finalizeOpen && shownDetail && mayDischarge ? (
+        <FinalizeDischargeDialog
+          detail={shownDetail}
+          busy={finalizeBusy}
+          message={finalizeMessage}
+          onConfirm={() => void submitFinalize()}
+          onClose={closeFinalize}
         />
       ) : null}
     </div>

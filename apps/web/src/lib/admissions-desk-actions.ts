@@ -33,6 +33,16 @@ export function cancelRequestPath(admissionId: number): string {
   return `/api/admissions/${admissionId}/cancel-request`;
 }
 
+/** Slice 4: the Admissions Desk's administrative final discharge. */
+export function finalizeDischargePath(admissionId: number): string {
+  return `/api/admissions/${admissionId}/finalize-discharge`;
+}
+
+/** Slice 4: the Doctor Desk's medical discharge, addressed by the VISIT. */
+export function dischargeRequestPath(appointmentId: number): string {
+  return `/api/doctor/visits/${appointmentId}/discharge-request`;
+}
+
 /* ------------------------------------------------------------------ *
  * Bodies -- exactly the fields the server accepts
  * ------------------------------------------------------------------ */
@@ -53,6 +63,14 @@ export function cancelRequestBody(expectedRevision: number, token: string) {
   return { operation_token: token, expected_revision: expectedRevision };
 }
 
+export function finalizeDischargeBody(expectedRevision: number, token: string) {
+  return { operation_token: token, expected_revision: expectedRevision };
+}
+
+export function dischargeRequestBody(expectedRevision: number, summary: string, token: string) {
+  return { operation_token: token, expected_revision: expectedRevision, summary };
+}
+
 /** The admission reason the server will accept: trimmed, non-empty, bounded. */
 export const ADMISSION_REASON_MAX = 2000;
 
@@ -67,7 +85,7 @@ export function cleanReason(raw: string): string | null {
  * ------------------------------------------------------------------ */
 
 export type PendingAdmissionOperation = {
-  kind: "admit" | "request" | "transfer" | "cancel_request";
+  kind: "admit" | "request" | "transfer" | "cancel_request" | "medical_discharge" | "final_discharge";
   targetId: number;
   signature: string;
   token: string;
@@ -88,6 +106,14 @@ export function transferSignature(expectedRevision: number, bedId: number, reaso
 
 export function cancelRequestSignature(expectedRevision: number): string {
   return JSON.stringify({ revision: expectedRevision });
+}
+
+export function finalizeDischargeSignature(expectedRevision: number): string {
+  return JSON.stringify({ revision: expectedRevision });
+}
+
+export function dischargeRequestSignature(expectedRevision: number, summary: string): string {
+  return JSON.stringify({ revision: expectedRevision, summary: summary.trim() });
 }
 
 /**
@@ -132,7 +158,11 @@ export function needsReload(code: string | null): boolean {
   return (
     code === "admission_revision_conflict" ||
     code === "admission_invalid_state" ||
-    code === "admission_not_found"
+    code === "admission_not_found" ||
+    // Slice 4: the discharge gates -- the financial / medical state shown is stale.
+    code === "admission_not_medically_ready" ||
+    code === "admission_settlement_required" ||
+    code === "admission_financial_review_required"
   );
 }
 

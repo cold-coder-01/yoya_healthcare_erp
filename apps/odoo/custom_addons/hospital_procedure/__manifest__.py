@@ -1,7 +1,7 @@
 {
     "name": "Hospital Procedure",
     "summary": "Clinical service execution foundation — procedures, bedside services, and minor treatments",
-    "version": "18.0.1.0.0",
+    "version": "18.0.1.1.0",
     "category": "Healthcare",
     "author": "Synergy Tech solns",
     "license": "LGPL-3",
@@ -15,6 +15,7 @@
     "data": [
         "security/ir.model.access.csv",
         "data/procedure_sequence.xml",
+        "data/procedure_billing_service.xml",
         "views/procedure_type_views.xml",
         "views/procedure_request_views.xml",
         "views/patient_procedure_views.xml",

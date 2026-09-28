@@ -55,6 +55,9 @@ class HospitalAdmissionOperation(models.Model):
             # Admissions Slice 3.
             ("transfer", "Transfer"),
             ("cancel_request", "Cancel Request"),
+            # Admissions Slice 4.
+            ("medical_discharge", "Medical Discharge"),
+            ("final_discharge", "Final Discharge"),
         ],
         required=True,
         readonly=True,

@@ -1,4 +1,4 @@
-"""Admissions Desk API (Admissions Slices 1-3).
+"""Admissions Desk API (Admissions Slices 1-4).
 
     GET  /yoya-emr/api/v1/admissions/session
     GET  /yoya-emr/api/v1/admissions/worklist   ?lane= &ward_id= &q= &limit=
@@ -8,18 +8,21 @@
     POST /yoya-emr/api/v1/admissions/<id>/admit           (Slice 2)
     POST /yoya-emr/api/v1/admissions/<id>/transfer        (Slice 3)
     POST /yoya-emr/api/v1/admissions/<id>/cancel-request  (Slice 3)
+    POST /yoya-emr/api/v1/admissions/<id>/finalize-discharge (Slice 4)
 
-THREE WRITES. Admit assigns the bed and confirms the admission as a single
+FOUR WRITES. Admit assigns the bed and confirms the admission as a single
 atomic act; there is no separate assign-bed route, so a bed is never "held" by
 a draft. Transfer moves an admitted patient to another bed. Cancel-request
-withdraws a DRAFT request, from either desk. Discharge is not registered
-(Slice 4). The Doctor Desk's admission REQUEST lives in controllers/doctor.py,
-beside the visit it belongs to. Viewing creates no audit row.
+withdraws a DRAFT request, from either desk. Finalize-discharge (Slice 4) is
+the administrative discharge of a patient the doctor has declared medically
+ready -- the doctor's own act lives on the Doctor Desk. The Doctor Desk's
+admission REQUEST and DISCHARGE REQUEST live in controllers/doctor.py, beside
+the visit they belong to. Viewing creates no audit row.
 
 THE CONTROLLER DECIDES NOTHING ABOUT WORKFLOW. Each write route checks the
 role, resolves the admission through the caller's own record rules, and hands
 the payload to the model's own desk method (_desk_admit, _desk_transfer,
-_desk_cancel_request), which owns locking, idempotency, the revision check,
+_desk_cancel_request, _desk_finalize_discharge), which owns locking, idempotency, the revision check,
 the bed checks and the Slice 0 transition. The controller writes no field and
 calls no sudo().
 
@@ -69,6 +72,7 @@ from odoo.addons.hospital_admission.models.admission_authority import (
 from ..services.admission_mutations import (
     ADMIT_KEYS,
     CANCEL_REQUEST_KEYS,
+    FINALIZE_DISCHARGE_KEYS,
     TRANSFER_KEYS,
     canonical_token,
     desk_error,
@@ -103,6 +107,7 @@ from ..services.reception_scope import (
     may_admissions_admit,
     may_admissions_cancel_request,
     may_admissions_desk,
+    may_admissions_finalize_discharge,
     may_admissions_transfer,
 )
 
@@ -311,6 +316,7 @@ class YoyaEmrAdmissionsController(http.Controller):
             serialize_row(
                 admission, lane, reasons, encounter, counts.get(admission.id, 0),
                 may_admit=may_admit, may_transfer=may_transfer, may_cancel=may_cancel,
+                may_finalize=may_admissions_finalize_discharge(env),
             )
             for admission, lane, reasons, encounter in page
         ]
@@ -413,6 +419,7 @@ class YoyaEmrAdmissionsController(http.Controller):
                 may_admit=may_admissions_admit(env),
                 may_transfer=may_admissions_transfer(env),
                 may_cancel=may_admissions_cancel_request(env),
+                may_finalize=may_admissions_finalize_discharge(env),
             ),
             "capabilities": admissions_desk_capability_flags(env),
         })
@@ -505,8 +512,60 @@ class YoyaEmrAdmissionsController(http.Controller):
             with_doctor_summary=True,
         )
 
+    # ------------------------------------------------------------------
+    # Slice 4: administrative final discharge
+    # ------------------------------------------------------------------
+    @http.route(
+        "%s/<int:admission_id>/finalize-discharge" % ADMISSIONS_API,
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @admissions_endpoint
+    def admissions_finalize_discharge(self, admission_id, **params):
+        """Discharge a medically ready patient: post the final stay, apply the
+        settlement gate, release the bed and complete the visit -- one act.
 
-def _run_desk_mutation(env, record, operation_type, body, call, with_doctor_summary=False):
+        Body: {"operation_token": uuid, "expected_revision": int}. Exactly
+        those keys. Everything else -- readiness, bed ownership, the visit, the
+        money -- is re-derived by hospital.admission._desk_finalize_discharge().
+
+        A refusal for an unsettled account also POSTS THE STAY TO DATE, in its
+        own savepoint after the refused one has rolled back: a bed-day that
+        started since the cashier last collected must exist as a charge before
+        the cashier can collect it. That posting is idempotent, moves no bed and
+        changes no workflow state (hospital.admission._desk_post_stay_to_date).
+        """
+        env = request.env
+        if not may_admissions_finalize_discharge(env):
+            raise desk_error("admission_not_authorized")
+        body = mutation_body(FINALIZE_DISCHARGE_KEYS)
+        record = _load_admission_for_mutation(env, admission_id)
+
+        def post_stay_on_settlement_refusal(code):
+            if code != "admission_settlement_required":
+                return
+            try:
+                with env.cr.savepoint():
+                    record._desk_post_stay_to_date()
+            except PG_CONCURRENCY_EXCEPTIONS_TO_RETRY:
+                raise
+            except Exception:
+                _logger.warning(
+                    "Admissions: posting the stay to date failed for admission=%s", record.id,
+                    exc_info=True,
+                )
+
+        return _run_desk_mutation(
+            env, record, "final_discharge", body,
+            lambda: record._desk_finalize_discharge(
+                body["operation_token"], body["expected_revision"]
+            ),
+            on_refusal=post_stay_on_settlement_refusal,
+        )
+
+
+def _run_desk_mutation(
+    env, record, operation_type, body, call, with_doctor_summary=False, on_refusal=None,
+):
     """THE one shape every Admissions Desk mutation runs in.
 
     ONE SAVEPOINT: the model call and the response serialization run inside
@@ -524,6 +583,7 @@ def _run_desk_mutation(env, record, operation_type, body, call, with_doctor_summ
                 may_admit=may_admissions_admit(env),
                 may_transfer=may_admissions_transfer(env),
                 may_cancel=may_admissions_cancel_request(env),
+                may_finalize=may_admissions_finalize_discharge(env),
             )
             if with_doctor_summary:
                 # Under the CALLER's rules, and without sudo(): the id is a
@@ -539,6 +599,8 @@ def _run_desk_mutation(env, record, operation_type, body, call, with_doctor_summ
     except PG_CONCURRENCY_EXCEPTIONS_TO_RETRY:
         raise
     except AdmissionDeskError as error:
+        if on_refusal:
+            on_refusal(error.code)
         raise desk_error(error.code) from None
     except IntegrityError as error:
         raise desk_error(integrity_code(error)) from None

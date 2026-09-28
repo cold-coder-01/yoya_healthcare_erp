@@ -2,8 +2,9 @@
  * Shared bits for the Admissions Desk BFF routes (Admissions Slice 1).
  *
  * READS ARE GET. The writes are POSTs -- .../admit (Slice 2), .../transfer and
- * .../cancel-request (Slice 3) -- whose bodies are rebuilt from exactly the
- * allowed fields by the pickers in _body.ts, through ONE POST helper.
+ * .../cancel-request (Slice 3), .../finalize-discharge (Slice 4) -- whose
+ * bodies are rebuilt from exactly the allowed fields by the pickers in
+ * _body.ts, through ONE POST helper.
  *
  * `server-only` keeps these -- and the Odoo session cookie they read -- out of
  * every client bundle. The browser never holds an Odoo session and never has a
@@ -80,5 +81,7 @@ export {
   pickAdmitBody,
   pickAdmissionRequestBody,
   pickCancelRequestBody,
+  pickDischargeRequestBody,
+  pickFinalizeDischargeBody,
   pickTransferBody,
 } from "./_body";

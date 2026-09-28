@@ -13,9 +13,15 @@ layer. That is why pharmacist, lab technician and DPO are removed from
 ir.model.access.csv rather than given a narrow rule, and why the tests for them
 assert AccessError on a plain search rather than an empty result.
 """
+import uuid
+
 from odoo.exceptions import AccessError
 from odoo.tests import tagged
 from odoo.tools import mute_logger
+
+from odoo.addons.hospital_admission.models.admission_authority import (
+    AdmissionWorkflowError,
+)
 
 from .common import AdmissionCase
 
@@ -60,12 +66,22 @@ class TestAdmissionRoleMatrix(AdmissionCase):
 
     @mute_logger("odoo.addons.base.models.ir_rule", "odoo.models")
     def test_a_doctor_cannot_discharge_a_patient_who_is_not_theirs(self):
-        """The rule that ends hospital-wide arbitrary discharge."""
+        """The rule that ends hospital-wide arbitrary discharge.
+
+        Slice 4 makes it stricter still: a doctor declares MEDICAL readiness and
+        never performs the administrative discharge, even for their own patient.
+        The refusal is the role check, before any row is read.
+        """
         theirs = self._draft(bed=self.bed_b, physician_id=self.other_doctor.id)
         theirs.action_confirm_admission()
 
-        with self.assertRaises(AccessError):
+        with self.assertRaises(AdmissionWorkflowError) as caught:
             theirs.with_user(self.doctor_user).action_discharge()
+        self.assertEqual(caught.exception.code, "admission_discharge_not_authorized")
+        mine = self._draft(bed=self.bed_a, physician_id=self.doctor.id)
+        mine.action_confirm_admission()
+        with self.assertRaises(AdmissionWorkflowError):
+            mine.with_user(self.doctor_user).action_discharge()
 
     def test_a_doctor_reaches_their_patient_through_the_visit_too(self):
         """Three routes to a care relationship; the visit is one of them."""
@@ -151,8 +167,21 @@ class TestAdmissionRoleMatrix(AdmissionCase):
         self.assertEqual(self.bed_a.current_admission_id, admission)
 
     def test_and_a_receptionist_can_discharge_and_free_the_bed(self):
+        """Once the doctor has declared the patient medically ready (Slice 4)."""
         admission = self._draft()
         admission.with_user(self.receptionist).action_confirm_admission()
+        with self.assertRaises(AdmissionWorkflowError) as caught:
+            with self.env.cr.savepoint():
+                admission.with_user(self.receptionist).action_discharge()
+        self.assertEqual(caught.exception.code, "admission_not_medically_ready")
+        admission.with_user(self.manager)._desk_request_medical_discharge(
+            "Recovered.", str(uuid.uuid4()), admission.workflow_revision
+        )
+        # The stay (fee + one day) is settled first, as the gate requires.
+        account = admission.encounter_id.billing_account_id.sudo()
+        account.record_operational_payment(
+            account.amount_estimated, "cash", intake_token=uuid.uuid4().hex
+        )
         admission.with_user(self.receptionist).action_discharge()
 
         self.bed_a.invalidate_recordset()

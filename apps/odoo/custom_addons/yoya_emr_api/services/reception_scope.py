@@ -673,14 +673,27 @@ def may_admissions_cancel_request(env):
     return may_admissions_desk(env) and _in_any(env, ADMISSIONS_CANCEL_REQUEST_GROUPS)
 
 
+# WHO MAY FINALIZE A DISCHARGE (Admissions Slice 4). MIRRORS hospital_admission's
+# DESK_FINAL_DISCHARGE_GROUPS, enforced again in _finalize_discharge() on every
+# channel (the backend Discharge button included). The doctor declares MEDICAL
+# readiness from the Doctor Desk; the ward nurse and the cashier never
+# discharge.
+ADMISSIONS_FINAL_DISCHARGE_GROUPS = (GROUP_RECEPTIONIST, GROUP_MANAGER, GROUP_SYSADMIN)
+
+
+def may_admissions_finalize_discharge(env):
+    return may_admissions_desk(env) and _in_any(env, ADMISSIONS_FINAL_DISCHARGE_GROUPS)
+
+
 def admissions_desk_capability_flags(env):
     """What the Admissions Desk may do. Every flag mirrors a server-side guard.
 
     SLICE 2 turned on admit, which assigns the bed and confirms the admission
     together (assign_bed therefore equals admit -- there is no separate "assign
-    without admitting" route). SLICE 3 adds transfer and cancel_request.
-    Discharge stays present and FALSE for every role, administrators
-    included, because no route exists behind it yet (Slice 4).
+    without admitting" route). SLICE 3 added transfer and cancel_request.
+    SLICE 4 turns on discharge: the ADMINISTRATIVE final discharge, for the
+    admissions clerk and oversight. (The doctor's medical readiness is a Doctor
+    Desk act and is reported there.)
 
     These say which ACTS the role may attempt. Whether ONE admission may be
     admitted, transferred or cancelled is its own `can_admit`, `can_transfer`
@@ -697,7 +710,7 @@ def admissions_desk_capability_flags(env):
         "assign_bed": admit,
         "transfer": may_admissions_transfer(env),
         "cancel_request": may_admissions_cancel_request(env),
-        "discharge": False,
+        "discharge": may_admissions_finalize_discharge(env),
     }
 
 

@@ -424,6 +424,7 @@ export default function DoctorPatientPanel({
             key={visit.appointment_id}
             appointmentId={visit.appointment_id}
             summary={detail.admission}
+            patientName={patient.name}
           />
         ) : null}
 

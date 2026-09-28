@@ -570,6 +570,154 @@ def serialize_cashier_visit_detail(env, appointment):
     }
 
 
+# ----------------------------------------------------------------------
+# THE INPATIENT SETTLEMENT LANE.
+#
+# Built from hospital.admission._cashier_facts(): plain dicts the model has
+# already restricted to identity, location, workflow state and money, with
+# every figure taken from _inpatient_financial_summary() -- the SAME
+# delivered-basis authority the Admissions discharge gate applies. Nothing
+# below computes a balance, and no generic billing-account total is read.
+# ----------------------------------------------------------------------
+DELIVERED_CATEGORY_LABELS = {
+    "bed_stay": "Bed / stay",
+    "medication": "Medication",
+    "laboratory": "Laboratory",
+    "radiology": "Radiology",
+    "procedure": "Procedure",
+    "consultation": "Consultation",
+    "other": "Other",
+}
+
+INPATIENT_COLLECTABLE_LANES = ("due", "part_paid")
+
+INPATIENT_NOT_COLLECTABLE = {
+    "refund_due": (
+        "refund_due",
+        "The patient has paid more than their share of the care delivered. "
+        "The refund is paid out through the Billing Account by Accounting.",
+    ),
+    "needs_review": (
+        "financial_review_required",
+        "The inpatient account's figures need review before any payment can be "
+        "taken against them.",
+    ),
+    "settled": (
+        "settled",
+        "Nothing is owed on this inpatient account.",
+    ),
+}
+
+
+def _inpatient_identity(facts):
+    admission = facts["admission"]
+    return {
+        "admission": {
+            "id": admission["id"],
+            "name": admission["name"],
+            "state": admission["state"],
+            "medical_discharge_ready": admission["medical_discharge_ready"],
+            "admission_date": datetime_value(admission["admission_date"]),
+            "discharge_date": datetime_value(admission["discharge_date"]),
+        },
+        "patient": dict(facts["patient"]),
+        "encounter": dict(facts["encounter"]),
+        "location": dict(facts["location"]),
+    }
+
+
+def serialize_cashier_inpatient_row(facts):
+    """One inpatient account in the queue. The figure a cashier scans for is
+    remaining_due (or refundable_balance in the refund lane)."""
+    summary = facts["summary"]
+    row = _inpatient_identity(facts)
+    row.update({
+        "lane": facts["lane"],
+        "source": facts["source"],
+        "financial_state": summary["financial_state"],
+        "currency": facts["currency"],
+        "remaining_due": float_value(summary["remaining_due"]),
+        "refundable_balance": float_value(summary["refundable_balance"]),
+        "settlement_paid": float_value(facts["settlement_paid"]),
+    })
+    return row
+
+
+def serialize_inpatient_collectability(env, facts):
+    lane = facts["lane"]
+    if lane in INPATIENT_COLLECTABLE_LANES:
+        if not may_record_payment(env):
+            return {
+                "collectable": False,
+                "max_amount": 0.0,
+                "reason": "Your role may view this account but not take payment.",
+                "reason_code": "payment_not_authorized",
+            }
+        return {
+            "collectable": True,
+            "max_amount": float_value(facts["summary"]["remaining_due"]),
+            "reason": None,
+            "reason_code": None,
+        }
+    code, reason = INPATIENT_NOT_COLLECTABLE[lane]
+    return {"collectable": False, "max_amount": 0.0, "reason": reason, "reason_code": code}
+
+
+def serialize_cashier_inpatient_detail(env, facts, review_messages):
+    """THE canonical inpatient settlement payload (detail AND payment result)."""
+    summary = facts["summary"]
+    payload = _inpatient_identity(facts)
+    payload.update({
+        "lane": facts["lane"],
+        "source": facts["source"],
+        "currency": facts["currency"],
+        "financial": {
+            "financial_state": summary["financial_state"],
+            "actual_delivered": float_value(summary["actual_delivered"]),
+            "payer_authorized": float_value(summary["payer_authorized"]),
+            "patient_responsibility": float_value(summary["patient_responsibility"]),
+            # Every patient payment held against this visit -- advances,
+            # prepayments and settlement payments alike, net of refunds.
+            "patient_funds": float_value(summary["prepayment_available"]),
+            # Of which: taken here, at settlement.
+            "settlement_paid": float_value(facts["settlement_paid"]),
+            "remaining_due": float_value(summary["remaining_due"]),
+            "refundable_balance": float_value(summary["refundable_balance"]),
+            # Bed-days started but not yet posted; settling posts them first.
+            "stay_unposted": float_value(summary["stay_unposted"]),
+            # Something ordered is not delivered yet. It is NOT in the actual
+            # and nothing is collected for it here.
+            "pending_delivery": bool(summary["pending_delivery"]),
+            "review_reasons": [
+                {"code": code, "message": review_messages.get(code, code)}
+                for code in summary["review_reasons"]
+            ],
+        },
+        "delivered_by_category": [
+            {
+                "key": key,
+                "label": DELIVERED_CATEGORY_LABELS.get(key, key),
+                "amount": float_value(amount),
+            }
+            for key, amount in summary["delivered_by_category"].items()
+        ],
+        "settlement_receipts": [
+            {
+                "id": receipt.id,
+                "name": receipt.name,
+                "amount": float_value(receipt.amount),
+                "payment_method": receipt.payment_method,
+                "payment_reference": receipt.payment_reference or None,
+                "received_at": datetime_value(receipt.received_at),
+            }
+            for receipt in facts["settlement_receipts"]
+        ],
+        "collectability": serialize_inpatient_collectability(env, facts),
+        "permitted_actions": cashier_permitted_actions(env),
+    })
+    return payload
+
+
 def serialize_cashier_payment_result(env, appointment, receipt):
     """The complete cashier-safe payment response.
 

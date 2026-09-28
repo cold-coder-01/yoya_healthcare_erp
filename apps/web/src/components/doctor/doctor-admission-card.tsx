@@ -11,18 +11,22 @@ import {
   cancelRequestPath,
   cancelRequestSignature,
   cleanReason,
+  dischargeRequestBody,
+  dischargeRequestPath,
+  dischargeRequestSignature,
   isResolved,
   requestSignature,
   tokenFor,
   type PendingAdmissionOperation,
 } from "@/lib/admissions-desk-actions";
-import { formatLengthOfStay } from "@/lib/admissions-desk-format";
+import { formatLengthOfStay, locationLabel } from "@/lib/admissions-desk-format";
 import { messageFromPayload } from "@/lib/api-error";
 import { formatHospitalDateTime } from "@/lib/clinical-format";
 import type {
   AdmissionCancelRequestResponse,
   ApiEnvelope,
   DoctorAdmissionRequestResponse,
+  DoctorDischargeRequestResponse,
   DoctorAdmissionSummary,
 } from "@/types/admissions-desk";
 
@@ -33,19 +37,25 @@ const STATUS_TONE: Record<DoctorAdmissionSummary["status"], string> = {
   requested: "border-amber-300 bg-amber-50 text-amber-900",
   admitted: "border-sky-300 bg-sky-50 text-sky-900",
   transferred: "border-sky-300 bg-sky-50 text-sky-900",
+  discharge_pending: "border-violet-300 bg-violet-50 text-violet-900",
   discharged: "border-slate-300 bg-slate-100 text-slate-700",
   cancelled: "border-slate-300 bg-slate-100 text-slate-600",
 };
 
 /**
- * ADMISSION on the Doctor Desk (Admissions Slices 2-3).
+ * ADMISSION on the Doctor Desk (Admissions Slices 2-4).
  *
  * The doctor REQUESTS an admission; the Admissions Desk chooses the bed and
  * admits. So this card offers "Request admission" -- never a ward, room or bed
  * -- and, while their own request is still a draft, "Cancel request" (Slice
  * 3), offered only on the server's `can_cancel_request`. A transferred patient
- * is shown at their CURRENT ward / room / bed. Transfer and discharge are not
- * here.
+ * is shown at their CURRENT ward / room / bed.
+ *
+ * SLICE 4: "Request discharge…" declares the inpatient MEDICALLY ready, offered
+ * only on the server's `can_request_discharge`. Write the summary, review
+ * (patient, admission, location, summary, warnings, revision), confirm with a
+ * pointer click. It frees no bed and shows no money: the Admissions Desk
+ * finalizes the discharge. Transfer is never here.
  *
  * Whether the request is offered is the SERVER's `can_request`; when it is
  * not, the server's reason is shown instead. The card keeps the summary the
@@ -60,9 +70,12 @@ export default function DoctorAdmissionCard({
   appointmentId,
   summary: initial,
   compact = false,
+  patientName = null,
 }: {
   appointmentId: number;
   summary: DoctorAdmissionSummary | undefined;
+  /** For the discharge review: the patient this visit is for. */
+  patientName?: string | null;
   /** One-line strip for the consultation workspace. */
   compact?: boolean;
 }) {
@@ -70,7 +83,10 @@ export default function DoctorAdmissionCard({
    *  replaced is still the one passed in; a visit reload supersedes it. */
   const [returned, setReturned] = useState<{ basis: DoctorAdmissionSummary | undefined; value: DoctorAdmissionSummary } | null>(null);
   const summary = returned && returned.basis === initial ? returned.value : initial;
-  const [step, setStep] = useState<"idle" | "write" | "confirm" | "cancel">("idle");
+  const [step, setStep] = useState<
+    "idle" | "write" | "confirm" | "cancel" | "discharge_write" | "discharge_confirm"
+  >("idle");
+  const [dischargeSummary, setDischargeSummary] = useState("");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -78,7 +94,7 @@ export default function DoctorAdmissionCard({
   const backRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    if (step === "confirm" || step === "cancel") backRef.current?.focus();
+    if (step === "confirm" || step === "cancel" || step === "discharge_confirm") backRef.current?.focus();
   }, [step]);
 
   if (!summary) return null;
@@ -133,6 +149,57 @@ export default function DoctorAdmissionCard({
       text: messageFromPayload(payload, "The admission request could not be sent. Nothing was changed."),
     });
     setStep("write");
+  }
+
+  const cleanedDischarge = cleanReason(dischargeSummary);
+
+  async function requestDischarge() {
+    if (busy || !admission || !cleanedDischarge || !summary?.can_request_discharge) return;
+    const signature = dischargeRequestSignature(admission.workflow_revision, cleanedDischarge);
+    const token = tokenFor(pendingRef.current, "medical_discharge", admission.id, signature, () => crypto.randomUUID());
+    pendingRef.current = { kind: "medical_discharge", targetId: admission.id, signature, token };
+
+    setBusy(true);
+    let status: number | null = null;
+    let payload: ApiEnvelope<DoctorDischargeRequestResponse> | null = null;
+    try {
+      const response = await fetch(dischargeRequestPath(appointmentId), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(dischargeRequestBody(admission.workflow_revision, cleanedDischarge, token)),
+        cache: "no-store",
+      });
+      status = response.status;
+      payload = (await response.json()) as ApiEnvelope<DoctorDischargeRequestResponse>;
+    } catch {
+      payload = null;
+    } finally {
+      setBusy(false);
+    }
+
+    if (!isResolved(status, payload !== null)) {
+      setNotice({ tone: "amber", text: UNKNOWN_OUTCOME_NOTICE });
+      return;
+    }
+    pendingRef.current = null;
+
+    if (payload && payload.success) {
+      setReturned({ basis: initial, value: payload.data.admission });
+      setStep("idle");
+      setDischargeSummary("");
+      setNotice({
+        tone: "green",
+        text: payload.data.operation.replayed
+          ? "The discharge request was already sent."
+          : "Discharge requested. The Admissions Desk will finalize it.",
+      });
+      return;
+    }
+    setNotice({
+      tone: "red",
+      text: messageFromPayload(payload, "The discharge request could not be sent. Nothing was changed."),
+    });
+    setStep("discharge_write");
   }
 
   async function cancelRequest() {
@@ -228,6 +295,18 @@ export default function DoctorAdmissionCard({
             Request admission…
           </button>
         ) : null}
+        {summary.can_request_discharge && step === "idle" ? (
+          <button
+            type="button"
+            onClick={() => {
+              setNotice(null);
+              setStep("discharge_write");
+            }}
+            className="h-7 shrink-0 rounded-md border border-violet-700 bg-white px-2.5 cl-meta font-bold text-violet-800 hover:bg-violet-50"
+          >
+            Request discharge…
+          </button>
+        ) : null}
         {summary.can_cancel_request && step === "idle" ? (
           <button
             type="button"
@@ -241,6 +320,93 @@ export default function DoctorAdmissionCard({
           </button>
         ) : null}
       </div>
+
+      {step === "discharge_write" && admission ? (
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={`discharge-summary-${appointmentId}`} className="cl-meta font-bold text-slate-700">
+            Discharge summary
+          </label>
+          <textarea
+            id={`discharge-summary-${appointmentId}`}
+            value={dischargeSummary}
+            maxLength={ADMISSION_REASON_MAX}
+            rows={3}
+            onChange={(event) => setDischargeSummary(event.target.value)}
+            className="w-full rounded-md border border-slate-300 px-2 py-1 cl-body text-slate-900"
+          />
+          <p className="cl-micro text-slate-500">
+            Declares the patient medically ready. The Admissions Desk releases the bed.
+          </p>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setStep("idle");
+                setNotice(null);
+              }}
+              className="h-7 rounded-md border border-slate-300 bg-white px-2.5 cl-meta font-bold text-slate-700 hover:bg-slate-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={!cleanedDischarge}
+              onClick={() => setStep("discharge_confirm")}
+              className="h-7 rounded-md bg-violet-700 px-2.5 cl-meta font-bold text-white hover:bg-violet-800 disabled:opacity-40"
+            >
+              Review discharge
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {step === "discharge_confirm" && admission && cleanedDischarge ? (
+        <div role="group" aria-label="Confirm discharge request" className="flex flex-col gap-1.5 rounded-md border border-violet-200 bg-violet-50/60 px-2 py-1.5">
+          <p className="cl-body text-slate-800">Declare this patient medically ready for discharge?</p>
+          <dl className="grid grid-cols-[110px_minmax(0,1fr)] gap-y-0.5 cl-meta">
+            <dt className="text-slate-500">Patient</dt>
+            <dd className="font-bold text-slate-900">{patientName ?? "—"}</dd>
+            <dt className="text-slate-500">Admission</dt>
+            <dd className="font-mono">{admission.reference}</dd>
+            <dt className="text-slate-500">Location</dt>
+            <dd className="font-mono">{locationLabel(admission.location)}</dd>
+            <dt className="text-slate-500">Summary</dt>
+            <dd className="whitespace-pre-wrap">{cleanedDischarge}</dd>
+            <dt className="text-slate-500">Revision</dt>
+            <dd className="font-mono">{admission.workflow_revision}</dd>
+          </dl>
+          {summary.discharge_warnings.length ? (
+            <ul className="list-disc pl-5 cl-meta text-amber-900">
+              {summary.discharge_warnings.map((warning) => (
+                <li key={warning.code}>{warning.message}</li>
+              ))}
+            </ul>
+          ) : null}
+          <div className="flex justify-end gap-2">
+            <button
+              ref={backRef}
+              type="button"
+              disabled={busy}
+              onClick={() => setStep("discharge_write")}
+              className="h-7 rounded-md border border-slate-300 bg-white px-2.5 cl-meta font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+            >
+              Go back
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={(event) => {
+                // Pointer only: a keyboard-activated click reports detail 0.
+                if (event.detail === 0) return;
+                void requestDischarge();
+              }}
+              className="h-7 rounded-md bg-violet-700 px-2.5 cl-meta font-bold text-white hover:bg-violet-800 disabled:opacity-40"
+            >
+              {busy ? "Requesting…" : "Request discharge"}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {step === "cancel" && admission ? (
         <div role="group" aria-label="Confirm cancelling the admission request" className="flex flex-col gap-1.5 rounded-md border border-red-200 bg-red-50/60 px-2 py-1.5">

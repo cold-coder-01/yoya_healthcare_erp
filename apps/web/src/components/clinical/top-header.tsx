@@ -2,6 +2,8 @@
 
 import { useRouter } from "next/navigation";
 
+import FullscreenToggle from "@/components/workstation/fullscreen-toggle";
+
 export default function TopHeader({
   title,
   subtitle,
@@ -29,13 +31,16 @@ export default function TopHeader({
           </h1>
           {subtitle ? <p className="mt-1 text-sm text-slate-500">{subtitle}</p> : null}
         </div>
-        <button
-          type="button"
-          onClick={logout}
-          className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
-        >
-          Logout
-        </button>
+        <div className="flex items-center gap-1">
+          <FullscreenToggle />
+          <button
+            type="button"
+            onClick={logout}
+            className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+          >
+            Logout
+          </button>
+        </div>
       </div>
     </header>
   );

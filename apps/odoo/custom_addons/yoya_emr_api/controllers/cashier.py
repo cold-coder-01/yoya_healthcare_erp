@@ -26,6 +26,14 @@ from odoo import http
 from odoo.exceptions import AccessError, UserError, ValidationError
 from odoo.http import request
 
+from odoo.addons.hospital_admission.models.admission_cashier import (
+    CASHIER_INPATIENT_DEFAULT_LANES,
+    CASHIER_INPATIENT_LANES,
+    CashierSettlementError,
+)
+from odoo.addons.hospital_admission.models.admission_financials import (
+    FINANCIAL_REVIEW_MESSAGES,
+)
 from odoo.addons.hospital_billing.models.charge_receipt import (
     PAYMENT_METHODS,
     REFERENCE_REQUIRED,
@@ -46,7 +54,10 @@ from ..services.api_response import (
 )
 from ..services.cashier_serializers import (
     serialize_cashier_active_service_row,
+    serialize_cashier_inpatient_detail,
+    serialize_cashier_inpatient_row,
     serialize_cashier_payment_result,
+    serialize_cashier_receipt,
     serialize_cashier_visit_detail,
     serialize_cashier_worklist_row,
 )
@@ -90,6 +101,35 @@ DEFAULT_CASHIER_STAGES = ("awaiting_cashier",)
 # stage to filter on -- that is the entire point of it being a second lane.
 LANE_INITIAL = "initial_clearance"
 LANE_ACTIVE_SERVICE = "active_service_clearance"
+
+# THE THIRD LANE: INPATIENT SETTLEMENT. Admission-driven, not appointment-driven,
+# and judged by the delivered-basis summary the discharge gate uses (see
+# hospital_admission.models.admission_cashier). It ignores the queue DATE on
+# purpose: a stay that began last week is settled today. The search term and
+# department filter still apply (department = the ward's department).
+LANE_INPATIENT = "inpatient_settlement"
+
+# Refusal codes of the settlement authority -> HTTP status. The message is the
+# model's fixed sentence.
+SETTLEMENT_STATUS = {
+    "inpatient_not_found": 404,
+    "inpatient_desk_not_authorized": 403,
+    "inpatient_financial_review_required": 409,
+    "inpatient_nothing_due": 409,
+    "inpatient_payment_exceeds_due": 400,
+    "inpatient_settlement_not_allocatable": 409,
+    "inpatient_invalid_amount": 400,
+    "inpatient_idempotency_key_required": 400,
+}
+
+# Figures the SERVER derives. A body carrying any of them is refused, not
+# silently ignored, so a client that believes it can steer the balance learns
+# otherwise immediately.
+INPATIENT_FORBIDDEN_BODY_KEYS = frozenset({
+    "admission_id", "patient_id", "remaining_due", "refundable_balance",
+    "patient_responsibility", "payer_authorized", "actual_delivered",
+    "financial_state", "lane", "settlement_paid", "patient_funds",
+})
 
 WORKLIST_LIMIT_DEFAULT = 100
 WORKLIST_LIMIT_MAX = 300
@@ -211,7 +251,7 @@ def _coerce_optional_text(body, field_name):
     return value.strip() or None
 
 
-def _coerce_payment_body():
+def _coerce_payment_body(extra_forbidden=frozenset()):
     body = read_json_body()
 
     amount = coerce_number("amount", body.get("amount"))
@@ -252,7 +292,10 @@ def _coerce_payment_body():
             400,
         )
 
-    forbidden = set(body) & {"billing_account_id", "charge_line_id", "charge_line_ids", "encounter_id"}
+    forbidden = set(body) & (
+        {"billing_account_id", "charge_line_id", "charge_line_ids", "encounter_id"}
+        | set(extra_forbidden)
+    )
     if forbidden:
         raise ApiError(
             "payment_validation_failed",
@@ -294,6 +337,35 @@ def _requested_lanes(raw):
             400,
         )
     return requested or DEFAULT_CASHIER_STAGES
+
+
+def _requested_inpatient_lanes(raw):
+    """Inpatient lane filter, validated against the allowlist. Unknown is 400."""
+    if not raw:
+        return CASHIER_INPATIENT_DEFAULT_LANES
+    requested = tuple(part.strip() for part in raw.split(",") if part.strip())
+    unknown = [lane for lane in requested if lane not in CASHIER_INPATIENT_LANES]
+    if unknown:
+        raise ApiError(
+            "invalid_inpatient_lane",
+            "Unknown inpatient lane(s): %s. Valid values: %s."
+            % (", ".join(sorted(unknown)), ", ".join(CASHIER_INPATIENT_LANES)),
+            400,
+        )
+    return requested or CASHIER_INPATIENT_DEFAULT_LANES
+
+
+def _settlement_api_error(error):
+    return ApiError(error.code, str(error), SETTLEMENT_STATUS.get(error.code, 400))
+
+
+def _find_inpatient(env, admission_id):
+    """The admission as the settlement authority sees it for THIS caller.
+    Hidden and missing are the same 404."""
+    try:
+        return env["hospital.admission"]._cashier_find(admission_id)
+    except CashierSettlementError as error:
+        raise _settlement_api_error(error) from None
 
 
 def _worklist_limit(raw):
@@ -464,6 +536,32 @@ class YoyaEmrCashierController(http.Controller):
                 counts[stage] += 1
         counts[LANE_ACTIVE_SERVICE] = len(active_selected)
 
+        # ------------------------------------------------------------------
+        # LANE 3: INPATIENT SETTLEMENT. Its own population (admissions, not
+        # the day's appointments), its own authority (the delivered-basis
+        # summary) and its own counters -- lanes 1 and 2 are untouched above.
+        inpatient_lanes = _requested_inpatient_lanes(params.get("inpatient_lane"))
+        inpatient_facts, inpatient_scan_truncated = env[
+            "hospital.admission"
+        ]._cashier_inpatient_census(
+            search=search, department_id=department_id, lanes=inpatient_lanes,
+        )
+        inpatient_facts.sort(
+            key=lambda facts: (
+                inpatient_lanes.index(facts["lane"]),
+                -facts["summary"]["remaining_due"],
+                facts["admission"]["id"],
+            )
+        )
+        inpatient_truncated = inpatient_scan_truncated or len(inpatient_facts) > limit
+        inpatient_rows = [
+            serialize_cashier_inpatient_row(facts) for facts in inpatient_facts[:limit]
+        ]
+        inpatient_lane_counts = {lane: 0 for lane in CASHIER_INPATIENT_LANES}
+        for facts in inpatient_facts:
+            inpatient_lane_counts[facts["lane"]] += 1
+        counts[LANE_INPATIENT] = len(inpatient_facts)
+
         lane_counts = {"collect": 0, "partial": 0, "blocked": 0, "cleared": 0}
         for row in rows:
             lane_counts[row["lane"]] = lane_counts.get(row["lane"], 0) + 1
@@ -481,11 +579,15 @@ class YoyaEmrCashierController(http.Controller):
                 "rows": rows,
                 LANE_INITIAL: rows,
                 LANE_ACTIVE_SERVICE: active_rows,
+                LANE_INPATIENT: inpatient_rows,
+                "inpatient_lanes": list(inpatient_lanes),
                 "counts": counts,
                 "lane_counts": lane_counts,
                 "active_service_lane_counts": active_lane_counts,
+                "inpatient_lane_counts": inpatient_lane_counts,
                 "truncated": truncated,
                 "active_service_truncated": active_truncated,
+                "inpatient_truncated": inpatient_truncated,
                 "capabilities": cashier_capability_flags(env),
             }
         )
@@ -589,5 +691,82 @@ class YoyaEmrCashierController(http.Controller):
                     env.uid,
                 )
                 raise PaymentResponseError(str(error)) from error
+
+        return response
+
+    # ------------------------------------------------------------------
+    # INPATIENT SETTLEMENT
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/cashier/admissions/<int:admission_id>",
+        type="http", auth="user", methods=["GET"], csrf=False,
+    )
+    @cashier_endpoint
+    def inpatient_detail(self, admission_id, **params):
+        """One inpatient account: identity, location, the delivered-basis
+        figures by category, settlement receipts and the collect verdict."""
+        env = request.env
+        _require_cashier_desk(env)
+        admission = _find_inpatient(env, admission_id)
+        return success_response(
+            serialize_cashier_inpatient_detail(
+                env, admission._cashier_detail(), FINANCIAL_REVIEW_MESSAGES
+            )
+        )
+
+    @http.route(
+        "/yoya-emr/api/v1/cashier/admissions/<int:admission_id>/payment",
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @cashier_endpoint
+    def record_inpatient_payment(self, admission_id, **kwargs):
+        """Settle (all or part of) the remaining delivered-basis balance.
+
+        Body: amount, payment_method, payment_reference, note, idempotency_key
+        -- exactly the visit payment's contract. The admission, visit, billing
+        account and every figure are derived server-side; a body naming any of
+        them is refused. More than the remaining balance is refused: a
+        settlement never turns into an advance.
+        """
+        env = request.env
+        if not may_record_payment(env):
+            raise ApiError(
+                "payment_not_authorized",
+                "Recording operational payment requires the Hospital Cashier, "
+                "Accountant, Hospital Manager or Hospital System Administrator role.",
+                403,
+            )
+        body = _coerce_payment_body(INPATIENT_FORBIDDEN_BODY_KEYS)
+        admission = _find_inpatient(env, admission_id)
+
+        # ONE atomic unit, as for the visit payment: the stay posting, the
+        # receipt and the serialized response commit together or not at all.
+        try:
+            with env.cr.savepoint():
+                receipt, replayed = admission._cashier_record_settlement(
+                    body["amount"],
+                    body["payment_method"],
+                    payment_reference=body["payment_reference"],
+                    note=body["note"],
+                    idempotency_key=body["intake_token"],
+                )
+                try:
+                    env.invalidate_all()
+                    payload = serialize_cashier_inpatient_detail(
+                        env, admission._cashier_detail(), FINANCIAL_REVIEW_MESSAGES
+                    )
+                    payload["receipt"] = serialize_cashier_receipt(receipt)
+                    payload["replayed"] = replayed
+                    response = success_response(payload)
+                except Exception as error:
+                    _logger.exception(
+                        "Cashier inpatient payment response failed for admission=%s "
+                        "uid=%s; rolling the payment back",
+                        admission_id,
+                        env.uid,
+                    )
+                    raise PaymentResponseError(str(error)) from error
+        except CashierSettlementError as error:
+            raise _settlement_api_error(error) from None
 
         return response

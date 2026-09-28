@@ -160,6 +160,119 @@ export type CashierActiveServiceRow = {
   requested_at: string | null;
 };
 
+/**
+ * INPATIENT SETTLEMENT (the third lane).
+ *
+ * Admission-driven, NOT appointment-driven, and NOT filtered by the queue
+ * date: a stay that began last week is settled today. Every figure is the
+ * server's delivered-basis summary -- the SAME one the Admissions discharge
+ * gate applies -- so paying here opens that gate with nothing pushed across.
+ */
+export type CashierInpatientLane =
+  | "due"
+  | "part_paid"
+  | "refund_due"
+  | "needs_review"
+  | "settled";
+
+/** Why the row is in the queue. Decided server-side. */
+export type CashierInpatientSource =
+  | "inpatient_settlement"
+  | "refund_due"
+  | "needs_review";
+
+export type CashierInpatientIdentity = {
+  admission: {
+    id: number;
+    name: string;
+    state: string;
+    medical_discharge_ready: boolean;
+    admission_date: string | null;
+    discharge_date: string | null;
+  };
+  patient: {
+    id: number;
+    name: string;
+    identification_code: string | null;
+  };
+  encounter: {
+    id: number;
+    name: string;
+    state: string;
+  };
+  location: {
+    ward: string | null;
+    ward_code: string | null;
+    room: string | null;
+    bed: string | null;
+    bed_code: string | null;
+  };
+};
+
+export type CashierInpatientRow = CashierInpatientIdentity & {
+  lane: CashierInpatientLane;
+  source: CashierInpatientSource;
+  financial_state: string;
+  currency: string | null;
+  remaining_due: number;
+  refundable_balance: number;
+  settlement_paid: number;
+};
+
+export type CashierInpatientCollectability = {
+  collectable: boolean;
+  /** The server's cap: a settlement never exceeds the remaining balance. */
+  max_amount: number;
+  reason: string | null;
+  reason_code:
+    | "refund_due"
+    | "financial_review_required"
+    | "settled"
+    | "payment_not_authorized"
+    | null;
+};
+
+export type CashierInpatientDetail = CashierInpatientIdentity & {
+  lane: CashierInpatientLane;
+  source: CashierInpatientSource;
+  currency: string | null;
+  financial: {
+    financial_state: string;
+    actual_delivered: number;
+    payer_authorized: number;
+    patient_responsibility: number;
+    /** Every patient payment held on the visit (advances included). */
+    patient_funds: number;
+    /** Of which: taken at this desk as settlement. */
+    settlement_paid: number;
+    remaining_due: number;
+    refundable_balance: number;
+    stay_unposted: number;
+    /** Something ordered is not delivered yet; it is in no figure here. */
+    pending_delivery: boolean;
+    review_reasons: { code: string; message: string }[];
+  };
+  delivered_by_category: { key: string; label: string; amount: number }[];
+  settlement_receipts: {
+    id: number;
+    name: string;
+    amount: number;
+    payment_method: string;
+    payment_reference: string | null;
+    received_at: string | null;
+  }[];
+  collectability: CashierInpatientCollectability;
+  permitted_actions: {
+    record_payment: boolean;
+    post_receipt_accounting: boolean;
+  };
+};
+
+export type CashierInpatientPaymentResult = CashierInpatientDetail & {
+  receipt: CashierReceipt;
+  replayed: boolean;
+};
+
 export type CashierCapabilities = {
   cashier_desk: boolean;
   record_payment: boolean;
@@ -190,11 +303,16 @@ export type CashierWorklist = {
   rows: CashierWorklistRow[];
   initial_clearance: CashierWorklistRow[];
   active_service_clearance: CashierActiveServiceRow[];
+  /** Third lane. Ignores `date`; see CashierInpatientLane. */
+  inpatient_settlement?: CashierInpatientRow[];
+  inpatient_lanes?: CashierInpatientLane[];
   counts: Record<string, number>;
   lane_counts: Record<string, number>;
   active_service_lane_counts: Record<string, number>;
+  inpatient_lane_counts?: Record<string, number>;
   truncated: boolean;
   active_service_truncated: boolean;
+  inpatient_truncated?: boolean;
   capabilities: CashierCapabilities;
 };
 

@@ -91,6 +91,11 @@ LANE_ORDER = (
     "needs_review",
     "awaiting_bed",
     "draft",
+    # Slice 4: medically ready, still in the bed, awaiting the administrative
+    # discharge -- and the cashier, where money is owed. Ahead of admitted and
+    # transferred so a patient waiting to go home is never lost among those
+    # staying.
+    "discharge_pending",
     "admitted",
     "transferred",
     "discharged",
@@ -101,6 +106,7 @@ LANE_LABELS = {
     "needs_review": "Needs review",
     "awaiting_bed": "Awaiting bed",
     "draft": "Draft",
+    "discharge_pending": "Ready for discharge",
     "admitted": "Admitted",
     "transferred": "Transferred",
     "discharged": "Discharged",
@@ -109,7 +115,9 @@ LANE_LABELS = {
 
 # The default queue: work still open on the ward. Discharged and cancelled are
 # history, reachable by asking for them; their counts are always reported.
-ACTIVE_LANES = ("needs_review", "awaiting_bed", "draft", "admitted", "transferred")
+ACTIVE_LANES = (
+    "needs_review", "awaiting_bed", "draft", "discharge_pending", "admitted", "transferred",
+)
 
 KNOWN_ADMISSION_STATES = ("draft", "admitted", "transferred", "discharged", "cancelled")
 
@@ -329,6 +337,8 @@ def classify(admission, encounter, closed_states):
         reasons = review_reasons(admission, encounter, closed_states)
         if reasons:
             return "needs_review", reasons
+        if admission.medical_discharge_ready:
+            return "discharge_pending", []
         return state, []
     if state == "draft":
         return ("draft" if admission.bed_id else "awaiting_bed"), []
@@ -451,11 +461,50 @@ ADMITTABLE_LANES = ("awaiting_bed", "draft")
 # Lanes a patient may be transferred from (Slice 3): in a bed and healthy. A
 # needs_review admission is reviewed first -- moving a patient whose bed
 # pointer already disagrees would move the disagreement.
-TRANSFERABLE_LANES = ("admitted", "transferred")
+TRANSFERABLE_LANES = ("admitted", "transferred", "discharge_pending")
 
 # Lanes a request may be cancelled from (Slice 3): the draft lanes only. After
 # admission a stay ends by discharge, never by un-requesting it.
 CANCELLABLE_LANES = ("awaiting_bed", "draft")
+
+# Slice 4: the lane a discharge can be finalized from.
+FINALIZABLE_LANES = ("discharge_pending",)
+
+# The discharge checks, as the MODEL names them. Fixed sentences only.
+def _checks(codes, messages):
+    return [{"code": code, "message": messages.get(code, code)} for code in codes]
+
+
+def serialize_discharge(admission, lane, may_finalize=False, financial=None):
+    """The discharge block (Slice 4): medical readiness, the model's blocking
+    checks and warnings, and whether the clerk may TRY to finalize.
+
+    can_finalize_discharge is an AFFORDANCE: the role, the lane, no blocking
+    check, and a financial state that is not needs_review. A `due` account
+    still offers the attempt -- the server refuses it with
+    admission_settlement_required and posts the stay to date, so the cashier
+    has every started bed-day to collect against. The model re-checks all of
+    it under its locks.
+    """
+    Admission = type(admission)
+    blocking, warnings = _safe(admission._discharge_checks, default=(["unavailable"], []))
+    financial = financial or {}
+    return {
+        "medical_ready": bool(admission.medical_discharge_ready),
+        "medical_ready_at": datetime_value(admission.medical_discharge_at),
+        "medical_ready_by": admission.medical_discharge_by_id.name if admission.medical_discharge_by_id else None,
+        "blocking": _checks(
+            [code for code in blocking if code != "not_medically_ready"],
+            Admission.DISCHARGE_BLOCKING_MESSAGES,
+        ),
+        "warnings": _checks(warnings, Admission.DISCHARGE_WARNING_MESSAGES),
+        "can_finalize_discharge": bool(
+            may_finalize
+            and lane in FINALIZABLE_LANES
+            and not blocking
+            and financial.get("financial_state") != "needs_review"
+        ),
+    }
 
 
 def _may_cancel_this(admission, lane, may_cancel):
@@ -467,7 +516,7 @@ def _may_cancel_this(admission, lane, may_cancel):
 
 def serialize_row(
     admission, lane, reasons, encounter, transfers=0, now=None,
-    may_admit=False, may_transfer=False, may_cancel=False,
+    may_admit=False, may_transfer=False, may_cancel=False, may_finalize=False,
 ):
     return {
         "id": admission.id,
@@ -480,6 +529,9 @@ def serialize_row(
         "can_admit": bool(may_admit and lane in ADMITTABLE_LANES),
         "can_transfer": bool(may_transfer and lane in TRANSFERABLE_LANES),
         "can_cancel_request": _may_cancel_this(admission, lane, may_cancel),
+        # Slice 4. Medical readiness is a fact the census shows; whether the
+        # discharge may be FINALIZED is decided on the detail, with its checks.
+        "medical_discharge_ready": bool(admission.medical_discharge_ready),
         "state_label": _selection_label(admission, "state"),
         "lane": lane,
         "lane_label": lane_label(lane),
@@ -589,7 +641,9 @@ def serialize_financial(admission):
     }
 
 
-def serialize_detail(admission, may_admit=False, may_transfer=False, may_cancel=False):
+def serialize_detail(
+    admission, may_admit=False, may_transfer=False, may_cancel=False, may_finalize=False,
+):
     """One admission, for a caller who can already read it."""
     env = admission.env
     [(record, lane, reasons, encounter)] = classify_batch(admission)
@@ -631,10 +685,12 @@ def serialize_detail(admission, may_admit=False, may_transfer=False, may_cancel=
             ),
         }
 
+    financial = serialize_financial(admission)
     return dict(
         serialize_row(
             admission, lane, reasons, encounter, transfers=len(transfers),
             may_admit=may_admit, may_transfer=may_transfer, may_cancel=may_cancel,
+            may_finalize=may_finalize,
         ),
         admission_reason=admission.admission_reason or None,
         diagnosis=diagnosis,
@@ -656,7 +712,11 @@ def serialize_detail(admission, may_admit=False, may_transfer=False, may_cancel=
             ),
         },
         clearance=serialize_clearance(encounter),
-        financial=serialize_financial(admission),
+        financial=financial,
+        discharge=(
+            serialize_discharge(admission, lane, may_finalize=may_finalize, financial=financial)
+            if admission.state in ADMISSION_ACTIVE_STATES else None
+        ),
     )
 
 
@@ -892,6 +952,10 @@ DOCTOR_ADMISSION_STATUS = {
     "admitted": ("admitted", "Inpatient - admitted"),
     # Slice 3: a moved patient is shown as moved, at their CURRENT location.
     "transferred": ("transferred", "Inpatient - transferred"),
+    # Slice 4 (resolved from the readiness fact, not the state -- see below).
+    "discharge_pending": (
+        "discharge_pending", "Medically ready - awaiting administrative discharge",
+    ),
     "discharged": ("discharged", "Discharged"),
     "cancelled": ("cancelled", "Admission request cancelled"),
 }
@@ -950,7 +1014,23 @@ def serialize_doctor_admission(appointment, now=None):
     can_request, block = _doctor_may_request(
         appointment, bool(admission and admission.state in open_states)
     )
-    status, label = DOCTOR_ADMISSION_STATUS.get(admission.state, ("none", "Not admitted")) if admission else ("none", "Not admitted")
+    status_key = admission.state if admission else None
+    if admission and admission.state in ADMISSION_ACTIVE_STATES and admission.medical_discharge_ready:
+        status_key = "discharge_pending"
+    status, label = DOCTOR_ADMISSION_STATUS.get(status_key, ("none", "Not admitted")) if admission else ("none", "Not admitted")
+
+    # Slice 4: the doctor may declare their inpatient medically ready.
+    # Affordance only; _desk_request_medical_discharge() decides again.
+    can_request_discharge = bool(
+        admission
+        and admission.state in ADMISSION_ACTIVE_STATES
+        and not admission.medical_discharge_ready
+        and _safe(admission._desk_may_request_medical_discharge, default=False)
+    )
+    warnings = []
+    if can_request_discharge:
+        _blocking, codes = _safe(admission._discharge_checks, default=([], []))
+        warnings = _checks(codes, type(admission).DISCHARGE_WARNING_MESSAGES)
 
     # Slice 3: the doctor may withdraw their OWN request while it is still a
     # draft. Affordance only; the model decides again under its lock.
@@ -964,6 +1044,8 @@ def serialize_doctor_admission(appointment, now=None):
         "status": status,
         "status_label": label,
         "can_cancel_request": can_cancel,
+        "can_request_discharge": can_request_discharge,
+        "discharge_warnings": warnings,
         "admission": (
             {
                 "id": admission.id,
@@ -979,6 +1061,8 @@ def serialize_doctor_admission(appointment, now=None):
                 ),
                 "location": serialize_location(admission),
                 "length_of_stay": length_of_stay(admission, now),
+                "medical_discharge_at": datetime_value(admission.medical_discharge_at),
+                "discharged_at": datetime_value(admission.discharge_date),
             }
             if admission else None
         ),
