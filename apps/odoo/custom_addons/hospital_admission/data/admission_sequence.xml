@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<odoo>
+<!-- noupdate="1" is LOAD-BEARING: without it every `-u hospital_admission` rewrites
+     this ir.sequence from XML, resetting number_next to 1 (a RESTART of the
+     PostgreSQL sequence) and reissuing ADM00001 to the next admission. That is what
+     gave three different admissions the reference ADM00001 in UAT. Same guard, same
+     reason, as hospital_billing/data/billing_sequence.xml. number_next below only
+     seeds a FRESH install; migrations/18.0.1.6.0 resynchronises existing databases. -->
+<odoo noupdate="1">
     <record id="sequence_hospital_admission" model="ir.sequence">
         <field name="name">Hospital Admission Sequence</field>
         <field name="code">hospital.admission.sequence</field>

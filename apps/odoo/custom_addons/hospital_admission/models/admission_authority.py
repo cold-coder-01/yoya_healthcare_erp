@@ -138,6 +138,10 @@ def has_admission_billing_capability():
 # the bed ownership checks all key on, so they are declared once.
 ADMISSION_ACTIVE_STATES = ("admitted", "transferred")
 
+# The ir.sequence that numbers admissions (data/admission_sequence.xml). The
+# ONE source of an admission reference; see hospital.admission.create().
+ADMISSION_SEQUENCE_CODE = "hospital.admission.sequence"
+
 # The stay is over. History, not an occupancy claim.
 ADMISSION_TERMINAL_STATES = ("discharged", "cancelled")
 
@@ -284,6 +288,14 @@ ADMISSION_ERROR_MESSAGES = {
     "admission_identity_write_refused": (
         "An admission's patient, encounter and company are set when it is prepared "
         "and cannot be changed afterwards. Nothing was changed."
+    ),
+    "admission_reference_write_refused": (
+        "An admission's reference is assigned by the admission sequence when it is "
+        "created and cannot be chosen or changed. Nothing was changed."
+    ),
+    "admission_sequence_missing": (
+        "The admission reference sequence is not configured, so no reference can "
+        "be assigned. Nothing was created."
     ),
     "admission_attribution_write_refused": (
         "An admission's physician, appointment and diagnosis are settled once the "

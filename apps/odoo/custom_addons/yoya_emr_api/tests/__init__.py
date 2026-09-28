@@ -32,3 +32,4 @@ from . import test_admissions_desk_transfer_api
 from . import test_admissions_desk_discharge_api
 from . import test_admissions_nurse_roster_scope
 from . import test_cashier_inpatient_settlement_api
+from . import test_admission_reference_api

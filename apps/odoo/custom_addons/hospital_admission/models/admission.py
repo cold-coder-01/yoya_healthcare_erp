@@ -18,6 +18,7 @@ from .admission_authority import (
     ADMISSION_MEDICAL_DISCHARGE_FIELDS,
     ADMISSION_MONEY_READ,
     ADMISSION_RATE_SNAPSHOT_FIELDS,
+    ADMISSION_SEQUENCE_CODE,
     DESK_FINAL_DISCHARGE_GROUPS,
     DESK_MEDICAL_DISCHARGE_OVERSIGHT_GROUPS,
     ADMISSION_TIMELINE_FIELDS,
@@ -797,10 +798,14 @@ class HospitalAdmission(models.Model):
                 # A stay rate is recorded when the patient enters a bed, never
                 # supplied by whoever creates the row.
                 raise AdmissionWorkflowError("admission_rate_snapshot_write_refused")
-            if vals.get("name", "New") == "New":
-                vals["name"] = (
-                    self.env["ir.sequence"].next_by_code("hospital.admission.sequence") or "New"
-                )
+            # THE REFERENCE IS THE SEQUENCE'S, ON EVERY CHANNEL. The Doctor
+            # request, the backend form and any RPC caller all arrive here, and
+            # none of them may name the admission: a caller-chosen reference is
+            # how two patients end up sharing one. "New" (the form's
+            # placeholder) or nothing is accepted; anything else is refused.
+            if vals.get("name") not in (None, False, "", "New"):
+                raise AdmissionWorkflowError("admission_reference_write_refused")
+            vals["name"] = self._next_admission_reference()
         records = super().create(vals_list)
         for rec in records:
             self._audit(
@@ -811,6 +816,24 @@ class HospitalAdmission(models.Model):
                 description=f"Admission created: {rec.name}",
             )
         return records
+
+    @api.model
+    def _next_admission_reference(self):
+        """The next ADMnnnnn, from ir.sequence and nothing else.
+
+        A 'standard' sequence is a PostgreSQL sequence: nextval() is atomic
+        across concurrent transactions and is never handed out twice, even when
+        the transaction that drew it rolls back (the number is simply skipped).
+        No max()+1 anywhere. sudo(): drawing a reference is not a permission
+        the calling clerk or doctor needs on ir.sequence.
+
+        FAIL CLOSED. The old fallback wrote the literal "New" when no sequence
+        answered, which is a duplicate reference by construction.
+        """
+        reference = self.env["ir.sequence"].sudo().next_by_code(ADMISSION_SEQUENCE_CODE)
+        if not reference:
+            raise AdmissionWorkflowError("admission_sequence_missing")
+        return reference
 
     def write(self, vals):
         self._assert_authoritative_write(vals)
@@ -863,6 +886,10 @@ class HospitalAdmission(models.Model):
                     raise AdmissionWorkflowError("admission_state_write_refused")
 
         for rec in self:
+            # ── reference: assigned once by the sequence, in every tier ──
+            if "name" in vals and vals["name"] != rec.name:
+                raise AdmissionWorkflowError("admission_reference_write_refused")
+
             # ── state ──────────────────────────────────────────────
             if (
                 "state" in vals
