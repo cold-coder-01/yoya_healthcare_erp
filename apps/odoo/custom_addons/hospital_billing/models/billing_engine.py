@@ -268,6 +268,74 @@ class HospitalBillingEngine(models.AbstractModel):
         return charge
 
     @api.model
+    @api.model
+    def _inpatient_credit_clearance(self, encounter, charges, lock=False):
+        """HOOK: can an ACTIVE INPATIENT's held patient funds cover DELIVERING
+        these charges, although no cash was allocated to them?
+
+        This module has no view of an admission, so the base answer is None --
+        "no opinion" -- and every caller then keeps the ordinary per-service
+        answer from check_financial_clearance(). hospital_admission overrides it
+        with the inpatient settlement authority: one source of truth for patient
+        funds, delivered care and unapplied credit. When it answers it returns
+
+            {"covered": bool, "required": float, "available": float,
+             "shortfall": float}
+
+        where `required` is the value about to be DELIVERED on `charges` (their
+        requested-but-undelivered value) and `available` the unapplied credit.
+        It never writes: no receipt, no allocation, no advance deduction. The
+        delivery itself, through the ordinary billing path, is what consumes
+        the credit, economically, in the settlement. `lock` asks the authority
+        to lock what it read, for a caller about to deliver.
+        """
+        return None
+
+    @api.model
+    def check_service_clearance(self, encounter, charges=None, persist=False, lock=False):
+        """THE clearance question for DELIVERING a service, asked by every
+        department (Pharmacy, Laboratory, Radiology) and by the encounter-wide
+        reception / cashier view.
+
+        1. The ordinary answer, check_financial_clearance(): cash allocated to
+           these charges, payer credit, emergency bypass. Unchanged for every
+           outpatient and every sponsored visit.
+        2. Only when that answer is "self-pay prepayment required", ask
+           _inpatient_credit_clearance() whether an ACTIVE INPATIENT's held
+           funds cover delivering the pending charges. It decides from its own
+           authority; nothing is computed here and nothing is written -- no
+           receipt, no allocation, and financial_clearance_state is not
+           persisted for a credit-covered answer.
+
+        `lock` is for the caller about to COMMIT the service: the inpatient
+        authority then locks what it read, so two departments cannot both spend
+        the same remaining credit.
+
+        Returns the clearance dict with `cover`: "service" / "inpatient_credit"
+        / "shortfall" / None, and `inpatient_shortfall` when the credit falls
+        short.
+        """
+        result = self.check_financial_clearance(encounter, persist=persist, charges=charges)
+        if result["cleared"]:
+            return dict(result, cover="service")
+        if result.get("state") != "pending" or result.get("amount_due", 0.0) <= AMOUNT_TOLERANCE:
+            return dict(result, cover=None)
+        if charges is None:
+            account = encounter.sudo().billing_account_id
+            charges = account.charge_line_ids if account else self.env["hospital.charge.line"]
+        cover = self._inpatient_credit_clearance(encounter, charges, lock=lock)
+        if cover is None:
+            return dict(result, cover=None)
+        if cover["covered"]:
+            return {
+                "cleared": True,
+                "state": "inpatient_credit",
+                "amount_due": 0.0,
+                "reason": "Covered by the patient's inpatient advance / credit.",
+                "cover": "inpatient_credit",
+            }
+        return dict(result, cover="shortfall", inpatient_shortfall=cover["shortfall"])
+
     def check_financial_clearance(self, encounter, service=None, persist=False, charges=None):
         """Is this encounter cleared for service DELIVERY to commence?
 

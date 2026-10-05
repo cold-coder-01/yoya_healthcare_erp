@@ -1,6 +1,10 @@
 import type { ReactNode } from "react";
 
 import FrontDeskUserMenu from "@/components/front-desk/front-desk-user-menu";
+import FullscreenToggle from "@/components/workstation/fullscreen-toggle";
+import WorkstationNav from "@/components/navigation/workstation-nav";
+import { FRONT_DESK_ROUTE, frontOfHouseNavItems } from "@/lib/reception-roles";
+import { hospitalBrand } from "@/lib/branding";
 import { loadReceptionSession } from "@/lib/reception-session.server";
 
 /**
@@ -37,19 +41,27 @@ export default async function FrontDeskLayout({ children }: { children: ReactNod
 
   // Falls back to static text when the lookup fails; loadReceptionSession never
   // throws, so the shell cannot take the workstation down.
-  const brand = session?.companyName ?? "YOYA General Hospital";
+  const brand = hospitalBrand(session?.companyName);
   const roleLabel = session?.roles?.front_desk_nurse
     ? "Front Desk Nurse"
     : "Front Desk";
+  // Front Desk | Admissions for the front-of-house roles; nothing for anyone else.
+  const navItems = frontOfHouseNavItems(session?.roles ?? null, FRONT_DESK_ROUTE);
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-100 text-slate-950">
-      {/* ~45px: brand left, signed-in user right. Nothing else earns the space. */}
+      {/* ~45px: brand and workstation tabs left, signed-in user right. */}
       <header className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-3">
-        <span className="truncate text-sm font-bold uppercase tracking-wide text-emerald-800">
-          {brand}
-        </span>
-        <FrontDeskUserMenu userName={session?.userName ?? null} roleLabel={roleLabel} />
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="truncate text-sm font-bold uppercase tracking-wide text-emerald-800">
+            {brand}
+          </span>
+          <WorkstationNav items={navItems} accent="emerald" />
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <FullscreenToggle />
+          <FrontDeskUserMenu userName={session?.userName ?? null} roleLabel={roleLabel} />
+        </div>
       </header>
 
       {/* 12px gutters, no max-width: every pixel is operational workspace. */}

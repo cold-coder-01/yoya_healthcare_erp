@@ -255,6 +255,10 @@ def dispense_facts(dispense):
         "unified": bool(billing.get("unified")),
         "billing_context": bool(billing.get("billing_context")),
         "billing_blocked": bool(billing.get("billing_blocked")),
+        # HOW the pending increment is covered, as a word -- never a figure:
+        # "service", "inpatient_credit" (the admission's held funds) or
+        # "shortfall" (an inpatient whose credit does not cover it).
+        "financial_cover": billing.get("financial_cover"),
         "store_configured": bool(stock.get("store_configured")),
         "lines": lines,
     }
@@ -525,6 +529,8 @@ def serialize_queue_row(dispense, classified=None, may_mutate=False):
         "prescriber": _safe(lambda: serialize_prescriber(dispense)),
         # A BOOLEAN VERDICT. Never an amount, never a payer, never a message.
         "billing_blocked": bool(facts and facts["billing_blocked"]),
+        # The verdict's source, amount-free (see dispense_facts).
+        "financial_cover": (facts or {}).get("financial_cover"),
         "stock_short": any(i["stock_sufficient"] is False for i in lines),
         "line_count": len(lines),
         "lines_complete": sum(1 for i in lines if not _gt(i["remaining"], 0)),

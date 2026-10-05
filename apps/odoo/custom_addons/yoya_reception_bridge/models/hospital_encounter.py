@@ -124,6 +124,9 @@ class HospitalEncounter(models.Model):
             # drifting silently but means an addition has to be made twice.
             ("sponsor_cleared", "Sponsor Cleared"),
             ("emergency_bypass", "Emergency Bypass"),
+            # Advance slice: an active inpatient's pending services covered by
+            # the admission's held advance / credit (hospital_admission).
+            ("inpatient_credit", "Covered by Inpatient Credit"),
         ],
         string="Live Clearance",
         compute="_compute_reception_clearance",
@@ -158,7 +161,11 @@ class HospitalEncounter(models.Model):
         self.ensure_one()
         engine = engine or self.env["hospital.billing.engine"]
 
-        result = engine.check_financial_clearance(self)
+        # The shared service rule: an ACTIVE INPATIENT's services covered by
+        # their held advance / credit are not "money standing between the
+        # patient and care", so they never surface in the Cashier's Service
+        # Payments lane asking to be paid a second time.
+        result = engine.check_service_clearance(self)
 
         account = self.billing_account_id
         pre_service = account.charge_line_ids.filtered(

@@ -211,3 +211,19 @@ test("every path is a BFF path", () => {
   assert.equal(worklistPath({ q: "   " }), "/api/pharmacy/worklist");
   assert.equal(dispensePath(7), "/api/pharmacy/dispenses/7");
 });
+
+test("an inpatient covered by the advance reads as covered; a shortfall says pay the difference", () => {
+  const covered = clearanceNotice(row({ lane: "ready_to_validate", financial_cover: "inpatient_credit" }));
+  assert.equal(covered, "Financially covered by the patient's inpatient advance.");
+  const short = clearanceNotice(row({ lane: "awaiting_clearance", billing_blocked: true, financial_cover: "shortfall" }));
+  assert.ok(short);
+  assert.match(short, /^Additional payment required\./);
+  for (const text of [covered, short]) {
+    assert.doesNotMatch(text as string, /\d/);  // amount-free, as ever
+  }
+  // The outpatient sentence is unchanged.
+  assert.match(
+    clearanceNotice(row({ lane: "awaiting_clearance", billing_blocked: true })) as string,
+    /^Awaiting financial clearance\./,
+  );
+});

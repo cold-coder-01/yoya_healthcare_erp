@@ -1,3 +1,4 @@
+import type { DoctorAdmissionSummary } from "./admissions-desk";
 /**
  * THE Doctor Desk wire contract.
  *
@@ -197,6 +198,13 @@ export type DoctorVisitDetail = {
   };
   medical_alerts: DoctorMedicalAlert[];
   encounter: DoctorEncounter | null;
+  /**
+   * Admissions Slice 2: whether an inpatient stay was requested for this
+   * visit, whether the patient is admitted and where, and whether this doctor
+   * may request one. Optional so a Doctor Desk talking to an Odoo that
+   * predates the field keeps rendering.
+   */
+  admission?: DoctorAdmissionSummary;
   triage: {
     evaluation_id: number | null;
     status: DoctorTriageStatus;

@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="0">
+
+        <!--
+            NURSE SCOPE FOR INPATIENT ADMISSIONS (Admissions Slice 0, PART 15).
+
+            WHY THIS RULE IS HERE AND NOT IN hospital_admission
+            ==================================================
+            Scoping a nurse to the wards they actually work needs a
+            user-to-department roster. The only one in this system is
+            res.users.yoya_permitted_department_ids, which THIS module
+            contributes — hospital_management links a doctor to a department
+            and names a single manager per department, and neither is a roster.
+
+            hospital_admission cannot reach it. It cannot depend on this module
+            either, because this module already depends on it: the chain runs
+            yoya_clinical_bridge -> hospital_inventory -> hospital_procedure ->
+            hospital_admission. Adding the reverse edge is a dependency cycle
+            and the registry refuses to load.
+
+            So the admission rules split along the dependency direction:
+            hospital_admission/security/admission_security.xml carries manager,
+            receptionist, accountant and doctor, which need only its own
+            fields; this file carries the nurse, who needs the roster. That
+            split is named in both files so neither can be read alone and
+            misunderstood.
+
+            It is the same reason, and the same shape, as
+            rule_patient_evaluation_nurse in
+            yoya_clinical_bridge_security.xml.
+
+            WHY hospital_admission IS NAMED IN THE MANIFEST
+            ==============================================
+            It was already reachable transitively, but this file references
+            hospital_admission.model_hospital_admission by external id, so the
+            load order has to be one this module ASKS for rather than one it
+            inherits from another module's manifest. That is the same reasoning
+            the manifest already records for hospital_radiology and
+            hospital_pharmacy.
+
+            WHAT THE SCOPE IS
+            =================
+            A ward belongs to a department (hospital.ward.department_id). A
+            nurse sees an admission whose ward is in one of their permitted
+            departments.
+
+            A nurse with an EMPTY roster sees nothing, which is the same
+            deliberate default as the evaluation rule: an unrostered nurse is
+            not a nurse of every ward in the hospital. It also means a ward
+            with no department is invisible to every nurse — ward.department_id
+            is optional, and a facility that wants nurse access has to say which
+            department the ward belongs to. That is a configuration
+            requirement, recorded in the Slice 0 report's UAT steps, not a
+            silent failure.
+
+            READ, WRITE AND CREATE ARE SCOPED; UNLINK IS NOT GRANTED. A rule's
+            perm_* flags say which operations it CONSTRAINS, not which it
+            grants — grants live in the ACL. perm_create=True means Odoo checks
+            the roster domain against the row a nurse creates: admitting into
+            their own ward is within scope; admitting into somebody else's is
+            refused. Nurses hold no unlink ACL on this model.
+        -->
+
+        <record id="rule_hospital_admission_nurse" model="ir.rule">
+            <field name="name">Admission: my wards (nurse)</field>
+            <field name="model_id" ref="hospital_admission.model_hospital_admission"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_nurse'))]"/>
+            <field name="domain_force">
+                [('ward_id.department_id', 'in', user.yoya_permitted_department_ids.ids)]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_hospital_admission_transfer_nurse" model="ir.rule">
+            <field name="name">Admission Transfer: my wards (nurse)</field>
+            <field name="model_id" ref="hospital_admission.model_hospital_admission_transfer"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_nurse'))]"/>
+            <!--
+                Movement history follows the stay, expressed as a domain on
+                admission_id rather than a copy of the predicate above, so the
+                two cannot drift apart.
+            -->
+            <field name="domain_force">
+                [('admission_id', 'any',
+                    [('ward_id.department_id', 'in', user.yoya_permitted_department_ids.ids)])
+                ]
+            </field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <!--
+            THE CARVE-OUT THAT MUST TRAVEL WITH THE RESTRICTION.
+
+            Hospital Manager, Hospital System Administrator and Hospital Front
+            Desk Nurse all IMPLY Hospital Nurse, so the two rules above apply to
+            them. A group rule can only be widened by another group rule the
+            user also matches, and Odoo ORs whatever rules exist AT THE TIME:
+            if this file is installed and the manager rule in
+            hospital_admission/security/admission_security.xml is not, a
+            manager's whole view of the hospital collapses to the wards on their
+            (usually empty) nurse roster.
+
+            That happened in UAT. C:\custom_addons received the Slice 0 copy of
+            this module but kept the pre-Slice-0 hospital_admission, so upgrading
+            installed these nurse rules with nothing to OR them against. The
+            Administrator (all nine hospital groups, empty roster) saw zero
+            admissions and an Access Error on ADM00001 by id, while holding
+            every ACL right on the model.
+
+            So the full-access rule for the oversight roles is declared HERE
+            as well, in the same file as the restriction it neutralises, and
+            the two always install, upgrade and uninstall together. It
+            deliberately duplicates the manager rule in hospital_admission:
+            each module is then safe on its own, and while both exist the OR
+            makes the duplicate a no-op. Front Desk Nurse is NOT carved out —
+            their inpatient scope is meant to be the nurse roster.
+
+            test_admission_rule_atomicity (hospital_admission) enforces the
+            general form: every module that ships a restrictive rule on these
+            models must also ship the carve-out for manager and system
+            administrator.
+        -->
+        <record id="rule_hospital_admission_oversight_bridge" model="ir.rule">
+            <field name="name">Admission: all wards (manager / system administrator, nurse-rule carve-out)</field>
+            <field name="model_id" ref="hospital_admission.model_hospital_admission"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_manager')),
+                                        (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <record id="rule_hospital_admission_transfer_oversight_bridge" model="ir.rule">
+            <field name="name">Admission Transfer: all (manager / system administrator, nurse-rule carve-out)</field>
+            <field name="model_id" ref="hospital_admission.model_hospital_admission_transfer"/>
+            <field name="groups" eval="[(4, ref('hospital_management.group_hospital_manager')),
+                                        (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+    </data>
+</odoo>

@@ -117,6 +117,9 @@ class HospitalRadiologyRequestBilling(models.Model):
     receipt_count = fields.Integer(compute="_compute_receipts", compute_sudo=True)
     billing_blocked = fields.Boolean(compute="_compute_billing_blocked", compute_sudo=True)
     billing_clearance_message = fields.Char(compute="_compute_billing_blocked", compute_sudo=True)
+    # HOW the pending service is covered, as a word (never a figure):
+    # "service", "inpatient_credit", "shortfall" or empty.
+    billing_financial_cover = fields.Char(compute="_compute_billing_blocked", compute_sudo=True)
 
     def _charge_domain(self):
         self.ensure_one()
@@ -142,10 +145,12 @@ class HospitalRadiologyRequestBilling(models.Model):
             if request.state not in BILLING_BLOCKED_STATES or not request.encounter_id:
                 request.billing_blocked = False
                 request.billing_clearance_message = False
+                request.billing_financial_cover = False
                 continue
-            result = engine.check_financial_clearance(request.encounter_id, charges=request.charge_line_ids)
+            result = engine.check_service_clearance(request.encounter_id, charges=request.charge_line_ids)
             request.billing_blocked = not result["cleared"]
             request.billing_clearance_message = result["reason"]
+            request.billing_financial_cover = result.get("cover") or False
 
     def company_id_for_billing(self):
         self.ensure_one()
@@ -238,8 +243,11 @@ class HospitalRadiologyRequestBilling(models.Model):
     def _assert_financially_cleared_for_service(self, persist=False):
         self.ensure_one()
         self._assert_all_lines_charged()
-        clearance = self.env["hospital.billing.engine"].sudo().check_financial_clearance(
-            self.encounter_id, persist=persist, charges=self.charge_line_ids
+        # Decided at the moment the scan starts (Mark In Progress), with the
+        # inpatient authority LOCKING what it read: two departments cannot
+        # both spend the same remaining inpatient credit.
+        clearance = self.env["hospital.billing.engine"].sudo().check_service_clearance(
+            self.encounter_id, charges=self.charge_line_ids, persist=persist, lock=True
         )
         if not clearance["cleared"]:
             raise self._clearance_error(clearance)

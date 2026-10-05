@@ -47,13 +47,15 @@
                         name="action_open_transfer_wizard"
                         string="Transfer Patient"
                         type="object"
+                        groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"
                         invisible="state not in ('admitted', 'transferred')"/>
                     <button
                         name="action_discharge"
                         string="Discharge"
                         type="object"
                         class="btn-primary"
-                        invisible="state not in ('admitted', 'transferred')"/>
+                        groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"
+                        invisible="state not in ('admitted', 'transferred') or not medical_discharge_ready"/>
                     <button
                         name="action_cancel"
                         string="Cancel"
@@ -71,7 +73,9 @@
                         type="object"
                         class="btn-primary"
                         groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"
-                        invisible="state != 'discharged' or bill_id != False"/>
+                        invisible="state != 'discharged' or bill_id != False or encounter_id != False"/>
+                    <field name="medical_discharge_ready" invisible="1"/>
+                    <field name="encounter_id" invisible="1"/>
                     <field name="state" widget="statusbar" statusbar_visible="draft,admitted,transferred,discharged"/>
                 </header>
                 <sheet>
@@ -151,7 +155,8 @@
                         <page string="Discharge Summary" name="discharge_summary_tab">
                             <field name="discharge_summary"/>
                         </page>
-                        <page string="Billing" name="billing">
+                        <page string="Billing" name="billing"
+                              groups="hospital_billing.group_hospital_cashier,hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator">
                             <group string="Billing Preview">
                                 <group>
                                     <field name="stay_days" readonly="1"/>

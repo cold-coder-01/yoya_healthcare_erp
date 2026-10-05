@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Admissions Slice 4: the billing service procedures are charged under on the
+    unified charge engine. Each charge carries its OWN unit price (the
+    procedure type's price); this record only classifies, so a payer's benefit
+    rule can cover procedures. Delivery basis: charged when performed, never
+    demanded in advance. noupdate: an administrator's edits survive upgrades.
+-->
+<odoo noupdate="1">
+    <record id="billing_service_clinical_procedure" model="hospital.billing.service">
+        <field name="name">Clinical procedure</field>
+        <field name="code">CLINICAL-PROCEDURE</field>
+        <field name="service_type">procedure</field>
+        <field name="default_price">0.0</field>
+        <field name="prepayment_required" eval="False"/>
+        <field name="tax_treatment">exempt</field>
+    </record>
+</odoo>

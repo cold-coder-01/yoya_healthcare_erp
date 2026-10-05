@@ -120,6 +120,12 @@ export type RadQueueRow = {
   created_at: string | null;
   /** A boolean verdict from hospital_billing. Never an amount. */
   billing_blocked: boolean;
+  /**
+   * HOW the pending service is financially covered, as a word: "service",
+   * "inpatient_credit" (an active inpatient's held advance), "shortfall" or
+   * null. Never a figure.
+   */
+  financial_cover?: "service" | "inpatient_credit" | "shortfall" | null;
   active: boolean;
   patient: RadPatientIdentity | null;
   ordering_physician: Many2OneValue;

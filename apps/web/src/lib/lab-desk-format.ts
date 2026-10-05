@@ -138,11 +138,19 @@ export function isTerminalStatus(status: string | null | undefined) {
  * Returns null when there is nothing operational to say, so the caller renders
  * no banner rather than an empty one.
  */
-export function clearanceNotice(status: string | null | undefined): string | null {
+export function clearanceNotice(
+  status: string | null | undefined,
+  cover?: string | null,
+): string | null {
   if (status === "awaiting_clearance") {
+    // An active inpatient whose held advance falls short of these tests.
+    if (cover === "shortfall") return "Additional payment required before this service can proceed.";
     return "Awaiting financial clearance. The patient settles this at the cashier before the sample can be drawn.";
   }
   if (status === "ready_for_collection") {
+    if (cover === "inpatient_credit") {
+      return "Ready for collection. Financially covered by the patient's inpatient advance.";
+    }
     return "Ready for collection.";
   }
   return null;

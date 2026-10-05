@@ -130,6 +130,9 @@ class HospitalLaboratoryRequestBilling(models.Model):
     )
     receipt_count = fields.Integer(compute="_compute_receipts", compute_sudo=True)
     billing_blocked = fields.Boolean(compute="_compute_billing_blocked", compute_sudo=True)
+    # HOW the pending tests are covered, as a word (never a figure):
+    # "service", "inpatient_credit", "shortfall" or empty.
+    billing_financial_cover = fields.Char(compute="_compute_billing_blocked", compute_sudo=True)
     billing_clearance_message = fields.Char(
         compute="_compute_billing_blocked", compute_sudo=True
     )
@@ -173,12 +176,14 @@ class HospitalLaboratoryRequestBilling(models.Model):
             if request.state != "requested" or not request.encounter_id:
                 request.billing_blocked = False
                 request.billing_clearance_message = False
+                request.billing_financial_cover = False
                 continue
-            result = engine.check_financial_clearance(
+            result = engine.check_service_clearance(
                 request.encounter_id, charges=request.charge_line_ids
             )
             request.billing_blocked = not result["cleared"]
             request.billing_clearance_message = result["reason"]
+            request.billing_financial_cover = result.get("cover") or False
 
     # ------------------------------------------------------------------
     # Cross-patient integrity (encounter)
@@ -451,8 +456,10 @@ class HospitalLaboratoryRequestBilling(models.Model):
             # Every ordered test must already be charged. We do NOT self-heal.
             request._assert_all_lines_charged()
             charges = request.charge_line_ids
-            clearance = engine.check_financial_clearance(
-                request.encounter_id, persist=True, charges=charges
+            # Decided at collection (work commences), with the inpatient
+            # authority locking what it read -- see check_service_clearance.
+            clearance = engine.check_service_clearance(
+                request.encounter_id, charges=charges, persist=True, lock=True
             )
             if not clearance["cleared"]:
                 raise request._clearance_error(clearance)

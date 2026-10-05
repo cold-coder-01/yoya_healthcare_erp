@@ -1,5 +1,8 @@
 import type {
   CashierCollectability,
+  CashierInpatientIdentity,
+  CashierInpatientLane,
+  CashierInpatientRow,
   CashierLane,
   CashierServiceCategory,
   ResponsibilityMode,
@@ -38,6 +41,7 @@ const STATE_LABELS: Record<string, string> = {
   credit_authorized: "Credit authorized",
   sponsor_cleared: "Sponsor cleared",
   emergency_bypass: "Emergency bypass",
+  inpatient_credit: "Covered by inpatient advance",
   awaiting_cashier: "Awaiting cashier",
   ready_doctor: "Ready for doctor",
   // Appointment workflow states, for the active-service lane. A visit sits in
@@ -146,6 +150,93 @@ export function serviceCategorySummary(
     .map((category) => category.label?.trim())
     .filter((label): label is string => Boolean(label));
   return labels.length ? labels.join(" · ") : null;
+}
+
+// ----------------------------------------------------------------------
+// INPATIENT SETTLEMENT
+// ----------------------------------------------------------------------
+
+const INPATIENT_LANE_LABELS: Record<CashierInpatientLane, string> = {
+  due: "Payment required",
+  part_paid: "Part paid",
+  advance_required: "Advance required",
+  refund_due: "Refund due",
+  needs_review: "Needs review",
+  settled: "Settled",
+};
+
+/** With the stay's advance: once some advance is held, a revised-up estimate
+ *  asks for the DIFFERENCE -- "Additional advance required". */
+export function inpatientLaneLabel(
+  lane: CashierInpatientLane,
+  advance?: { received: number } | null,
+) {
+  if (lane === "advance_required" && (advance?.received ?? 0) > 0) {
+    return "Additional advance required";
+  }
+  return INPATIENT_LANE_LABELS[lane] ?? cashierLabel(lane);
+}
+
+export function inpatientLaneTone(lane: CashierInpatientLane) {
+  switch (lane) {
+    case "due":
+      return "border-emerald-300 bg-emerald-50 text-emerald-800";
+    case "part_paid":
+      return "border-amber-300 bg-amber-50 text-amber-900";
+    case "refund_due":
+      return "border-sky-300 bg-sky-50 text-sky-800";
+    case "advance_required":
+      return "border-violet-300 bg-violet-50 text-violet-800";
+    case "needs_review":
+      return "border-red-300 bg-red-50 text-red-800";
+    default:
+      return "border-slate-300 bg-slate-100 text-slate-600";
+  }
+}
+
+/** The one server figure a queue row leads with, by lane: the refundable
+ *  credit, the uncovered estimate, or the balance due. Chosen, never computed. */
+export function inpatientRowFigure(row: CashierInpatientRow) {
+  if (row.lane === "refund_due") return row.refundable_balance;
+  if (row.lane === "advance_required") return row.advance?.outstanding ?? 0;
+  return row.remaining_due;
+}
+
+/** The stay's workflow state, as a fact. Never a clinical finding. */
+export function inpatientStateLabel(admission: CashierInpatientIdentity["admission"]) {
+  if (admission.state === "discharged") return "Discharged";
+  if (admission.medical_discharge_ready) return "Medically ready";
+  return "Inpatient";
+}
+
+/** Ward · room · bed, whichever parts exist. */
+export function inpatientLocation(location: CashierInpatientIdentity["location"]) {
+  const parts = [
+    location.ward_code ?? location.ward,
+    location.room,
+    location.bed_code ?? location.bed,
+  ].filter((part): part is string => Boolean(part && part.trim()));
+  return parts.length ? parts.join(" · ") : "-";
+}
+
+/**
+ * The payment dialog's AFTER-ENTRY PREVIEW, and nothing else.
+ *
+ * The one place this desk subtracts: "outstanding before", "payment",
+ * "outstanding after", shown to the cashier before they commit. It decides
+ * nothing -- the server re-derives the balance, refuses any amount above it,
+ * and the figures shown after success come from its response, not from here.
+ * Rounded to cents so 0.1 + 0.2 never reaches the screen.
+ */
+export function settlementPreview(outstanding: number, amount: number) {
+  const before = Math.round(outstanding * 100) / 100;
+  const payment = Number.isFinite(amount) ? Math.round(amount * 100) / 100 : 0;
+  return {
+    before,
+    payment,
+    after: Math.round((before - payment) * 100) / 100,
+    exceeds: payment - before > 0.005,
+  };
 }
 
 /** A stable idempotency key per payment attempt. */

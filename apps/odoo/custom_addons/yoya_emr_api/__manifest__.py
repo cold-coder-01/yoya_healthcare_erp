@@ -1,6 +1,6 @@
 {
     "name": "YOYA EMR API",
-    "version": "18.0.1.14.0",
+    "version": "18.0.1.25.0",
     "license": "LGPL-3",
     "depends": [
         "base",
@@ -20,6 +20,12 @@
         # the encounter reception_* clearance fields and the cashier /
         # emergency-authorizer groups the reception endpoints depend on.
         "yoya_reception_bridge",
+        # Admissions Slice 1. The Admissions Desk reads hospital.admission,
+        # .ward, .room, .bed and .admission.transfer and imports the Slice 0
+        # authority constants (ADMISSION_ACTIVE_STATES, episode_closed_states).
+        # Reachable transitively through yoya_clinical_bridge, but named here
+        # so the load order this module needs is one it asks for.
+        "hospital_admission",
     ],
     "data": [],
     "installable": True,

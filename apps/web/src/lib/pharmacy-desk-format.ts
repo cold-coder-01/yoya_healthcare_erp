@@ -110,10 +110,16 @@ export function laneStatuses(laneKey: string): readonly string[] {
 
 /** The one sentence about money. It names no figure because none arrives. */
 export function clearanceNotice(
-  row: Pick<PharmacyQueueRow, "lane" | "billing_blocked">,
+  row: Pick<PharmacyQueueRow, "lane" | "billing_blocked" | "financial_cover">,
 ): string | null {
   if (row.lane === "awaiting_clearance") {
+    if (row.financial_cover === "shortfall") {
+      return "Additional payment required. The patient's inpatient advance does not cover the intended quantity; the patient pays the difference at the cashier.";
+    }
     return "Awaiting financial clearance. The intended quantity cannot be handed over until the patient is cleared at the cashier.";
+  }
+  if (row.financial_cover === "inpatient_credit") {
+    return "Financially covered by the patient's inpatient advance.";
   }
   return null;
 }

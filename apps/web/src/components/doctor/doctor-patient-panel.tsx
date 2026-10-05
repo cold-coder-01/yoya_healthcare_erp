@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { messageFromPayload } from "@/lib/api-error";
+import { messageFromPayload, readJsonEnvelope } from "@/lib/api-error";
 import {
   formatBloodGroup,
   formatHospitalDate,
@@ -19,6 +19,7 @@ import type { ApiEnvelope, DoctorVisitDetail } from "@/types/doctor";
 
 import HistoryWorkspace from "./consultation/history-workspace";
 import { PriorityBadge, StageBadge, VisitTypeBadge } from "./doctor-badges";
+import DoctorAdmissionCard from "./doctor-admission-card";
 import DoctorVitalsGrid from "./doctor-vitals-grid";
 
 /**
@@ -182,7 +183,11 @@ export default function DoctorPatientPanel({
         `/api/doctor/visits/${appointmentId}/start-consultation`,
         { method: "POST", cache: "no-store" },
       );
-      const payload = (await response.json()) as ApiEnvelope<unknown>;
+      // A non-JSON answer is an HTTP error with a status, not "unreachable".
+      const payload = (await readJsonEnvelope(
+        response,
+        "The consultation service",
+      )) as ApiEnvelope<unknown>;
 
       if (!response.ok || !payload.success) {
         // Odoo's own sentence, verbatim. It names which of the four gates
@@ -416,6 +421,19 @@ export default function DoctorPatientPanel({
         >
           <DoctorVitalsGrid vitals={triage.vitals} previous={detail.previous_vitals} />
         </Section>
+
+        {/* ---- Admission: request only; the Admissions Desk assigns the bed ---- */}
+        {detail.admission ? (
+          <DoctorAdmissionCard
+            key={visit.appointment_id}
+            appointmentId={visit.appointment_id}
+            summary={detail.admission}
+            patientName={patient.name}
+            patientMrn={patient.mrn}
+            encounterName={encounter?.name ?? null}
+            physicianName={visit.doctor?.name ?? null}
+          />
+        ) : null}
 
         {/* ---- History ---- */}
         {patient.past_medical_history || patient.disease_history ? (

@@ -65,7 +65,10 @@ EXPECTED_ROLE_KEYS = {
     "radiologist",
     # Added with the Pharmacy Desk. NARROW: nothing implies the pharmacist
     # group, so a manager and an admin read FALSE.
-    "pharmacist",
+    "pharmacist",    # Added with the Admissions Desk. WIDE (manager and front desk nurse imply
+    # it); the front end routes only a user whose ONLY hospital role is Nurse
+    # to /admissions -- see isWardOnlyNurse in reception-roles.ts.
+    "nurse",
 }
 
 G_RADIOLOGY_TECHNICIAN = "hospital_radiology.group_hospital_radiology_technician"

@@ -114,6 +114,11 @@ export type PharmacyQueueRow = {
   prescriber: PharmacyPrescriber | null;
   /** A BOOLEAN verdict. Never an amount. */
   billing_blocked: boolean;
+  /** HOW the pending increment is covered, as a word -- never a figure:
+   *  "service" (its own payment / payer / bypass), "inpatient_credit" (the
+   *  admission's held advance / credit), "shortfall" (an inpatient whose
+   *  credit does not cover it). */
+  financial_cover?: "service" | "inpatient_credit" | "shortfall" | null;
   stock_short: boolean;
   line_count: number;
   lines_complete: number;

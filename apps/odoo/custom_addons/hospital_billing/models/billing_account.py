@@ -702,12 +702,19 @@ class HospitalBillingAccount(models.Model):
         payment_reference=None,
         note=None,
         intake_token=None,
+        allocation_priority=None,
     ):
         """Record one operational payment through the canonical wizard path.
 
         This method is intentionally a thin server-side launcher: the receipt,
         allocation, confirmation, audit and payment-state logic remains in
         hospital.charge.payment.wizard.action_confirm().
+
+        allocation_priority: optional charge-line ids to allocate FIRST, in
+        that order; every other payable line follows in id order. It only
+        reorders the same eligible lines under the same per-line ceilings --
+        it cannot add a line, raise a ceiling or bypass the wizard's checks.
+        Omitted, allocation is exactly as before (id order).
         """
         self.ensure_one()
 
@@ -770,6 +777,11 @@ class HospitalBillingAccount(models.Model):
 
         remaining = float(amount)
         payable_lines = wizard.line_ids.sorted("id")
+        if allocation_priority:
+            rank = {charge_id: index for index, charge_id in enumerate(allocation_priority)}
+            payable_lines = payable_lines.sorted(
+                lambda line: (rank.get(line.charge_line_id.id, len(rank)), line.id)
+            )
         for line in payable_lines:
             if remaining <= AMOUNT_TOLERANCE:
                 line.amount = 0.0

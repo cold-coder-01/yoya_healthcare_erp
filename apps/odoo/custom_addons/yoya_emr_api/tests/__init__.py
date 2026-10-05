@@ -26,3 +26,16 @@ from . import test_radiology_desk_images
 from . import test_radiology_desk_signoff
 from . import test_pharmacy_desk_api
 from . import test_pharmacy_desk_mutations_api
+from . import test_admissions_desk_api
+from . import test_admissions_desk_mutations_api
+from . import test_admissions_desk_transfer_api
+from . import test_admissions_desk_discharge_api
+from . import test_admissions_nurse_roster_scope
+from . import test_cashier_inpatient_settlement_api
+from . import test_admission_reference_api
+from . import test_inpatient_advance_api
+from . import test_admission_clearance_api
+from . import test_doctor_consultation_note_admission
+from . import test_pharmacy_inpatient_credit_api
+from . import test_inpatient_service_credit_api
+from . import test_accountant_api

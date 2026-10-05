@@ -91,6 +91,7 @@ const CLEARANCE_LABELS: Record<string, string> = {
   cleared: "Cleared",
   credit_authorized: "Payer Authorized",
   emergency_bypass: "Emergency Bypass",
+  inpatient_credit: "Inpatient Advance",
 };
 
 export function formatClearanceState(value: string | null | undefined): string {

@@ -43,6 +43,30 @@ class ResUsers(models.Model):
         "Leave empty to restrict the user to evaluations assigned to them.",
     )
 
+    def _get_invalidation_fields(self):
+        """The roster is READ BY RECORD RULES, so changing it must drop them.
+
+        ir.rule._compute_domain is ormcached per user, and it caches the
+        EVALUATED domain -- `user.yoya_permitted_department_ids.ids` is baked
+        in as a literal id list the first time the user touches the model.
+        res.users.write clears the registry cache only for the fields named
+        here, and a custom many2many is not among them by default.
+
+        The UAT defect this closes: a ward nurse who opened the Admissions
+        Desk (or any rostered model) before being given departments kept the
+        cached `('ward_id.department_id', 'in', [])` for the life of the
+        server process -- wards and beds visible, every admission hidden --
+        until a restart. A fresh process (shell, tests) computed the right
+        domain, which is why the scope looked correct everywhere but the
+        running server.
+
+        Every rule that reads the roster benefits: the admission and
+        admission-transfer nurse rules, the evaluation nurse rule, and the
+        reception bridge rules. Nothing is widened -- the SAME domain is simply
+        recomputed from the roster as it now stands.
+        """
+        return super()._get_invalidation_fields() | {"yoya_permitted_department_ids"}
+
     # ------------------------------------------------------------------
     # LONGITUDINAL CARE RELATIONSHIP
     # ------------------------------------------------------------------

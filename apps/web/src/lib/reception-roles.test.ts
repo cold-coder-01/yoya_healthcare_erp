@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  ACCOUNTANT_ROUTE,
   CASHIER_ROUTE,
   DOCTOR_ROUTE,
   INSURANCE_CREDIT_ROUTE,
@@ -11,6 +12,7 @@ import {
   PHARMACY_ROUTE,
   RADIOLOGY_ROUTE,
   RECEPTION_ROUTE,
+  canUseAccountantDesk,
   canUseCashier,
   canUseDoctorDesk,
   canUseInsuranceCredit,
@@ -50,6 +52,10 @@ function roles(overrides: Partial<ReceptionRoles> = {}): ReceptionRoles {
     radiology_technician: false,
     radiologist: false,
     pharmacist: false,
+    // Default FALSE: this is also the shape of a payload from an Odoo instance
+    // that predates the flag, so every "plain nurse -> /triage" test below
+    // doubles as the no-upgrade fallback.
+    nurse: false,
     ...overrides,
   };
 }
@@ -63,7 +69,7 @@ function roles(overrides: Partial<ReceptionRoles> = {}): ReceptionRoles {
  * and would not catch a precedence regression that moved managers to /doctor.
  */
 function managerRoles(overrides: Partial<ReceptionRoles> = {}): ReceptionRoles {
-  return roles({ manager: true, receptionist: true, doctor: true, ...overrides });
+  return roles({ manager: true, receptionist: true, doctor: true, nurse: true, ...overrides });
 }
 
 function adminRoles(overrides: Partial<ReceptionRoles> = {}): ReceptionRoles {
@@ -72,6 +78,7 @@ function adminRoles(overrides: Partial<ReceptionRoles> = {}): ReceptionRoles {
     manager: true,
     receptionist: true,
     doctor: true,
+    nurse: true,
     ...overrides,
   });
 }
@@ -128,15 +135,35 @@ test("an unknown or missing role payload falls back to clinical", () => {
   assert.equal(landingRouteForRoles(null), CLINICAL_ROUTE);
 });
 
-test("an accountant lands on the cashier desk rather than clinical", () => {
-  // They hold operational intake rights and no reception role; /triage was
-  // strictly worse for them than the desk they can actually use.
-  assert.equal(landingRouteForRoles(roles({ accountant: true })), CASHIER_ROUTE);
+test("an accountant lands on the Accountant Desk, never the cashier window", () => {
+  // Refunds and financial review are theirs; the payment window is not.
+  assert.equal(landingRouteForRoles(roles({ accountant: true })), ACCOUNTANT_ROUTE);
+  assert.notEqual(landingRouteForRoles(roles({ accountant: true })), CASHIER_ROUTE);
+  // Holding the cashier group as well does not send them to /cashier.
+  assert.equal(landingRouteForRoles(roles({ accountant: true, cashier: true })), ACCOUNTANT_ROUTE);
+  // A cashier still lands on the cashier desk; manager/admin keep reception.
+  assert.equal(landingRouteForRoles(roles({ cashier: true })), CASHIER_ROUTE);
+  assert.equal(landingRouteForRoles(roles({ manager: true, accountant: true })), RECEPTION_ROUTE);
+});
+
+test("canUseAccountantDesk mirrors the server's ACCOUNTANT_DESK_GROUPS", () => {
+  for (const allowed of [{ accountant: true }, { manager: true }, { system_administrator: true }]) {
+    assert.equal(canUseAccountantDesk(roles(allowed)), true, JSON.stringify(allowed));
+  }
+  for (const denied of [
+    { cashier: true }, { doctor: true }, { receptionist: true }, { nurse: true },
+    { front_desk_nurse: true }, { pharmacist: true }, { lab_technician: true },
+    { radiologist: true }, { insurance_officer: true }, {},
+  ]) {
+    assert.equal(canUseAccountantDesk(roles(denied)), false, JSON.stringify(denied));
+  }
+  assert.equal(canUseAccountantDesk(null), false);
 });
 
 test("canUseCashier mirrors the server's CASHIER_DESK_GROUPS", () => {
   assert.equal(canUseCashier(roles({ cashier: true })), true);
-  assert.equal(canUseCashier(roles({ accountant: true })), true);
+  // The accountant is offered /accountant, not the payment window.
+  assert.equal(canUseCashier(roles({ accountant: true })), false);
   assert.equal(canUseCashier(roles({ manager: true })), true);
   assert.equal(canUseCashier(roles({ system_administrator: true })), true);
   // Deliberately excluded, mirroring the server's exclusion of the Cashier from

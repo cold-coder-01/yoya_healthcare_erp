@@ -10,6 +10,7 @@ from datetime import datetime, time
 import pytz
 
 from odoo.addons.hospital_billing.models.charge_line import (
+    ACCOUNTING_GROUPS,
     OPERATIONAL_INTAKE_GROUPS,
 )
 from odoo.osv import expression
@@ -187,6 +188,22 @@ def role_flags(env):
         # Pharmacist holds no reception-side, doctor, laboratory or radiology
         # role, and would otherwise fall through to /triage.
         "pharmacist": user.has_group(GROUP_PHARMACIST),
+        # Added with the Admissions Desk (Slice 1). WIDE, like `doctor`, and
+        # read the note on `doctor` before routing on it: Manager implies
+        # Nurse, and Front Desk Nurse implies Nurse, so both read TRUE here.
+        #
+        # It exists so the front end can tell a DEDICATED WARD NURSE -- a user
+        # whose only hospital role is Hospital Nurse -- by POSITIVE membership
+        # rather than by elimination. Elimination is what used to drop every
+        # plain nurse on /triage; routing them to /admissions by elimination
+        # would be the same mistake in the other direction. isWardOnlyNurse()
+        # in apps/web/src/lib/reception-roles.ts requires this flag to be TRUE
+        # AND every other role above to be FALSE.
+        #
+        # REPORTING ONLY. Every /admissions/* endpoint decides for itself
+        # through may_admissions_desk(), and the record rules decide which
+        # wards a nurse sees.
+        "nurse": user.has_group(GROUP_NURSE),
     }
 
 
@@ -285,6 +302,31 @@ CASHIER_DESK_GROUPS = OPERATIONAL_INTAKE_GROUPS
 def may_cashier_desk(env):
     """May this user open the Cashier Desk and read its worklist?"""
     return _in_any(env, CASHIER_DESK_GROUPS)
+
+
+# Who may OPEN the Accountant Desk: hospital_billing's ACCOUNTING_GROUPS, the
+# very groups its refund_advance() guard admits (Accountant, Manager,
+# Administrator). IMPORTED, not restated, so the desk and the refund can never
+# disagree. Not the Cashier: collecting money and returning it are different
+# acts. The desk offers no payment intake, whatever else the role may hold.
+ACCOUNTANT_DESK_GROUPS = ACCOUNTING_GROUPS
+
+
+def may_accountant_desk(env):
+    """May this user open the Accountant Desk and record inpatient refunds?"""
+    return _in_any(env, ACCOUNTANT_DESK_GROUPS)
+
+
+def accountant_capability_flags(env):
+    """What the Accountant Desk may do. Every flag mirrors a server guard.
+
+    Deliberately NARROW: the desk records refunds and nothing else -- no
+    payment intake, no estimate, no admission, transfer, discharge or bed.
+    """
+    return {
+        "accountant_desk": may_accountant_desk(env),
+        "record_refund": may_accountant_desk(env),
+    }
 
 
 # Who may OPEN the Insurance/Credit Desk (a read gate). Mirrors
@@ -550,6 +592,151 @@ def pharmacy_desk_capability_flags(env):
         "pharmacy_desk": allowed,
         "prepare_dispense": allowed,
         "validate_dispense": allowed,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Admissions Desk (Admissions Slice 1: READ ONLY)
+# ---------------------------------------------------------------------------
+#
+# WHO OPENS THE DESK, AND WHY THE GATE IS NOT THE WHOLE STORY.
+#
+# The gate answers "is the Admissions Desk this user's workstation". WHICH
+# admissions they then see is decided by hospital_admission's and
+# yoya_clinical_bridge's record rules -- the gate never widens a row, and
+# nothing in the desk calls sudo() to search admissions:
+#
+#   * Receptionist      -- the admissions clerk. Rules: every ward.
+#   * Nurse             -- rules: wards in their permitted departments. Hospital
+#                          Front Desk Nurse IMPLIES Nurse, so it passes this
+#                          gate and is scoped by the same rule; an unrostered
+#                          nurse opens the desk and sees an empty census.
+#   * Doctor            -- rules: admissions they are the physician of, admitted
+#                          from their appointment, or primary on the visit.
+#   * Manager, Sysadmin -- rules: every ward (oversight carve-out).
+#
+# DELIBERATELY EXCLUDED, although some hold a read ACL somewhere nearby:
+#
+#   * Accountant        -- bills the stay after discharge from the back office.
+#                          The desk shows no money, so it has nothing an
+#                          accountant needs, and the census is not theirs.
+#   * Cashier           -- takes payment at the cashier desk; no inpatient need.
+#   * Pharmacist, Lab Technician, DPO -- have NO read ACL on hospital.admission
+#                          at all (Slice 0). The gate refuses them first, so they
+#                          get a clean 403 rather than an ORM AccessError.
+#   * Radiology Technician / Radiologist -- no inpatient census need.
+#
+# None of the excluded groups implies an included one (verified against the
+# UAT database's res_groups_implied_rel), so none of them passes by implication.
+#
+# Authorization is group membership, never "can read the model".
+ADMISSIONS_DESK_GROUPS = (
+    GROUP_RECEPTIONIST,
+    GROUP_NURSE,
+    GROUP_DOCTOR,
+    GROUP_MANAGER,
+    GROUP_SYSADMIN,
+)
+
+
+def may_admissions_desk(env):
+    """May this user open the Admissions Desk and read its census?"""
+    return _in_any(env, ADMISSIONS_DESK_GROUPS)
+
+
+def admissions_desk_role_flags(env):
+    """The Admissions Desk's own role header: only the groups the gate knows.
+
+    No group id, no other workstation's roles. Membership as has_group reports
+    it, so an administrator reads TRUE for several.
+    """
+    user = env.user
+    return {
+        "receptionist": user.has_group(GROUP_RECEPTIONIST),
+        "nurse": user.has_group(GROUP_NURSE),
+        "front_desk_nurse": user.has_group(GROUP_FRONT_DESK_NURSE),
+        "doctor": user.has_group(GROUP_DOCTOR),
+        "manager": user.has_group(GROUP_MANAGER),
+        "system_admin": user.has_group(GROUP_SYSADMIN),
+    }
+
+
+# WHO MAY ADMIT (assign a bed and confirm), Admissions Slice 2. MIRRORS
+# hospital_admission's DESK_ADMIT_GROUPS, which the model enforces again inside
+# _desk_admit(); test_admissions_desk_mutations_api asserts the two agree, so a
+# change in the model cannot silently widen the API. The ward nurse and the
+# doctor open the desk (ADMISSIONS_DESK_GROUPS) but do not admit: the doctor
+# REQUESTS from the Doctor Desk, and the nurse works the census.
+ADMISSIONS_ADMIT_GROUPS = (GROUP_RECEPTIONIST, GROUP_MANAGER, GROUP_SYSADMIN)
+
+
+def may_admissions_admit(env):
+    return may_admissions_desk(env) and _in_any(env, ADMISSIONS_ADMIT_GROUPS)
+
+
+# WHO MAY TRANSFER (Admissions Slice 3). MIRRORS hospital_admission's
+# DESK_TRANSFER_GROUPS, which action_transfer() itself enforces on every
+# channel; test_admissions_desk_transfer_api asserts the two agree. The doctor,
+# the ward nurse and the front-desk nurse open the desk but never move a bed.
+ADMISSIONS_TRANSFER_GROUPS = (GROUP_RECEPTIONIST, GROUP_MANAGER, GROUP_SYSADMIN)
+
+
+def may_admissions_transfer(env):
+    return may_admissions_desk(env) and _in_any(env, ADMISSIONS_TRANSFER_GROUPS)
+
+
+# WHO MAY ATTEMPT TO CANCEL A REQUEST (Slice 3): the admissions clerk and
+# oversight for any draft, and a doctor -- but for a doctor this is the GROUP
+# half only. Whether THIS doctor may cancel THIS request is ownership, decided
+# per record by hospital.admission._desk_may_cancel_request() and re-checked
+# inside the mutation.
+ADMISSIONS_CANCEL_REQUEST_GROUPS = (
+    GROUP_RECEPTIONIST, GROUP_DOCTOR, GROUP_MANAGER, GROUP_SYSADMIN,
+)
+
+
+def may_admissions_cancel_request(env):
+    return may_admissions_desk(env) and _in_any(env, ADMISSIONS_CANCEL_REQUEST_GROUPS)
+
+
+# WHO MAY FINALIZE A DISCHARGE (Admissions Slice 4). MIRRORS hospital_admission's
+# DESK_FINAL_DISCHARGE_GROUPS, enforced again in _finalize_discharge() on every
+# channel (the backend Discharge button included). The doctor declares MEDICAL
+# readiness from the Doctor Desk; the ward nurse and the cashier never
+# discharge.
+ADMISSIONS_FINAL_DISCHARGE_GROUPS = (GROUP_RECEPTIONIST, GROUP_MANAGER, GROUP_SYSADMIN)
+
+
+def may_admissions_finalize_discharge(env):
+    return may_admissions_desk(env) and _in_any(env, ADMISSIONS_FINAL_DISCHARGE_GROUPS)
+
+
+def admissions_desk_capability_flags(env):
+    """What the Admissions Desk may do. Every flag mirrors a server-side guard.
+
+    SLICE 2 turned on admit, which assigns the bed and confirms the admission
+    together (assign_bed therefore equals admit -- there is no separate "assign
+    without admitting" route). SLICE 3 added transfer and cancel_request.
+    SLICE 4 turns on discharge: the ADMINISTRATIVE final discharge, for the
+    admissions clerk and oversight. (The doctor's medical readiness is a Doctor
+    Desk act and is reported there.)
+
+    These say which ACTS the role may attempt. Whether ONE admission may be
+    admitted, transferred or cancelled is its own `can_admit`, `can_transfer`
+    or `can_cancel_request`, and the model re-checks everything under its
+    locks on every call.
+    """
+    allowed = may_admissions_desk(env)
+    admit = may_admissions_admit(env)
+    return {
+        "admissions_desk": allowed,
+        "view_worklist": allowed,
+        "view_bed_board": allowed,
+        "admit": admit,
+        "assign_bed": admit,
+        "transfer": may_admissions_transfer(env),
+        "cancel_request": may_admissions_cancel_request(env),
+        "discharge": may_admissions_finalize_discharge(env),
     }
 
 

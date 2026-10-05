@@ -9,6 +9,9 @@ import type {
   ApiEnvelope,
   CashierActiveServiceRow,
   CashierCapabilities,
+  CashierInpatientDetail,
+  CashierInpatientPaymentResult,
+  CashierInpatientRow,
   CashierPaymentMethod,
   CashierPaymentResult,
   CashierReceipt,
@@ -18,15 +21,30 @@ import type {
 } from "@/types/cashier";
 
 import CashierFinancialPanel from "./cashier-financial-panel";
+import CashierInpatientPanel from "./cashier-inpatient-panel";
+import CashierInpatientPayment, {
+  type InpatientPaymentMode,
+} from "./cashier-inpatient-payment";
+import CashierInpatientRefund from "./cashier-inpatient-refund";
 import CashierPaymentForm from "./cashier-payment-form";
 import CashierQueue from "./cashier-queue";
 
+// "inpatient" shows only the inpatient-settlement section; the outpatient
+// chips filter the two appointment lanes and hide it, as before.
 const LANES = [
   { key: "", label: "All" },
   { key: "collect", label: "Awaiting" },
   { key: "partial", label: "Part paid" },
   { key: "blocked", label: "Blocked" },
+  { key: "inpatient", label: "Inpatient" },
 ] as const;
+
+type PaymentInput = {
+  amount: number;
+  method: CashierPaymentMethod;
+  reference: string | null;
+  note: string | null;
+};
 
 /**
  * The Cashier workstation.
@@ -69,6 +87,15 @@ export default function CashierWorkstation() {
   const [refreshToken, setRefreshToken] = useState(0);
   const [detailToken, setDetailToken] = useState(0);
 
+  // --- inpatient settlement (third lane) ----------------------------
+  const [inpatientRows, setInpatientRows] = useState<CashierInpatientRow[]>([]);
+  const [inpatientTruncated, setInpatientTruncated] = useState(false);
+  const [selectedAdmissionId, setSelectedAdmissionId] = useState<number | null>(null);
+  const [inpatient, setInpatient] = useState<CashierInpatientDetail | null>(null);
+  const [inpatientToken, setInpatientToken] = useState(0);
+  // Which inpatient action the last receipt / error belongs to.
+  const [receiptMode, setReceiptMode] = useState<InpatientPaymentMode>("settlement");
+
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search.trim()), 250);
     return () => clearTimeout(timer);
@@ -98,6 +125,7 @@ export default function CashierWorkstation() {
         if (!response.ok || !payload.success || !payload.data) {
           setRows([]);
           setActiveServiceRows([]);
+          setInpatientRows([]);
           setQueueError(
             messageFromPayload(payload, "Unable to load the cashier queue."),
           );
@@ -113,6 +141,8 @@ export default function CashierWorkstation() {
         setCapabilities(payload.data.capabilities);
         setTruncated(payload.data.truncated);
         setActiveTruncated(payload.data.active_service_truncated ?? false);
+        setInpatientRows(payload.data.inpatient_settlement ?? []);
+        setInpatientTruncated(payload.data.inpatient_truncated ?? false);
         setQueueError(null);
       } catch (error) {
         if (controller.signal.aborted) return;
@@ -172,12 +202,153 @@ export default function CashierWorkstation() {
     return () => controller.abort();
   }, [selectedId, detailToken]);
 
+  // The inpatient account, fetched the same way: an effect keyed on the
+  // selection and a refresh token.
+  useEffect(() => {
+    if (selectedAdmissionId === null) return;
+    const controller = new AbortController();
+
+    async function loadInpatient(admissionId: number) {
+      setDetailLoading(true);
+      setDetailError(null);
+      try {
+        const response = await fetch(`/api/cashier/admissions/${admissionId}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const payload =
+          (await response.json()) as ApiEnvelope<CashierInpatientDetail>;
+        if (controller.signal.aborted) return;
+
+        if (!response.ok || !payload.success || !payload.data) {
+          setInpatient(null);
+          setDetailError(
+            messageFromPayload(payload, "Unable to load the selected inpatient account."),
+          );
+          return;
+        }
+        setInpatient(payload.data);
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        if ((error as Error)?.name === "AbortError") return;
+        setInpatient(null);
+        setDetailError("Unable to reach the YOYA EMR gateway.");
+      } finally {
+        if (!controller.signal.aborted) setDetailLoading(false);
+      }
+    }
+
+    void loadInpatient(selectedAdmissionId);
+    return () => controller.abort();
+  }, [selectedAdmissionId, inpatientToken]);
+
   function handleSelect(appointmentId: number) {
+    setSelectedAdmissionId(null);
+    setInpatient(null);
     setSelectedId(appointmentId);
     setVisit(null);
     setReceipt(null);
     setPaymentError(null);
   }
+
+  function handleSelectInpatient(admissionId: number) {
+    setSelectedId(null);
+    setVisit(null);
+    setSelectedAdmissionId(admissionId);
+    setInpatient(null);
+    setReceipt(null);
+    setPaymentError(null);
+  }
+
+  // --- inpatient payment --------------------------------------------
+  //
+  // The same recovery rule as the visit payment: on ANY failure, re-read the
+  // account and the queue; never resubmit. On success the response IS the new
+  // account, and the queue is refreshed so a settled stay leaves it.
+  const handleInpatientMoney = useCallback(
+    async (kind: InpatientPaymentMode, input: PaymentInput) => {
+      if (selectedAdmissionId === null || inpatient === null) return;
+      setSubmitting(true);
+      setPaymentError(null);
+      setReceiptMode(kind);
+
+      try {
+        const path = kind === "advance" ? "advance" : "payments";
+        const response = await fetch(
+          `/api/cashier/admissions/${selectedAdmissionId}/${path}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              amount: input.amount,
+              payment_method: input.method,
+              payment_reference: input.reference,
+              note: input.note,
+              idempotency_key: newIdempotencyKey(),
+              // A settlement quotes the figures on screen; if they moved, the
+              // server refuses and the refetch below shows the new ones.
+              ...(kind === "settlement" ? { quote: inpatient.settlement.quote } : {}),
+            }),
+          },
+        );
+        const payload =
+          (await response.json()) as ApiEnvelope<CashierInpatientPaymentResult>;
+
+        if (!response.ok || !payload.success || !payload.data) {
+          setPaymentError(messageFromPayload(payload, "Unable to record the payment."));
+          setInpatientToken((token) => token + 1);
+          setRefreshToken((token) => token + 1);
+          return;
+        }
+
+        // The response IS the canonical account plus the receipt.
+        setInpatient(payload.data);
+        setReceipt(payload.data.receipt);
+        setPaymentError(null);
+        setRefreshToken((token) => token + 1);
+      } catch {
+        setPaymentError("Unable to reach the YOYA EMR gateway.");
+        setInpatientToken((token) => token + 1);
+        setRefreshToken((token) => token + 1);
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [selectedAdmissionId, inpatient],
+  );
+
+  const handleInpatientRefund = useCallback(
+    async (input: { amount: number; reason: string }) => {
+      if (selectedAdmissionId === null) return;
+      setSubmitting(true);
+      setPaymentError(null);
+      try {
+        const response = await fetch(`/api/cashier/admissions/${selectedAdmissionId}/refund`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            amount: input.amount,
+            reason: input.reason,
+            idempotency_key: crypto.randomUUID(),
+          }),
+        });
+        const payload = (await response.json()) as ApiEnvelope<CashierInpatientDetail>;
+        if (!response.ok || !payload.success || !payload.data) {
+          setPaymentError(messageFromPayload(payload, "Unable to record the refund."));
+          setInpatientToken((token) => token + 1);
+          return;
+        }
+        setInpatient(payload.data);
+        setRefreshToken((token) => token + 1);
+      } catch {
+        setPaymentError("Unable to reach the YOYA EMR gateway.");
+        setInpatientToken((token) => token + 1);
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [selectedAdmissionId],
+  );
 
   // --- payment -----------------------------------------------------
   const handlePayment = useCallback(
@@ -248,17 +419,20 @@ export default function CashierWorkstation() {
   // (collect / partial / blocked), which the server resolves identically for
   // both queues -- it is not the initial/active distinction, which is
   // structural and always visible.
+  const outpatientLane = lane === "inpatient" ? "" : lane;
   const laneRows = useMemo(
-    () => (lane ? rows.filter((row) => row.lane === lane) : rows),
-    [rows, lane],
+    () => (outpatientLane ? rows.filter((row) => row.lane === outpatientLane) : rows),
+    [rows, outpatientLane],
   );
   const laneActiveRows = useMemo(
     () =>
-      lane
-        ? activeServiceRows.filter((row) => row.lane === lane)
+      outpatientLane
+        ? activeServiceRows.filter((row) => row.lane === outpatientLane)
         : activeServiceRows,
-    [activeServiceRows, lane],
+    [activeServiceRows, outpatientLane],
   );
+  const showInpatient = lane === "" || lane === "inpatient";
+  const showOutpatient = lane !== "inpatient";
 
   const deniedDesk = capabilities !== null && !capabilities.cashier_desk;
 
@@ -289,9 +463,12 @@ export default function CashierWorkstation() {
               const active = lane === entry.key;
               // Both lanes, so the chip counts describe what the panel below
               // actually contains.
-              const count = entry.key
-                ? (counts[entry.key] ?? 0) + (activeCounts[entry.key] ?? 0)
-                : rows.length + activeServiceRows.length;
+              const count =
+                entry.key === "inpatient"
+                  ? inpatientRows.length
+                  : entry.key
+                    ? (counts[entry.key] ?? 0) + (activeCounts[entry.key] ?? 0)
+                    : rows.length + activeServiceRows.length + inpatientRows.length;
               return (
                 <button
                   key={entry.key || "all"}
@@ -313,12 +490,18 @@ export default function CashierWorkstation() {
         <CashierQueue
           rows={laneRows}
           activeServiceRows={laneActiveRows}
+          inpatientRows={inpatientRows}
+          showOutpatient={showOutpatient}
+          showInpatient={showInpatient}
           selectedId={selectedId}
+          selectedInpatientId={selectedAdmissionId}
           loading={queueLoading}
           error={queueError}
           truncated={truncated}
           activeServiceTruncated={activeTruncated}
+          inpatientTruncated={inpatientTruncated}
           onSelect={handleSelect}
+          onSelectInpatient={handleSelectInpatient}
         />
       </section>
 
@@ -336,6 +519,8 @@ export default function CashierWorkstation() {
           <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
             {detailError}
           </div>
+        ) : inpatient ? (
+          <CashierInpatientPanel account={inpatient} />
         ) : visit ? (
           <CashierFinancialPanel visit={visit} />
         ) : (
@@ -349,7 +534,39 @@ export default function CashierWorkstation() {
 
       {/* RIGHT: collect */}
       <section className="w-[320px] shrink-0 overflow-y-auto">
-        {visit ? (
+        {inpatient ? (
+          <div className="flex flex-col gap-2">
+            <CashierInpatientPayment
+              // Remount on a new admission OR a changed balance, exactly as
+              // the visit form is re-armed.
+              key={`settle:${inpatient.admission.id}:${inpatient.collectability.max_amount}`}
+              account={inpatient}
+              mode="settlement"
+              receipt={receiptMode === "settlement" ? receipt : null}
+              submitting={submitting}
+              error={receiptMode === "settlement" ? paymentError : null}
+              onSubmit={(input) => handleInpatientMoney("settlement", input)}
+            />
+            {inpatient.advance_collectability.collectable || receiptMode === "advance" ? (
+              <CashierInpatientPayment
+                key={`advance:${inpatient.admission.id}:${inpatient.advance_collectability.max_amount}`}
+                account={inpatient}
+                mode="advance"
+                receipt={receiptMode === "advance" ? receipt : null}
+                submitting={submitting}
+                error={receiptMode === "advance" ? paymentError : null}
+                onSubmit={(input) => handleInpatientMoney("advance", input)}
+              />
+            ) : null}
+            <CashierInpatientRefund
+              key={`refund:${inpatient.admission.id}:${inpatient.refund.amount}`}
+              account={inpatient}
+              submitting={submitting}
+              error={paymentError}
+              onRefund={handleInpatientRefund}
+            />
+          </div>
+        ) : visit ? (
           <CashierPaymentForm
             // Remount on a new visit OR a changed outstanding figure, so the
             // amount field re-arms from the server's current number without an

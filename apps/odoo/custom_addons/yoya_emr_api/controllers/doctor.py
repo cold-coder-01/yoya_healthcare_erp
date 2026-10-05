@@ -60,8 +60,17 @@ workflow decision and never calls sudo().
 import functools
 import logging
 
+from psycopg2 import IntegrityError
+
 from odoo import fields, http
 from odoo.exceptions import AccessError, UserError, ValidationError
+from odoo.service.model import PG_CONCURRENCY_EXCEPTIONS_TO_RETRY
+
+from odoo.addons.hospital_admission.models.admission_authority import (
+    ADMISSION_ACTIVE_STATES,
+    ADMISSION_ESTIMATE_STATES,
+    AdmissionDeskError,
+)
 from odoo.http import request
 from odoo.osv import expression
 
@@ -81,6 +90,16 @@ from odoo.addons.yoya_clinical_bridge.models.radiology_request import (
     RAD_ORDER_EDITABLE_FIELDS,
 )
 
+from ..services.admission_mutations import (
+    DISCHARGE_REQUEST_KEYS,
+    ESTIMATE_KEYS as ADMISSION_ESTIMATE_KEYS,
+    REQUEST_KEYS as ADMISSION_REQUEST_KEYS,
+    canonical_token as admission_canonical_token,
+    desk_error as admission_desk_error,
+    integrity_code as admission_integrity_code,
+    mutation_body as admission_mutation_body,
+)
+from ..services.admissions_desk_serializers import serialize_doctor_admission
 from ..services.api_response import (
     ApiError,
     api_error_response,
@@ -1607,6 +1626,55 @@ def _build_completion_version(body):
     return version
 
 
+def _visit_estimate_admission(env, appointment):
+    """This visit's admission that can still be estimated, as the doctor's OWN
+    record rules show it. Hidden and missing are the same 404."""
+    visit_id = appointment.encounter_id.id
+    domain = [("appointment_id", "=", appointment.id)]
+    if visit_id:
+        domain = ["|", ("appointment_id", "=", appointment.id), ("encounter_id", "=", visit_id)]
+    admission = env["hospital.admission"].search(
+        domain + [("state", "in", list(ADMISSION_ESTIMATE_STATES))], order="id desc", limit=1
+    )
+    if not admission:
+        raise admission_desk_error("admission_not_found")
+    return admission
+
+
+def _estimate_payload(env, admission):
+    facts = admission._estimate_facts()
+    currency = admission.sudo().company_id.currency_id or env.company.currency_id
+    return {
+        "admission": {
+            "id": admission.id,
+            "reference": admission.name,
+            "state": admission.state,
+            "revision": admission.workflow_revision,
+        },
+        "currency": currency.name or None,
+        "estimate": {
+            "amount": facts["amount"],
+            "reason": facts["reason"],
+            "estimated_by": facts["estimated_by"],
+            "estimated_at": fields.Datetime.to_string(facts["estimated_at"]) if facts["estimated_at"] else None,
+            "revision": facts["revision"],
+        },
+        # The estimate as given, revision by revision (the doctor's own figures).
+        "history": [
+            dict(row, estimated_at=fields.Datetime.to_string(row["estimated_at"]) if row["estimated_at"] else None)
+            for row in facts["history"]
+        ],
+        # medically_ready | null: once the doctor's discharge request has
+        # recorded medical readiness, final settlement decides.
+        "locked_reason": facts["locked_reason"],
+        # A FLAG, never a figure: the doctor sees THAT more advance is due at
+        # the Cashier, not how much. Estimate / received / remaining are the
+        # Cashier's.
+        "additional_advance_required": bool(admission._estimate_additional_advance_required()),
+        "can_edit": bool(admission._desk_may_set_estimate()) and not facts["locked_reason"],
+    }
+
+
 class YoyaEmrDoctorController(http.Controller):
 
     # ------------------------------------------------------------------
@@ -1727,9 +1795,205 @@ class YoyaEmrDoctorController(http.Controller):
 
         appointment = _load_visit(env, appointment_id)
         prefetch_worklist(appointment)
-        return success_response(
-            serialize_visit_detail(appointment, doctor_capability_flags(env))
+        payload = serialize_visit_detail(appointment, doctor_capability_flags(env))
+        # Admissions Slice 2: what the doctor needs to know about inpatient
+        # care on THIS visit -- requested, admitted and where, or requestable.
+        payload["admission"] = serialize_doctor_admission(appointment)
+        return success_response(payload)
+
+    # ------------------------------------------------------------------
+    # Admissions Slice 2: request an admission from this visit
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>/admission-request",
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @doctor_endpoint
+    def visit_admission_request(self, appointment_id, **params):
+        """Ask for an inpatient stay. The Admissions Desk puts the patient in a bed.
+
+        Body: {"operation_token": uuid, "reason": text}. Exactly those keys.
+        The doctor names NO ward and NO bed; patient, visit, doctor, appointment
+        and the primary diagnosis are derived from the visit by the model
+        (hospital.admission._desk_request_admission), which also re-checks that
+        this caller is the visit's own doctor. Same error contract as the
+        Admissions Desk (services/admission_mutations).
+        """
+        env = request.env
+        _require_doctor_desk(env)
+        body = admission_mutation_body(ADMISSION_REQUEST_KEYS)
+        appointment = _load_visit(env, appointment_id)
+
+        try:
+            with env.cr.savepoint():
+                admission, replayed = env["hospital.admission"]._desk_request_admission(
+                    appointment, body["reason"], body["operation_token"]
+                )
+                payload = serialize_doctor_admission(appointment)
+        except PG_CONCURRENCY_EXCEPTIONS_TO_RETRY:
+            raise
+        except AdmissionDeskError as error:
+            raise admission_desk_error(error.code) from None
+        except IntegrityError as error:
+            raise admission_desk_error(admission_integrity_code(error)) from None
+        except AccessError:
+            raise admission_desk_error("admission_not_authorized") from None
+        except (UserError, ValidationError):
+            _logger.warning(
+                "Admission request refused for appointment=%s uid=%s",
+                appointment.id, env.uid, exc_info=True,
+            )
+            raise admission_desk_error("admission_integrity_error") from None
+        except Exception:
+            _logger.exception("Admission request failed for appointment=%s", appointment.id)
+            raise admission_desk_error("admission_mutation_failed") from None
+
+        return success_response({
+            "admission": payload,
+            "operation": {
+                "type": "request",
+                "token": admission_canonical_token(body["operation_token"]),
+                "replayed": bool(replayed),
+            },
+        })
+
+    # ------------------------------------------------------------------
+    # Admissions Slice 4: declare the inpatient medically ready
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>/discharge-request",
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @doctor_endpoint
+    def visit_discharge_request(self, appointment_id, **params):
+        """The doctor's CLINICAL discharge decision for this visit's inpatient.
+
+        Body: {"operation_token": uuid, "expected_revision": int, "summary":
+        text}. Exactly those keys. It records medical readiness and the
+        discharge summary; it frees no bed, completes no visit and touches no
+        money -- the Admissions Desk finalizes the discharge. The admission is
+        found through THIS visit, under the doctor's own record rules, and
+        hospital.admission._desk_request_medical_discharge() re-checks that the
+        caller is its physician (or oversight).
+        """
+        env = request.env
+        _require_doctor_desk(env)
+        body = admission_mutation_body(DISCHARGE_REQUEST_KEYS)
+        appointment = _load_visit(env, appointment_id)
+
+        # The visit's active inpatient stay, as the doctor's rules show it.
+        visit_id = appointment.encounter_id.id
+        domain = [("appointment_id", "=", appointment.id)]
+        if visit_id:
+            domain = ["|", ("appointment_id", "=", appointment.id), ("encounter_id", "=", visit_id)]
+        admission = env["hospital.admission"].search(
+            domain + [("state", "in", list(ADMISSION_ACTIVE_STATES))], order="id desc", limit=1
         )
+        if not admission:
+            raise admission_desk_error("admission_not_found")
+
+        try:
+            with env.cr.savepoint():
+                admission, replayed = admission._desk_request_medical_discharge(
+                    body["summary"], body["operation_token"], body["expected_revision"]
+                )
+                payload = serialize_doctor_admission(appointment)
+        except PG_CONCURRENCY_EXCEPTIONS_TO_RETRY:
+            raise
+        except AdmissionDeskError as error:
+            raise admission_desk_error(error.code) from None
+        except IntegrityError as error:
+            raise admission_desk_error(admission_integrity_code(error)) from None
+        except AccessError:
+            raise admission_desk_error("admission_not_authorized") from None
+        except (UserError, ValidationError):
+            _logger.warning(
+                "Discharge request refused for appointment=%s uid=%s",
+                appointment.id, env.uid, exc_info=True,
+            )
+            raise admission_desk_error("admission_integrity_error") from None
+        except Exception:
+            _logger.exception("Discharge request failed for appointment=%s", appointment.id)
+            raise admission_desk_error("admission_mutation_failed") from None
+
+        return success_response({
+            "admission": payload,
+            "operation": {
+                "type": "medical_discharge",
+                "token": admission_canonical_token(body["operation_token"]),
+                "replayed": bool(replayed),
+            },
+        })
+
+    # ------------------------------------------------------------------
+    # Advance slice: the physician's INPATIENT ESTIMATE
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>/admission-estimate",
+        type="http", auth="user", methods=["GET"], csrf=False,
+    )
+    @doctor_endpoint
+    def visit_admission_estimate(self, appointment_id, **params):
+        """The estimate on this visit's admission (requested or in a bed).
+
+        A SEPARATE route on purpose: the visit and admission payloads stay
+        amount-free, and the estimate -- a figure the doctor gives -- is read
+        here and nowhere else on the Doctor Desk. No payment, balance or
+        settlement figure is exposed: the doctor never collects money.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+        appointment = _load_visit(env, appointment_id)
+        admission = _visit_estimate_admission(env, appointment)
+        return success_response(_estimate_payload(env, admission))
+
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visits/<int:appointment_id>/admission-estimate",
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @doctor_endpoint
+    def visit_admission_estimate_set(self, appointment_id, **params):
+        """Give or revise the inpatient estimate.
+
+        Body: {"operation_token": uuid, "expected_revision": int, "amount":
+        number, "reason": text}. Exactly those keys. The admission is found
+        through THIS visit under the doctor's own rules, and
+        hospital.admission._desk_set_estimate() re-checks that the caller is
+        its physician (or oversight). Moves no money.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+        body = admission_mutation_body(ADMISSION_ESTIMATE_KEYS)
+        appointment = _load_visit(env, appointment_id)
+        admission = _visit_estimate_admission(env, appointment)
+        try:
+            with env.cr.savepoint():
+                admission, replayed = admission._desk_set_estimate(
+                    body["amount"], body["reason"],
+                    body["operation_token"], body["expected_revision"],
+                )
+                payload = _estimate_payload(env, admission)
+        except PG_CONCURRENCY_EXCEPTIONS_TO_RETRY:
+            raise
+        except AdmissionDeskError as error:
+            raise admission_desk_error(error.code) from None
+        except AccessError:
+            raise admission_desk_error("admission_not_authorized") from None
+        except (UserError, ValidationError):
+            _logger.warning(
+                "Estimate refused for appointment=%s uid=%s",
+                appointment.id, env.uid, exc_info=True,
+            )
+            raise admission_desk_error("admission_integrity_error") from None
+        except Exception:
+            _logger.exception("Estimate failed for appointment=%s", appointment.id)
+            raise admission_desk_error("admission_mutation_failed") from None
+        payload["operation"] = {
+            "type": "estimate",
+            "token": admission_canonical_token(body["operation_token"]),
+            "replayed": bool(replayed),
+        }
+        return success_response(payload)
 
     # ------------------------------------------------------------------
     # 4. Start consultation

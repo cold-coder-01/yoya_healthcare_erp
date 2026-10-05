@@ -945,3 +945,14 @@ test("a pinned request is still shown and never reads as loading", () => {
   assert.equal(visibleDetail(released, active, 120), released);
   assert.equal(detailIsLoading(active, true, released), false);
 });
+
+test("an active inpatient's advance is worded without a figure (covered / shortfall)", () => {
+  assert.equal(
+    clearanceNotice("ready_for_collection", "inpatient_credit"),
+    "Ready for collection. Financially covered by the patient's inpatient advance.",
+  );
+  const short = clearanceNotice("awaiting_clearance", "shortfall") ?? "";
+  assert.equal(short, "Additional payment required before this service can proceed.");
+  assert.doesNotMatch(short, /\d|amount|balance|birr|etb|invoice|receipt|payer/i);
+  assert.equal(clearanceNotice("ready_for_collection", "service"), "Ready for collection.");
+});

@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { HOSPITAL_DISPLAY_NAME } from "@/lib/branding";
+
 import {
   ClinicalDecoration,
   PublicPageFooter,
@@ -20,7 +22,7 @@ export default function Home() {
         <div className="relative z-10 flex flex-1 items-center px-7 py-10 sm:px-12 lg:px-16 lg:pb-16">
           <div className="max-w-[660px]">
             <p className="text-xs font-bold uppercase tracking-[0.25em] text-emerald-700 sm:text-sm">
-              YOYA General Hospital
+              {HOSPITAL_DISPLAY_NAME}
             </p>
             <h1 className="mt-5 text-[2.35rem] font-semibold leading-[1.08] tracking-[-0.04em] text-[#07152f] sm:text-5xl lg:text-[3.25rem]">
               Clinical Evaluation UAT

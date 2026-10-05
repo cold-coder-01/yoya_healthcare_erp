@@ -570,6 +570,267 @@ def serialize_cashier_visit_detail(env, appointment):
     }
 
 
+# ----------------------------------------------------------------------
+# THE INPATIENT SETTLEMENT LANE.
+#
+# Built from hospital.admission._cashier_facts(): plain dicts the model has
+# already restricted to identity, location, workflow state and money, with
+# every figure taken from _inpatient_financial_summary() -- the SAME
+# delivered-basis authority the Admissions discharge gate applies. Nothing
+# below computes a balance, and no generic billing-account total is read.
+# ----------------------------------------------------------------------
+DELIVERED_CATEGORY_LABELS = {
+    "admission": "Admission",
+    "bed_stay": "Stay / bed",
+    "procedure": "Procedures",
+    "medication": "Pharmacy",
+    "laboratory": "Laboratory",
+    "radiology": "Radiology",
+    "consultation": "Consultation",
+    "other": "Other services",
+}
+
+INPATIENT_COLLECTABLE_LANES = ("due", "part_paid")
+
+INPATIENT_NOT_COLLECTABLE = {
+    "refund_due": (
+        "refund_due",
+        "The patient has paid more than their share of the care delivered. "
+        "The refund is recorded by Accounting.",
+    ),
+    "needs_review": (
+        "financial_review_required",
+        "The inpatient account's figures need review before any payment can be "
+        "taken against them.",
+    ),
+    "settled": (
+        "settled",
+        "Nothing is owed on this inpatient account.",
+    ),
+    "advance_required": (
+        "advance_only",
+        "Nothing is owed for care yet. Take the advance against the estimate.",
+    ),
+}
+
+
+def _inpatient_identity(facts):
+    admission = facts["admission"]
+    return {
+        "admission": {
+            "id": admission["id"],
+            "name": admission["name"],
+            "state": admission["state"],
+            "medical_discharge_ready": admission["medical_discharge_ready"],
+            "admission_date": datetime_value(admission["admission_date"]),
+            "discharge_date": datetime_value(admission["discharge_date"]),
+        },
+        "patient": dict(facts["patient"]),
+        "encounter": dict(facts["encounter"]),
+        "location": dict(facts["location"]),
+    }
+
+
+def _advance_block(facts):
+    advance = facts["advance"]
+    return {
+        "requested": float_value(advance["requested"]),
+        "received": float_value(advance["received"]),
+        "outstanding": float_value(advance["outstanding"]),
+        "open": bool(advance["open"]),
+    }
+
+
+def serialize_cashier_inpatient_row(facts):
+    """One inpatient account in the queue. The figure a cashier scans for is
+    remaining_due (refundable_balance in the refund lane, the uncovered
+    estimate in the advance lane)."""
+    summary = facts["summary"]
+    row = _inpatient_identity(facts)
+    row.update({
+        "lane": facts["lane"],
+        "source": facts["source"],
+        "financial_state": summary["financial_state"],
+        "settlement_state": summary["settlement_state"],
+        "currency": facts["currency"],
+        "remaining_due": float_value(summary["remaining_due"]),
+        "refundable_balance": float_value(summary["refundable_balance"]),
+        "settlement_paid": float_value(facts["settlement_paid"]),
+        "advance": _advance_block(facts),
+    })
+    return row
+
+
+def serialize_inpatient_settlement(summary, review_messages):
+    """THE final-settlement block, shared by the Cashier detail and the
+    Admissions Desk's Final Settlement window. Every figure is the server's
+    delivered-basis summary; the stages are the parts of that ONE computation,
+    reported complete (or needing review) by the server that computed them."""
+    return {
+        "state": summary["settlement_state"],
+        "financial_state": summary["financial_state"],
+        "quote": summary["quote"],
+        "estimate_amount": float_value(summary["estimate_amount"]),
+        "advance_received": float_value(summary["advance_received"]),
+        "delivered_by_category": [
+            {
+                "key": key,
+                "label": DELIVERED_CATEGORY_LABELS.get(key, key),
+                "amount": float_value(amount),
+            }
+            for key, amount in summary["delivered_by_category"].items()
+        ],
+        "actual_delivered": float_value(summary["actual_delivered"]),
+        "payer_authorized": float_value(summary["payer_authorized"]),
+        "patient_responsibility": float_value(summary["patient_responsibility"]),
+        "funds": {
+            "advance": float_value(summary["advance_received"]),
+            "other_payments": float_value(summary["other_payments"]),
+            "settlement_payments": float_value(summary["settlement_paid"]),
+            "total": float_value(summary["patient_funds"]),
+        },
+        "advance_applied": float_value(summary["advance_applied"]),
+        "unapplied_credit": float_value(summary["unapplied_credit"]),
+        "remaining_due": float_value(summary["remaining_due"]),
+        "refundable_balance": float_value(summary["refundable_balance"]),
+        "settlement_difference": float_value(summary["settlement_difference"]),
+        "stay_unposted": float_value(summary["stay_unposted"]),
+        "pending_delivery": bool(summary["pending_delivery"]),
+        "stages": [
+            {
+                "key": stage["key"],
+                "label": stage["label"],
+                "status": stage["status"],
+                "amount": float_value(stage["amount"]),
+            }
+            for stage in summary["stages"]
+        ],
+        "review_reasons": [
+            {"code": code, "message": review_messages.get(code, code)}
+            for code in summary["review_reasons"]
+        ],
+    }
+
+
+def serialize_inpatient_collectability(env, facts):
+    lane = facts["lane"]
+    if lane in INPATIENT_COLLECTABLE_LANES:
+        if not may_record_payment(env):
+            return {
+                "collectable": False,
+                "max_amount": 0.0,
+                "reason": "Your role may view this account but not take payment.",
+                "reason_code": "payment_not_authorized",
+            }
+        return {
+            "collectable": True,
+            "max_amount": float_value(facts["summary"]["remaining_due"]),
+            "reason": None,
+            "reason_code": None,
+        }
+    code, reason = INPATIENT_NOT_COLLECTABLE[lane]
+    return {"collectable": False, "max_amount": 0.0, "reason": reason, "reason_code": code}
+
+
+def serialize_inpatient_advance_collectability(env, facts):
+    advance = facts["advance"]
+    if not advance["open"]:
+        reason = (
+            "No inpatient estimate has been given yet."
+            if advance["requested"] <= 0
+            else "An advance is taken only while the patient is in care, before medical discharge."
+        )
+        return {"collectable": False, "max_amount": 0.0, "reason": reason}
+    if not may_record_payment(env):
+        return {
+            "collectable": False, "max_amount": 0.0,
+            "reason": "Your role may view this account but not take payment.",
+        }
+    if advance["outstanding"] <= 0:
+        return {
+            "collectable": False, "max_amount": 0.0,
+            "reason": "The estimate is fully covered by the advance.",
+        }
+    return {"collectable": True, "max_amount": float_value(advance["outstanding"]), "reason": None}
+
+
+def serialize_inpatient_refund(env, facts):
+    """Refund due is SHOWN to the Cashier and ROUTED to Accounting. Only the
+    accounting groups (hospital_billing's refund_advance guard) may record it."""
+    may_refund = any(env.user.has_group(group) for group in ACCOUNTING_GROUPS)
+    due = facts["lane"] == "refund_due"
+    return {
+        "refund_due": due,
+        "amount": float_value(facts["summary"]["refundable_balance"]) if due else 0.0,
+        "may_record": bool(due and may_refund),
+        "routed_to": None if may_refund else "accounting",
+    }
+
+
+def _receipt_rows(receipts):
+    return [
+        {
+            "id": receipt.id,
+            "name": receipt.name,
+            "amount": float_value(receipt.amount),
+            "payment_method": receipt.payment_method,
+            "payment_reference": receipt.payment_reference or None,
+            "received_at": datetime_value(receipt.received_at),
+        }
+        for receipt in receipts
+    ]
+
+
+def serialize_cashier_inpatient_detail(env, facts, review_messages):
+    """THE canonical inpatient payload (detail AND every payment result)."""
+    summary = facts["summary"]
+    payload = _inpatient_identity(facts)
+    payload.update({
+        "lane": facts["lane"],
+        "source": facts["source"],
+        "currency": facts["currency"],
+        "financial": {
+            "financial_state": summary["financial_state"],
+            "actual_delivered": float_value(summary["actual_delivered"]),
+            "payer_authorized": float_value(summary["payer_authorized"]),
+            "patient_responsibility": float_value(summary["patient_responsibility"]),
+            # Every patient payment held against this visit -- advances,
+            # prepayments and settlement payments alike, net of refunds.
+            "patient_funds": float_value(summary["prepayment_available"]),
+            # Of which: taken here, at settlement.
+            "settlement_paid": float_value(facts["settlement_paid"]),
+            "remaining_due": float_value(summary["remaining_due"]),
+            "refundable_balance": float_value(summary["refundable_balance"]),
+            # Bed-days started but not yet posted; settling posts them first.
+            "stay_unposted": float_value(summary["stay_unposted"]),
+            # Something ordered is not delivered yet. It is NOT in the actual
+            # and nothing is collected for it here.
+            "pending_delivery": bool(summary["pending_delivery"]),
+            "review_reasons": [
+                {"code": code, "message": review_messages.get(code, code)}
+                for code in summary["review_reasons"]
+            ],
+        },
+        "delivered_by_category": [
+            {
+                "key": key,
+                "label": DELIVERED_CATEGORY_LABELS.get(key, key),
+                "amount": float_value(amount),
+            }
+            for key, amount in summary["delivered_by_category"].items()
+        ],
+        "settlement": serialize_inpatient_settlement(summary, review_messages),
+        "advance": _advance_block(facts),
+        "settlement_receipts": _receipt_rows(facts["settlement_receipts"]),
+        "advance_receipts": _receipt_rows(facts["advance_receipts"]),
+        "collectability": serialize_inpatient_collectability(env, facts),
+        "advance_collectability": serialize_inpatient_advance_collectability(env, facts),
+        "refund": serialize_inpatient_refund(env, facts),
+        "permitted_actions": cashier_permitted_actions(env),
+    })
+    return payload
+
+
 def serialize_cashier_payment_result(env, appointment, receipt):
     """The complete cashier-safe payment response.
 
