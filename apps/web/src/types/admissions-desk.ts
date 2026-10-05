@@ -91,6 +91,7 @@ export type ClearanceState =
   | "credit_authorized"
   | "sponsor_cleared"
   | "emergency_bypass"
+  | "inpatient_credit"
   | "not_applicable"
   | "unavailable";
 
@@ -133,6 +134,9 @@ export type AdmissionWorklistRow = {
   workflow_revision: number;
   /** AFFORDANCE ONLY: the role may admit and this record's lane allows it. */
   can_admit: boolean;
+  /** Pre-admission financial readiness of a PENDING request (null once in a
+   *  bed). A state and a sentence -- never an amount -- for every desk role. */
+  admission_clearance?: AdmissionFinancialClearance | null;
   /** AFFORDANCE ONLY (Slice 3): the role may transfer and the patient is in a bed. */
   can_transfer: boolean;
   /** AFFORDANCE ONLY (Slice 3): role AND ownership, and still a draft. */
@@ -197,6 +201,9 @@ export type FinancialState =
   | "covered"
   | "due"
   | "refundable"
+  /** In care, not medically ready, funds above the care so far: an advance /
+   *  patient credit held toward ongoing care. Never a refund. */
+  | "credit"
   | "pending"
   | "not_applicable"
   | "needs_review";
@@ -210,6 +217,9 @@ export type AdmissionFinancial = {
   /** The patient has paid more than the actual care. Derived only: the cash
    *  refund is the Cashier's act. False when blocked. */
   refund_due: boolean;
+  /** Patient funds held toward ongoing care (in care, not medically ready).
+   *  Decided by the server; never an amount. */
+  patient_credit?: boolean;
   review_reasons: { code: string; message: string }[];
 };
 
@@ -226,6 +236,18 @@ export type AdmissionDischarge = {
   warnings: DischargeCheck[];
   /** AFFORDANCE ONLY: role, lane, no blocking check, figures not under review. */
   can_finalize_discharge: boolean;
+};
+
+export type AdmissionFinancialClearance = {
+  state:
+    | "awaiting_estimate"
+    | "awaiting_advance"
+    | "cleared"
+    | "emergency_bypass"
+    | "sponsored"
+    | "unavailable";
+  cleared: boolean;
+  message: string;
 };
 
 export type AdmissionDetail = AdmissionWorklistRow & {
@@ -401,6 +423,7 @@ export type AdmissionMutationErrorCode =
   | "admission_not_medically_ready"
   | "admission_settlement_required"
   | "admission_financial_review_required"
+  | "admission_estimate_locked"
   | "admission_mutation_failed";
 
 /* ------------------------------------------------------------------ *

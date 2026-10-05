@@ -58,6 +58,8 @@ const HALIMA: CashierInpatientRow = {
   lane: "due",
   source: "inpatient_settlement",
   financial_state: "due",
+  settlement_state: "due",
+  advance: { requested: 0, received: 0, outstanding: 0, open: false },
   currency: "ETB",
   remaining_due: 1950,
   refundable_balance: 0,
@@ -79,6 +81,12 @@ test("every inpatient lane has its own label and tone", () => {
   assert.equal(inpatientLaneLabel("refund_due"), "Refund due");
   assert.equal(inpatientLaneLabel("needs_review"), "Needs review");
   assert.equal(inpatientLaneLabel("settled"), "Settled");
+  // A revised-up estimate on a stay that already holds advance asks for the
+  // difference only.
+  assert.equal(inpatientLaneLabel("advance_required"), "Advance required");
+  assert.equal(inpatientLaneLabel("advance_required", { received: 0 }), "Advance required");
+  assert.equal(inpatientLaneLabel("advance_required", { received: 50000 }), "Additional advance required");
+  assert.equal(inpatientLaneLabel("settled", { received: 70000 }), "Settled");
   const tones = new Set(
     (["due", "part_paid", "refund_due", "needs_review", "settled"] as const).map(inpatientLaneTone),
   );
@@ -163,28 +171,36 @@ test("the queue renders an inpatient section beside the unchanged outpatient one
   assert.match(QUEUE, /row\.patient\.identification_code/);
   assert.match(QUEUE, /row\.encounter\.name/);
   assert.match(QUEUE, /row\.admission\.name/);
-  assert.match(QUEUE, /inpatientLaneLabel\(row\.lane\)/);
+  assert.match(QUEUE, /inpatientLaneLabel\(row\.lane, row\.advance\)/);
   // The refund lane shows the refundable figure, every other lane the due.
-  assert.match(QUEUE, /row\.lane === "refund_due"\s*\?\s*row\.refundable_balance\s*:\s*row\.remaining_due/);
+  assert.match(QUEUE, /money\(inpatientRowFigure\(row\)\)/);
 });
 
-test("the panel shows the delivered-basis summary and the category breakdown", () => {
+test("the panel shows the server's final settlement, the advance and every receipt", () => {
+  // The settlement (stages, result, breakdown) is the shared SettlementView,
+  // fed the server's block as-is.
+  assert.match(PANEL, /<SettlementView\s+settlement=\{account\.settlement\}/);
   for (const label of [
-    "Care delivered", "Patient responsibility", "Payer share", "Remaining due",
-    "Refundable to patient", "Delivered care", "Inpatient settlement",
+    "Inpatient settlement", "Advance", "Estimate (advance requested)", "Advance received",
+    "Advance payments", "Settlement payments",
   ]) {
     assert.ok(PANEL.includes(label), label);
   }
-  assert.match(PANEL, /account\.delivered_by_category/);
-  assert.match(PANEL, /financial\.pending_delivery/);
+  assert.match(PANEL, /account\.advance_receipts/);
+  assert.match(PANEL, /account\.settlement_receipts/);
 });
 
-test("payment is reviewed before it is recorded", () => {
+test("payment and advance are both reviewed before they are recorded", () => {
   assert.match(PAYMENT, /role="dialog"/);
-  for (const label of ["Outstanding before", "Outstanding after", "Payment", "Patient", "Encounter", "Admission"]) {
+  for (const label of [
+    "{text.outstanding} before", "{text.outstanding} after", "Payment", "Patient", "Encounter",
+    "Admission", "Record payment", "Record advance", "Review inpatient payment",
+    "Review inpatient advance", "Uncovered estimate",
+  ]) {
     assert.ok(PAYMENT.includes(label), label);
   }
-  assert.equal((PAYMENT.match(/Record payment/g) ?? []).length >= 2, true);
+  // Settlement collects against the collect verdict; advance against its own.
+  assert.match(PAYMENT, /mode === "advance" \? account\.advance_collectability : account\.collectability/);
   // The final click is the dialog's; the form's submit only opens the review.
   assert.match(PAYMENT, /onSubmit=\{handleReview\}/);
   assert.match(PAYMENT, /onClick=\{handleConfirm\}/);
@@ -201,10 +217,13 @@ test("no clinical field is read by the inpatient components", () => {
 });
 
 test("after payment the account and queue are re-read, never resubmitted", () => {
-  assert.match(WORKSTATION, /\/api\/cashier\/admissions\/\$\{selectedAdmissionId\}\/payments/);
+  assert.match(WORKSTATION, /const path = kind === "advance" \? "advance" : "payments";/);
+  assert.match(WORKSTATION, /\/api\/cashier\/admissions\/\$\{selectedAdmissionId\}\/\$\{path\}/);
   assert.match(WORKSTATION, /\/api\/cashier\/admissions\/\$\{admissionId\}`/);
   assert.match(WORKSTATION, /setInpatient\(payload\.data\)/);
-  const handler = WORKSTATION.slice(WORKSTATION.indexOf("const handleInpatientPayment"));
+  // A settlement quotes the figures on screen; an advance does not.
+  assert.match(WORKSTATION, /kind === "settlement" \? \{ quote: inpatient\.settlement\.quote \} : \{\}/);
+  const handler = WORKSTATION.slice(WORKSTATION.indexOf("const handleInpatientMoney"));
   assert.ok((handler.match(/setRefreshToken/g) ?? []).length >= 3);
   assert.match(handler, /setInpatientToken/);
   assert.match(handler, /idempotency_key: newIdempotencyKey\(\)/);

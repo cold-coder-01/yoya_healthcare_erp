@@ -117,6 +117,7 @@ const FINANCIAL_WORDS: Record<AdmissionFinancial["financial_state"], { label: st
   covered: { label: "Covered", tone: "ok" },
   due: { label: "Payment required", tone: "warn" },
   refundable: { label: "Refund due", tone: "warn" },
+  credit: { label: "Advance / patient credit", tone: "ok" },
   pending: { label: "Pending", tone: "neutral" },
   needs_review: { label: "Needs review", tone: "danger" },
   not_applicable: { label: "Not applicable", tone: "neutral" },

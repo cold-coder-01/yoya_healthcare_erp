@@ -1,7 +1,9 @@
 import Link from "next/link";
 
 import {
+  ACCOUNTANT_ROUTE,
   ADMISSIONS_ROUTE,
+  canUseAccountantDesk,
   canUseAdmissionsDesk,
   canUseCashier,
   canUseInsuranceCredit,
@@ -33,9 +35,11 @@ export default function ReceptionSidebar({
   const showFrontDesk = canUseFrontDesk(roles);
   const showReception = canUseReception(roles);
   const showClinical = canUseClinical(roles);
-  // Offered to anyone who may open the desk, INCLUDING a manager or accountant
-  // who lands elsewhere. A landing route is a default, not a restriction.
+  // Offered to anyone who may open the desk, INCLUDING a manager who lands
+  // elsewhere. A landing route is a default, not a restriction.
   const showCashier = canUseCashier(roles);
+  // Refunds and financial review: the accountant's own desk, and oversight's.
+  const showAccountant = canUseAccountantDesk(roles);
   const showInsuranceCredit = canUseInsuranceCredit(roles);
   // The Admissions Desk for the multi-workstation roles this sidebar serves
   // (reception, manager, admin). A Front Desk Nurse's workspace stays the one
@@ -74,6 +78,7 @@ export default function ReceptionSidebar({
     },
     { label: "Admissions Desk", href: ADMISSIONS_ROUTE, visible: showAdmissions },
     { label: "Cashier Desk", href: CASHIER_ROUTE, visible: showCashier },
+    { label: "Accountant Desk", href: ACCOUNTANT_ROUTE, visible: showAccountant },
     {
       label: "Insurance / Credit",
       href: INSURANCE_CREDIT_ROUTE,

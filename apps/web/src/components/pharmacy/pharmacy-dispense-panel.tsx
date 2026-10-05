@@ -51,9 +51,13 @@ function Field({ label, value, mono = false }: { label: string; value: string; m
   );
 }
 
-function Banner({ tone, children }: { tone: "amber" | "red"; children: React.ReactNode }) {
+function Banner({ tone, children }: { tone: "amber" | "red" | "green"; children: React.ReactNode }) {
   const style =
-    tone === "red" ? "border-red-300 bg-red-50 text-red-900" : "border-amber-300 bg-amber-50 text-amber-900";
+    tone === "red"
+      ? "border-red-300 bg-red-50 text-red-900"
+      : tone === "green"
+        ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+        : "border-amber-300 bg-amber-50 text-amber-900";
   return (
     <div role="status" className={`flex items-start gap-2 rounded border px-3 py-2 cl-secondary ${style}`}>
       <span aria-hidden className="mt-px font-bold">
@@ -276,7 +280,9 @@ export default function PharmacyDispensePanel({
           </div>
         ) : null}
         {reason ? <Banner tone={reason.tone}>{reason.text}</Banner> : null}
-        {clearance ? <Banner tone="amber">{clearance}</Banner> : null}
+        {clearance ? (
+          <Banner tone={detail.financial_cover === "inpatient_credit" ? "green" : "amber"}>{clearance}</Banner>
+        ) : null}
 
         <dl className="grid grid-cols-2 gap-x-4 gap-y-2 min-[700px]:grid-cols-4">
           <Field label="Doctor" value={orDash(detail.prescriber?.name)} />

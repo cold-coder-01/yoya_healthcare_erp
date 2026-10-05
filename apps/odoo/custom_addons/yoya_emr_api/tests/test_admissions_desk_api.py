@@ -556,7 +556,8 @@ class TestAdmissionsDeskDetail(AdmissionsDeskCase):
         self.assertIsInstance(financial["refund_due"], bool)
         self.assertEqual(
             set(financial),
-            {"financial_state", "billing_blocked", "settlement_required", "refund_due", "review_reasons"},
+            {"financial_state", "billing_blocked", "settlement_required", "refund_due",
+             "patient_credit", "review_reasons"},
         )
 
     def test_no_note_bodies_are_serialized(self):

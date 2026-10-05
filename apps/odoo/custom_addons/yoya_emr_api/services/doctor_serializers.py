@@ -98,6 +98,7 @@ DOCTOR_CLEARANCE_REASONS = {
     "not_required": None,
     "cleared": None,
     "credit_authorized": None,
+    "inpatient_credit": None,
     "sponsor_cleared": None,
     "emergency_bypass": None,
     "pending": (

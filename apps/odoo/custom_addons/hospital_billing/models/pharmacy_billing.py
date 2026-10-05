@@ -391,6 +391,14 @@ class HospitalPharmacyDispenseBilling(models.Model):
                 with _billing_line_capability():
                     line.write({"charge_line_id": charge.id})
 
+    def _pharmacy_clearance(self, charges, persist=False, lock=False):
+        """Pharmacy's clearance: the engine's shared service rule
+        (check_service_clearance), for this dispense's live charges."""
+        self.ensure_one()
+        return self.env["hospital.billing.engine"].sudo().check_service_clearance(
+            self.sudo().encounter_id, charges=charges, persist=persist, lock=lock
+        )
+
     def _desk_assert_validate_billing(self):
         """Before anything is delivered: the charges are exactly what Prepare
         left, and the patient is cleared -- decided under the responsibility
@@ -418,9 +426,11 @@ class HospitalPharmacyDispenseBilling(models.Model):
                     raise PharmacyWorkflowError("pharmacy_charge_conflict")
             elif any(c.qty_requested > QTY_TOLERANCE for c in line_live):
                 raise PharmacyWorkflowError("pharmacy_charge_conflict")
-        clearance = self.env["hospital.billing.engine"].sudo().check_financial_clearance(
-            encounter, persist=False, charges=live
-        )
+        # Re-decided HERE, under the encounter / billing-account locks taken in
+        # _desk_lock_billing_scope() and, for an inpatient, the admission row
+        # the authority locks -- so two deliveries cannot both spend the same
+        # remaining credit.
+        clearance = dispense._pharmacy_clearance(live, lock=True)
         if not clearance["cleared"]:
             raise PharmacyWorkflowError("pharmacy_billing_blocked")
 
@@ -508,6 +518,8 @@ class HospitalPharmacyDispenseBilling(models.Model):
                     pending_uncovered = True
 
         blocked = False
+        cover = None
+        shortfall = None
         if dispense.state in PHARMACY_BILLING_BLOCKED_STATES and (
             pending_charges or pending_uncovered
         ):
@@ -515,15 +527,21 @@ class HospitalPharmacyDispenseBilling(models.Model):
                 blocked = True
             else:
                 live_charges = charges.filtered(lambda c: c.charge_state in LIVE_CHARGE_STATES)
-                result = engine.check_financial_clearance(
-                    dispense.encounter_id, persist=False, charges=live_charges
-                )
+                result = dispense._pharmacy_clearance(live_charges)
                 blocked = not result["cleared"]
+                cover = result.get("cover")
+                shortfall = result.get("inpatient_shortfall")
 
         return {
             "unified": bool(dispense.encounter_id),
             "billing_context": bool(dispense.encounter_id or dispense.appointment_id),
             "billing_blocked": blocked,
+            # How the pending increment is financially covered: "service" (its
+            # own payment / payer / bypass), "inpatient_credit" (the admission's
+            # held funds), "shortfall" (an inpatient whose credit falls short),
+            # or None. `inpatient_shortfall` is the ONE figure, and only then.
+            "financial_cover": cover,
+            "inpatient_shortfall": shortfall,
             "lines": lines,
         }
 
@@ -638,7 +656,7 @@ class HospitalPharmacyDispenseBilling(models.Model):
         self.ensure_one()
         self._ensure_pharmacy_billing()
         charges = self._pharmacy_charges().filtered(lambda c: c.charge_state in LIVE_CHARGE_STATES)
-        clearance = self.env["hospital.billing.engine"].sudo().check_financial_clearance(self.encounter_id, persist=persist, charges=charges)
+        clearance = self._pharmacy_clearance(charges, persist=persist, lock=True)
         if not clearance["cleared"]:
             raise self._clearance_error(clearance)
         return clearance

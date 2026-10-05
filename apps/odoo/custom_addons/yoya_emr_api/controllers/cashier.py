@@ -120,6 +120,16 @@ SETTLEMENT_STATUS = {
     "inpatient_settlement_not_allocatable": 409,
     "inpatient_invalid_amount": 400,
     "inpatient_idempotency_key_required": 400,
+    "inpatient_quote_required": 400,
+    "inpatient_quote_stale": 409,
+    "inpatient_no_estimate": 409,
+    "inpatient_advance_not_open": 409,
+    "inpatient_advance_exceeds_estimate": 400,
+    "inpatient_refund_not_authorized": 403,
+    "inpatient_nothing_refundable": 409,
+    "inpatient_refund_exceeds_credit": 400,
+    "inpatient_refund_reason_required": 400,
+    "inpatient_operation_conflict": 409,
 }
 
 # Figures the SERVER derives. A body carrying any of them is refused, not
@@ -129,6 +139,7 @@ INPATIENT_FORBIDDEN_BODY_KEYS = frozenset({
     "admission_id", "patient_id", "remaining_due", "refundable_balance",
     "patient_responsibility", "payer_authorized", "actual_delivered",
     "financial_state", "lane", "settlement_paid", "patient_funds",
+    "estimated_amount", "estimate_amount", "advance_received", "settlement_state",
 })
 
 WORKLIST_LIMIT_DEFAULT = 100
@@ -704,7 +715,8 @@ class YoyaEmrCashierController(http.Controller):
     @cashier_endpoint
     def inpatient_detail(self, admission_id, **params):
         """One inpatient account: identity, location, the delivered-basis
-        figures by category, settlement receipts and the collect verdict."""
+        settlement (estimate, advance, care by category, funds, stages, quote),
+        receipts and the collect / advance / refund verdicts."""
         env = request.env
         _require_cashier_desk(env)
         admission = _find_inpatient(env, admission_id)
@@ -723,50 +735,140 @@ class YoyaEmrCashierController(http.Controller):
         """Settle (all or part of) the remaining delivered-basis balance.
 
         Body: amount, payment_method, payment_reference, note, idempotency_key
-        -- exactly the visit payment's contract. The admission, visit, billing
-        account and every figure are derived server-side; a body naming any of
-        them is refused. More than the remaining balance is refused: a
-        settlement never turns into an advance.
+        and QUOTE -- the settlement fingerprint the cashier was shown. If the
+        figures moved since (a new bed-day, a delivery, another payment) the
+        payment is refused with inpatient_quote_stale and nothing is charged.
+        The admission, visit, billing account and every figure are derived
+        server-side; a body naming any of them is refused. More than the
+        remaining balance is refused: a settlement never turns into an advance.
         """
         env = request.env
-        if not may_record_payment(env):
-            raise ApiError(
-                "payment_not_authorized",
-                "Recording operational payment requires the Hospital Cashier, "
-                "Accountant, Hospital Manager or Hospital System Administrator role.",
-                403,
-            )
+        _require_payment_role(env)
+        body = _coerce_payment_body(INPATIENT_FORBIDDEN_BODY_KEYS)
+        quote = _optional_body_text("quote")
+        admission = _find_inpatient(env, admission_id)
+        return _inpatient_money_act(
+            env, admission, admission_id,
+            lambda: admission._cashier_record_settlement(
+                body["amount"], body["payment_method"],
+                payment_reference=body["payment_reference"], note=body["note"],
+                idempotency_key=body["intake_token"], quote=quote,
+            ),
+        )
+
+    @http.route(
+        "/yoya-emr/api/v1/cashier/admissions/<int:admission_id>/advance",
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @cashier_endpoint
+    def record_inpatient_advance(self, admission_id, **kwargs):
+        """Take an ADVANCE against the physician's estimate.
+
+        Body: amount, payment_method, payment_reference, note, idempotency_key.
+        Held on the admission's deposit charge through the ordinary intake --
+        a patient-advance liability, never revenue. Capped at the estimate
+        still uncovered.
+        """
+        env = request.env
+        _require_payment_role(env)
         body = _coerce_payment_body(INPATIENT_FORBIDDEN_BODY_KEYS)
         admission = _find_inpatient(env, admission_id)
+        return _inpatient_money_act(
+            env, admission, admission_id,
+            lambda: admission._cashier_record_advance(
+                body["amount"], body["payment_method"],
+                payment_reference=body["payment_reference"], note=body["note"],
+                idempotency_key=body["intake_token"],
+            ),
+        )
 
-        # ONE atomic unit, as for the visit payment: the stay posting, the
-        # receipt and the serialized response commit together or not at all.
+    @http.route(
+        "/yoya-emr/api/v1/cashier/admissions/<int:admission_id>/refund",
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @cashier_endpoint
+    def record_inpatient_refund(self, admission_id, **kwargs):
+        """Record the refund of unapplied patient credit. ACCOUNTING ONLY.
+
+        Body: {"amount": number, "reason": text, "idempotency_key": uuid}.
+        Exactly those keys. Accountant / Hospital Manager / System
+        Administrator; the Cashier sees Refund Due and is refused here.
+        """
+        env = request.env
+        _require_cashier_desk(env)
+        body = read_json_body()
+        if not isinstance(body, dict) or set(body) != {"amount", "reason", "idempotency_key"}:
+            raise ApiError(
+                "payment_validation_failed",
+                "A refund body is exactly: amount, reason, idempotency_key.",
+                400,
+            )
+        amount = coerce_number("amount", body.get("amount"))
+        admission = _find_inpatient(env, admission_id)
         try:
             with env.cr.savepoint():
-                receipt, replayed = admission._cashier_record_settlement(
-                    body["amount"],
-                    body["payment_method"],
-                    payment_reference=body["payment_reference"],
-                    note=body["note"],
-                    idempotency_key=body["intake_token"],
+                admission, replayed = admission._cashier_record_refund(
+                    amount, body.get("reason"), body.get("idempotency_key")
                 )
-                try:
-                    env.invalidate_all()
-                    payload = serialize_cashier_inpatient_detail(
-                        env, admission._cashier_detail(), FINANCIAL_REVIEW_MESSAGES
-                    )
-                    payload["receipt"] = serialize_cashier_receipt(receipt)
-                    payload["replayed"] = replayed
-                    response = success_response(payload)
-                except Exception as error:
-                    _logger.exception(
-                        "Cashier inpatient payment response failed for admission=%s "
-                        "uid=%s; rolling the payment back",
-                        admission_id,
-                        env.uid,
-                    )
-                    raise PaymentResponseError(str(error)) from error
+                env.invalidate_all()
+                payload = serialize_cashier_inpatient_detail(
+                    env, admission._cashier_detail(), FINANCIAL_REVIEW_MESSAGES
+                )
+                payload["replayed"] = replayed
+                response = success_response(payload)
         except CashierSettlementError as error:
             raise _settlement_api_error(error) from None
-
+        except AccessError:
+            raise ApiError(
+                "inpatient_refund_not_authorized",
+                "Refunds are recorded by the Accountant, Hospital Manager or "
+                "Hospital System Administrator.",
+                403,
+            ) from None
         return response
+
+
+def _require_payment_role(env):
+    if not may_record_payment(env):
+        raise ApiError(
+            "payment_not_authorized",
+            "Recording operational payment requires the Hospital Cashier, "
+            "Accountant, Hospital Manager or Hospital System Administrator role.",
+            403,
+        )
+
+
+def _optional_body_text(name):
+    value = read_json_body().get(name)
+    if value in (None, False, ""):
+        return None
+    if not isinstance(value, str):
+        raise ApiError("payment_validation_failed", "'%s' must be a string." % name, 400)
+    return value.strip() or None
+
+
+def _inpatient_money_act(env, admission, admission_id, act):
+    """ONE atomic unit, as for the visit payment: the stay posting, the
+    receipt and the serialized response commit together or not at all."""
+    try:
+        with env.cr.savepoint():
+            receipt, replayed = act()
+            try:
+                env.invalidate_all()
+                payload = serialize_cashier_inpatient_detail(
+                    env, admission._cashier_detail(), FINANCIAL_REVIEW_MESSAGES
+                )
+                payload["receipt"] = serialize_cashier_receipt(receipt)
+                payload["replayed"] = replayed
+                response = success_response(payload)
+            except Exception as error:
+                _logger.exception(
+                    "Cashier inpatient money act response failed for admission=%s "
+                    "uid=%s; rolling it back",
+                    admission_id,
+                    env.uid,
+                )
+                raise PaymentResponseError(str(error)) from error
+    except CashierSettlementError as error:
+        raise _settlement_api_error(error) from None
+    return response

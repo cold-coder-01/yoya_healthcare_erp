@@ -161,9 +161,22 @@ class TestPrepaymentComparison(FinancialCase):
         receipt = self._pay(admission, 1000.0)
         self._deliver(charge, 4)
 
+        # IN CARE: the excess is patient credit held toward ongoing care.
         summary = self._summary(admission)
         self.assertEqual(summary["prepayment_available"], 1000.0)
         self.assertEqual(summary["actual_delivered"], 400.0)
+        self.assertEqual(summary["patient_credit"], 600.0)
+        self.assertEqual(summary["refundable_balance"], 0.0)
+        self.assertEqual(summary["financial_state"], "credit")
+        status = self._status(admission)
+        self.assertTrue(status["patient_credit"])
+        self.assertFalse(status["refund_due"])
+
+        # MEDICALLY READY: the same 600 is now the patient's to be given back.
+        admission.with_user(self.doctor_user)._desk_request_medical_discharge(
+            "Well; home.", str(uuid.uuid4()), admission.sudo().workflow_revision
+        )
+        summary = self._summary(admission)
         self.assertEqual(summary["refundable_balance"], 600.0)
         self.assertEqual(summary["remaining_due"], 0.0)
         self.assertEqual(summary["financial_state"], "refundable")
@@ -171,6 +184,7 @@ class TestPrepaymentComparison(FinancialCase):
         status = self._status(admission)
         self.assertEqual(status["financial_state"], "refundable")
         self.assertTrue(status["refund_due"])
+        self.assertFalse(status["patient_credit"])
         self.assertFalse(status["settlement_required"])
         self.assertFalse(status["billing_blocked"])
 
@@ -243,7 +257,8 @@ class TestPrepaymentComparison(FinancialCase):
         status = self._status(admission)
         self.assertEqual(
             set(status),
-            {"financial_state", "billing_blocked", "settlement_required", "refund_due", "review_reasons"},
+            {"financial_state", "billing_blocked", "settlement_required", "refund_due",
+             "patient_credit", "review_reasons"},
         )
         for value in (status["financial_state"], status["billing_blocked"],
                       status["settlement_required"], status["refund_due"]):

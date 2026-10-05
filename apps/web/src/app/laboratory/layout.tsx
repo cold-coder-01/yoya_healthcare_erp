@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import FullscreenToggle from "@/components/workstation/fullscreen-toggle";
+import { hospitalBrand } from "@/lib/branding";
 import { loadReceptionSession } from "@/lib/reception-session.server";
 
 /**
@@ -25,7 +26,7 @@ export default async function LaboratoryLayout({
 }) {
   // Never throws; the shell cannot take the workstation down.
   const session = await loadReceptionSession();
-  const brand = session?.companyName ?? "YOYA General Hospital";
+  const brand = hospitalBrand(session?.companyName);
 
   const userName = session?.userName ?? "";
   // First letter of the signed-in user, for the identity chip. Falls back to a

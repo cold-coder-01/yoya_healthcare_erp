@@ -55,3 +55,31 @@ export function clearanceDetailsFromPayload(
   const hasAny = Object.values(details).some((value) => value !== undefined);
   return hasAny ? details : null;
 }
+
+/**
+ * Read a BFF response body WITHOUT turning a non-JSON answer into a fake
+ * "unreachable" error.
+ *
+ * `response.json()` throws on an HTML page (a Next.js 404 or error page, a
+ * proxy error), and callers that caught that throw reported "unable to reach
+ * the service" -- although the service HAD answered, with an HTTP status that
+ * named the real problem. This returns the parsed envelope when the body is
+ * JSON, and otherwise a standard error envelope carrying the status, so the
+ * caller's ordinary error branch shows what actually happened. Only a
+ * rejected `fetch` is a connectivity failure.
+ */
+export async function readJsonEnvelope(response: Response, service: string): Promise<unknown> {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {
+      success: false,
+      error: {
+        code: "unexpected_response",
+        message: `${service} answered with an unexpected response (HTTP ${response.status}). Nothing was saved. Reload the page; if it persists, the web server may need a restart.`,
+        status: response.status,
+      },
+    };
+  }
+}

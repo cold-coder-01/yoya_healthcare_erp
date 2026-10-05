@@ -37,7 +37,10 @@ from .test_admissions_desk_mutations_api import VISIT, AdmissionsMutationCase
 
 TRANSFER = DETAIL + "/transfer"
 CANCEL = DETAIL + "/cancel-request"
-FINANCIAL_KEYS = {"financial_state", "billing_blocked", "settlement_required", "refund_due", "review_reasons"}
+FINANCIAL_KEYS = {
+    "financial_state", "billing_blocked", "settlement_required", "refund_due", "patient_credit",
+    "review_reasons",
+}
 
 
 def token():
@@ -288,9 +291,9 @@ class TestFinancialState(AdmissionsTransferCase):
                 self.assertEqual(set(financial), FINANCIAL_KEYS)
                 self.assertIn(
                     financial["financial_state"],
-                    ("covered", "due", "refundable", "pending", "not_applicable", "needs_review"),
+                    ("covered", "due", "refundable", "credit", "pending", "not_applicable", "needs_review"),
                 )
-                for flag in ("billing_blocked", "settlement_required", "refund_due"):
+                for flag in ("billing_blocked", "settlement_required", "refund_due", "patient_credit"):
                     self.assertIsInstance(financial[flag], bool, flag)
                 for reason in financial["review_reasons"]:
                     self.assertEqual(set(reason), {"code", "message"})

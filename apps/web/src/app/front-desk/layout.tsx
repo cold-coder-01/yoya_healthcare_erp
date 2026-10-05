@@ -4,6 +4,7 @@ import FrontDeskUserMenu from "@/components/front-desk/front-desk-user-menu";
 import FullscreenToggle from "@/components/workstation/fullscreen-toggle";
 import WorkstationNav from "@/components/navigation/workstation-nav";
 import { FRONT_DESK_ROUTE, frontOfHouseNavItems } from "@/lib/reception-roles";
+import { hospitalBrand } from "@/lib/branding";
 import { loadReceptionSession } from "@/lib/reception-session.server";
 
 /**
@@ -40,7 +41,7 @@ export default async function FrontDeskLayout({ children }: { children: ReactNod
 
   // Falls back to static text when the lookup fails; loadReceptionSession never
   // throws, so the shell cannot take the workstation down.
-  const brand = session?.companyName ?? "YOYA General Hospital";
+  const brand = hospitalBrand(session?.companyName);
   const roleLabel = session?.roles?.front_desk_nurse
     ? "Front Desk Nurse"
     : "Front Desk";

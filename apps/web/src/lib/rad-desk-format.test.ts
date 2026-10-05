@@ -1101,3 +1101,17 @@ test("a sign-off refusal prefers the server's fixed sentence and never carries a
     assert.equal(shouldReconcileAfterSignoff(code), false, String(code));
   }
 });
+
+test("an active inpatient's advance is worded without a figure (covered / shortfall)", () => {
+  const covered = clearanceNotice("to_schedule", "inpatient_credit");
+  assert.equal(covered, "Financially covered by the patient's inpatient advance.");
+  assert.equal(clearanceNotice("ready_to_start", "inpatient_credit"), covered);
+  const short = clearanceNotice("awaiting_clearance", "shortfall");
+  assert.equal(short, "Additional payment required before this service can proceed.");
+  for (const notice of [covered, short]) {
+    assert.doesNotMatch(notice as string, /\d|amount|birr|etb|invoice|receipt|balance|price/i);
+  }
+  // An outpatient, or a service paid for itself, says what it always said.
+  assert.equal(clearanceNotice("to_schedule", "service"), null);
+  assert.equal(clearanceNotice("completed", "inpatient_credit"), null);
+});

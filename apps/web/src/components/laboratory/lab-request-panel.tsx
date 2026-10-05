@@ -71,8 +71,8 @@ function Field({
   );
 }
 
-function ClearanceBanner({ status }: { status: string }) {
-  const notice = clearanceNotice(status);
+function ClearanceBanner({ status, cover }: { status: string; cover?: string | null }) {
+  const notice = clearanceNotice(status, cover);
   if (!notice) return null;
 
   const blocked = status === "awaiting_clearance";
@@ -334,7 +334,7 @@ export default function LabRequestPanel({
       </header>
 
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
-        <ClearanceBanner status={detail.status} />
+        <ClearanceBanner status={detail.status} cover={detail.financial_cover} />
 
         {/*
           THE COLLECT ACTION. Rendered for exactly one status and no other, so

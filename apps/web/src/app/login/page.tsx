@@ -5,6 +5,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { YoyaLogo } from "@/components/public-page-chrome";
+import { CLINICAL_SYSTEM_DISPLAY_NAME, HOSPITAL_DISPLAY_NAME } from "@/lib/branding";
 import {
   greetingForHour,
   matchesRememberedIdentity,
@@ -196,7 +197,7 @@ export default function LoginPage() {
 
           <div className="relative z-30 max-w-[245px] px-8 pt-9 sm:px-11 sm:pt-11 lg:px-12 lg:pt-20">
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-50/90">
-              YOYA clinical system
+              {CLINICAL_SYSTEM_DISPLAY_NAME}
             </p>
             <h1 className="mt-4 text-4xl font-bold tracking-[-0.04em] sm:text-5xl">
               HELLO!
@@ -215,7 +216,7 @@ export default function LoginPage() {
               </div>
               <div className="mt-1 text-center">
                 <p className="text-[0.7rem] font-bold uppercase tracking-[0.24em] text-emerald-700">
-                  YOYA General Hospital
+                  {HOSPITAL_DISPLAY_NAME}
                 </p>
                 <h2 className="mt-3 text-3xl font-semibold tracking-[-0.035em] text-[#07152f]">
                   Sign in to EMR POC

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 
 import FullscreenToggle from "@/components/workstation/fullscreen-toggle";
+import { HOSPITAL_DISPLAY_NAME } from "@/lib/branding";
 
 export default function TopHeader({
   title,
@@ -24,7 +25,7 @@ export default function TopHeader({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">
-            YOYA General Hospital
+            {HOSPITAL_DISPLAY_NAME}
           </p>
           <h1 className="mt-1 text-xl font-semibold tracking-tight text-slate-950">
             {title}

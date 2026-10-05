@@ -158,12 +158,24 @@ export function laneStatuses(laneKey: string): readonly string[] {
  * The clearance gate itself is Mark In Progress on the server; this only tells
  * the department why a study cannot be started yet.
  */
-export function clearanceNotice(lane: string | null | undefined): string | null {
+export function clearanceNotice(
+  lane: string | null | undefined,
+  cover?: string | null,
+): string | null {
   if (lane === "awaiting_clearance") {
+    // An active inpatient whose held advance falls short of this study.
+    if (cover === "shortfall") return INPATIENT_SHORTFALL_TEXT;
     return "Awaiting financial clearance. The study cannot be started until the patient is cleared at the cashier.";
+  }
+  if (cover === "inpatient_credit" && (lane === "to_schedule" || lane === "ready_to_start")) {
+    return INPATIENT_COVERED_TEXT;
   }
   return null;
 }
+
+/** Amount-free wording for an active inpatient's advance (shared with Lab). */
+export const INPATIENT_COVERED_TEXT = "Financially covered by the patient's inpatient advance.";
+export const INPATIENT_SHORTFALL_TEXT = "Additional payment required before this service can proceed.";
 
 /**
  * The sentence shown for an anomaly. The SERVER's wording wins; the fallbacks

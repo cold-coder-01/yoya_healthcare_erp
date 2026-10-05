@@ -26,6 +26,7 @@ DESK_STATUS = {
     "admission_invalid_state": 409,
     "admission_encounter_mismatch": 409,
     "admission_bed_unavailable": 409,
+    "admission_financial_clearance_required": 409,
     "admission_bed_conflict": 409,
     "admission_active_conflict": 409,
     "admission_integrity_error": 409,
@@ -37,6 +38,8 @@ DESK_STATUS = {
     "admission_not_medically_ready": 409,
     "admission_settlement_required": 409,
     "admission_financial_review_required": 409,
+    # The estimate lock: well formed, but medical discharge has begun.
+    "admission_estimate_locked": 409,
     # The one code the HTTP layer owns: an unexpected failure, rolled back.
     "admission_mutation_failed": 500,
 }
@@ -51,6 +54,8 @@ CANCEL_REQUEST_KEYS = frozenset({"operation_token", "expected_revision"})
 # nothing but the token and the revision -- every gate is re-derived server-side.
 DISCHARGE_REQUEST_KEYS = frozenset({"operation_token", "expected_revision", "summary"})
 FINALIZE_DISCHARGE_KEYS = frozenset({"operation_token", "expected_revision"})
+# Advance slice. The physician's estimate: an amount and why. Nothing else.
+ESTIMATE_KEYS = frozenset({"operation_token", "expected_revision", "amount", "reason"})
 
 
 def desk_error(code):

@@ -56,6 +56,9 @@ class CashierInpatientCase(AdmissionsDischargeCase):
 
     def _pay(self, admission, amount, user=None, key=None, **extra):
         body = {"amount": amount, "payment_method": "cash", "idempotency_key": key or uuid.uuid4().hex}
+        if 'quote' not in extra:
+            # What the desk does: quote the settlement it is showing.
+            extra['quote'] = self._ok(INPATIENT % admission.id, self.cashier)['settlement']['quote']
         body.update(extra)
         return self._post(INPATIENT_PAY % admission.id, body, user or self.cashier)
 
@@ -133,7 +136,7 @@ class TestInpatientQueue(CashierInpatientCase):
         self.ward_b.sudo().write({"daily_ward_rate": 0.0, "admission_fee": 0.0})
         room = self._room(self.ward_b, "F1")
         bed = self._bed(room, "F1-1")
-        _, encounter, admission = self._inpatient(bed)
+        appointment, encounter, admission = self._inpatient(bed)
         engine = self.env["hospital.billing.engine"].sudo()
         service = self.env["hospital.billing.service"].sudo().create({
             "name": "Cashier F medicine %s" % uuid.uuid4().hex[:5],
@@ -149,6 +152,9 @@ class TestInpatientQueue(CashierInpatientCase):
             1000.0, "cash", intake_token=uuid.uuid4().hex
         )
         engine.mark_charge_delivered(charge, qty_delivered=4)
+        # Credit during care is not a refund; it is owed once medically ready.
+        response, payload = self._http_ready(appointment, admission)
+        self.assertEqual(response.status_code, 200, payload)
 
         [row], _ = self._inpatient_rows(admission)
         self.assertEqual(row["lane"], "refund_due")
@@ -187,7 +193,8 @@ class TestInpatientQueue(CashierInpatientCase):
         self.assertFalse(set(_keys(detail)) & CLINICAL_KEYS)
         self.assertNotIn("SECRET-CLINICAL-REASON", json.dumps(detail))
         by = {entry["key"]: entry["amount"] for entry in detail["delivered_by_category"]}
-        self.assertEqual(by["bed_stay"], 3 * 800.0 + 500.0)
+        self.assertEqual(by["bed_stay"], 3 * 800.0)
+        self.assertEqual(by["admission"], 500.0)
         self.assertEqual(sum(by.values()), detail["financial"]["actual_delivered"])
         self.assertTrue(detail["collectability"]["collectable"])
         self.assertEqual(detail["collectability"]["max_amount"], detail["financial"]["remaining_due"])

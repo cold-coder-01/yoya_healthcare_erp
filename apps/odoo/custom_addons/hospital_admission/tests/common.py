@@ -143,6 +143,20 @@ class AdmissionCase(TransactionCase):
             {"name": "%s %s" % (name, uuid.uuid4().hex[:6])}
         )
 
+    # ADVANCE SLICE. A self-pay request needs the doctor's estimate and the full
+    # advance -- or an authorized emergency bypass -- before a bed. Suites that
+    # are NOT about admission money clear their visits through that existing,
+    # audited emergency route (a Hospital Manager, with a reason); it touches
+    # clearance only, never a delivered amount. Gate tests set this False.
+    CLEAR_ADMISSION_VISITS = True
+
+    def _clear_visit(self, encounter):
+        if self.CLEAR_ADMISSION_VISITS:
+            encounter.with_user(self.manager).write({
+                "emergency_bypass": True,
+                "emergency_bypass_reason": "Test fixture: admission money is not under test here.",
+            })
+
     def _encounter(self, patient, state="active", **overrides):
         """An open episode for the patient.
 
@@ -159,6 +173,7 @@ class AdmissionCase(TransactionCase):
         }
         vals.update(overrides)
         encounter = self.env["hospital.encounter"].sudo().create(vals)
+        self._clear_visit(encounter)
         if state and encounter.state != state:
             encounter.sudo().write({"state": state})
         return encounter

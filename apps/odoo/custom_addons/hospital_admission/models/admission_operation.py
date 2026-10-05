@@ -58,6 +58,9 @@ class HospitalAdmissionOperation(models.Model):
             # Admissions Slice 4.
             ("medical_discharge", "Medical Discharge"),
             ("final_discharge", "Final Discharge"),
+            # Inpatient advance slice.
+            ("estimate", "Inpatient Estimate"),
+            ("refund", "Patient Refund"),
         ],
         required=True,
         readonly=True,

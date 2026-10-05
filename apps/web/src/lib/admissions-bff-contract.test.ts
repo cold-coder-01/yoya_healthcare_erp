@@ -47,7 +47,7 @@ const TRANSFER = read("app/api/admissions/[id]/transfer/route.ts");
 const CANCEL = read("app/api/admissions/[id]/cancel-request/route.ts");
 const FINALIZE = read("app/api/admissions/[id]/finalize-discharge/route.ts");
 
-test("five read routes and the four mutation routes exist, and nothing else", () => {
+test("six read routes and the four mutation routes exist, and nothing else", () => {
   const root = new URL("../app/api/admissions/", import.meta.url);
   assert.ok(existsSync(root));
   assert.deepEqual(listRoutes(root).sort(), [
@@ -55,6 +55,7 @@ test("five read routes and the four mutation routes exist, and nothing else", ()
     "[id]/cancel-request/route.ts",
     "[id]/finalize-discharge/route.ts",
     "[id]/route.ts",
+    "[id]/settlement/route.ts",
     "[id]/transfer/route.ts",
     "beds/route.ts",
     "session/route.ts",

@@ -293,6 +293,16 @@ ADMISSION_ERROR_MESSAGES = {
         "An admission's reference is assigned by the admission sequence when it is "
         "created and cannot be chosen or changed. Nothing was changed."
     ),
+    "admission_financial_clearance_required": (
+        "This admission is not financially cleared: it needs the doctor's "
+        "inpatient estimate and the full advance at the cashier, or an "
+        "authorized emergency bypass, before a bed is assigned. Nothing was "
+        "changed."
+    ),
+    "admission_estimate_write_refused": (
+        "An admission's cost estimate is given by its physician through the Doctor "
+        "Desk and cannot be written directly. Nothing was changed."
+    ),
     "admission_sequence_missing": (
         "The admission reference sequence is not configured, so no reference can "
         "be assigned. Nothing was created."
@@ -378,6 +388,10 @@ ADMISSION_ERROR_MESSAGES = {
     "admission_transfer_history_refused": (
         "Transfer history is written by the Transfer action and cannot be created, "
         "changed or deleted directly. Nothing was changed."
+    ),
+    "admission_estimate_history_refused": (
+        "Estimate revisions are recorded by the doctor's estimate action and cannot "
+        "be created, changed or deleted directly. Nothing was changed."
     ),
     "admission_timeline_incoherent": (
         "The transfer time would fall before the start of the patient's current stay "
@@ -583,6 +597,18 @@ ADMISSION_MEDICAL_DISCHARGE_FIELDS = (
     "medical_discharge_by_id",
 )
 
+# Written only under estimate_capability(), raised by _desk_set_estimate().
+_estimate_var = contextvars.ContextVar("hospital_admission_estimate_capability", default=False)
+
+
+def estimate_capability():
+    """Raised ONLY by the doctor's estimate workflow."""
+    return _raised(_estimate_var)
+
+
+def has_estimate_capability():
+    return _estimate_var.get()
+
 
 # WHO MAY DO WHAT, decided in the MODEL so every channel obeys it. The HTTP gate
 # in yoya_emr_api is a fail-fast in front of these, never the only control.
@@ -630,6 +656,28 @@ G_CASHIER = "hospital_billing.group_hospital_cashier"
 G_ACCOUNTANT = "hospital_management.group_hospital_accountant"
 ADMISSION_MONEY_READ = ",".join((G_CASHIER, G_ACCOUNTANT, G_MANAGER, G_SYSADMIN))
 
+# THE INPATIENT ESTIMATE (Advance slice). A clinical cost ESTIMATE, not a bill:
+# set and revised only by the admission's physician (or oversight) through
+# _desk_set_estimate(). Readable by the doctor who gives it, the admissions
+# clerk who discharges against it, and the money roles. NOT the ward nurse.
+ADMISSION_ESTIMATE_FIELDS = (
+    "estimated_amount",
+    "estimate_reason",
+    "estimated_by_id",
+    "estimated_at",
+    "estimate_revision",
+)
+ADMISSION_ESTIMATE_READ = ",".join(
+    (G_DOCTOR, G_RECEPTIONIST, G_CASHIER, G_ACCOUNTANT, G_MANAGER, G_SYSADMIN)
+)
+# A doctor may estimate from the request (draft) until the stay ends.
+ADMISSION_ESTIMATE_STATES = ("draft", "admitted", "transferred")
+
+# Who may READ the final settlement on the Admissions Desk: the clerk who
+# finalizes the discharge against it, and oversight. Not the doctor, not the
+# ward nurse.
+DESK_SETTLEMENT_READ_GROUPS = DESK_FINAL_DISCHARGE_GROUPS
+
 DESK_TOKEN_MAX_LENGTH = 64
 DESK_REASON_MAX_LENGTH = 2000
 
@@ -666,6 +714,11 @@ DESK_ERROR_MESSAGES = {
     "admission_bed_unavailable": (
         "That bed is not available. Refresh the bed board and choose another."
     ),
+    "admission_financial_clearance_required": (
+        "Not financially cleared for admission. The doctor's inpatient estimate "
+        "and the full advance at the cashier are required first, unless an "
+        "emergency bypass has been authorized. Nothing was changed."
+    ),
     "admission_bed_conflict": (
         "That bed was just taken by another admission. Refresh the bed board and "
         "choose another."
@@ -694,6 +747,11 @@ DESK_ERROR_MESSAGES = {
         "The inpatient account needs review before the patient can be discharged."
     ),
     "admission_summary_required": "Write a discharge summary before requesting discharge.",
+    # The estimate lock (_estimate_lock()): medical discharge has begun.
+    "admission_estimate_locked": (
+        "The inpatient estimate is locked: medical discharge has begun, and final "
+        "settlement now uses actual delivered care. Nothing was changed."
+    ),
 }
 
 
@@ -719,6 +777,7 @@ SLICE0_TO_DESK = {
     "admission_encounter_company_mismatch": "admission_company_mismatch",
     "admission_company_mismatch": "admission_company_mismatch",
     "admission_bed_not_available": "admission_bed_unavailable",
+    "admission_financial_clearance_required": "admission_financial_clearance_required",
     "admission_bed_owned_by_other": "admission_bed_conflict",
     "admission_duplicate_bed_in_batch": "admission_bed_conflict",
     "admission_location_incoherent": "admission_location_mismatch",

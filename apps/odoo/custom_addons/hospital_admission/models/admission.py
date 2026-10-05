@@ -19,6 +19,8 @@ from .admission_authority import (
     ADMISSION_MONEY_READ,
     ADMISSION_RATE_SNAPSHOT_FIELDS,
     ADMISSION_SEQUENCE_CODE,
+    ADMISSION_ESTIMATE_FIELDS,
+    has_estimate_capability,
     DESK_FINAL_DISCHARGE_GROUPS,
     DESK_MEDICAL_DISCHARGE_OVERSIGHT_GROUPS,
     ADMISSION_TIMELINE_FIELDS,
@@ -792,6 +794,13 @@ class HospitalAdmission(models.Model):
             ):
                 raise AdmissionWorkflowError("admission_medical_discharge_write_refused")
             if (
+                any(vals.get(name) for name in ADMISSION_ESTIMATE_FIELDS)
+                and not has_estimate_capability()
+            ):
+                # The estimate is the physician's, given through the Doctor
+                # Desk -- never a value whoever creates the row supplies.
+                raise AdmissionWorkflowError("admission_estimate_write_refused")
+            if (
                 any(vals.get(name) for name in ADMISSION_RATE_SNAPSHOT_FIELDS)
                 and not has_admission_rate_snapshot_capability()
             ):
@@ -924,6 +933,15 @@ class HospitalAdmission(models.Model):
                 and not has_medical_discharge_capability()
             ):
                 raise AdmissionWorkflowError("admission_medical_discharge_write_refused")
+
+            # ── estimate: the physician's, via the Doctor Desk only ──
+            # Compared on sudo(): the figures are group-restricted, and whether
+            # a write CHANGES them is not a question of who asks.
+            if (
+                changed_fields(rec.sudo(), ADMISSION_ESTIMATE_FIELDS, vals)
+                and not has_estimate_capability()
+            ):
+                raise AdmissionWorkflowError("admission_estimate_write_refused")
 
             # ── identity: settled from creation, never relinked ────
             #
@@ -1118,6 +1136,16 @@ class HospitalAdmission(models.Model):
 
         self._assert_no_other_active_admission()
         self._adopt_inpatient_encounter()
+
+        # FINANCIAL CLEARANCE BEFORE A BED (Advance slice): the doctor's
+        # estimate and the full advance, or an authorized emergency bypass.
+        # Judged AFTER the visit is adopted, so it sees the visit the stay will
+        # belong to (its payer and any emergency bypass); a refusal rolls the
+        # adoption back with everything else. Every user channel -- the
+        # Admissions Desk and the backend form alike -- passes here. Only
+        # superuser (system / migration) code skips it.
+        if not self.env.su and not self._admission_financial_clearance()["cleared"]:
+            raise AdmissionWorkflowError("admission_financial_clearance_required")
 
         if self.bed_id:
             # The coherence and company constraints run on write, but the bed
@@ -1675,6 +1703,9 @@ class HospitalAdmission(models.Model):
             raise AdmissionDeskError("admission_invalid_state")
         if not self.encounter_id:
             raise AdmissionDeskError("admission_encounter_required")
+        # Refused before the bed is touched: the desk says WHY, not "no bed".
+        if not self._admission_financial_clearance()["cleared"]:
+            raise AdmissionDeskError("admission_financial_clearance_required")
 
         # The bed, re-read under the lock. Checked here as well as in Slice 0 so
         # the desk can tell "not available" from "someone else holds it".

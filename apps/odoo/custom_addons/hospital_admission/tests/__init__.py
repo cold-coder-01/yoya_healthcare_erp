@@ -13,3 +13,6 @@ from . import test_admission_desk_transfer
 from . import test_admission_discharge
 from . import test_admission_cashier_settlement
 from . import test_admission_reference
+from . import test_admission_advance_settlement
+from . import test_admission_clearance
+from . import test_admission_accounting

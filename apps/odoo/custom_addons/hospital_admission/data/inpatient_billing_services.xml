@@ -36,4 +36,15 @@
         <field name="prepayment_required" eval="False"/>
         <field name="tax_treatment">exempt</field>
     </record>
+    <!-- Advance slice: the charge an inpatient DEPOSIT is held on. Never
+         delivered, so never care and never revenue; delivery basis, so it never
+         blocks clearance. Priced 1.00 per unit, quantity = the estimate. -->
+    <record id="billing_service_inpatient_deposit" model="hospital.billing.service">
+        <field name="name">Inpatient advance deposit</field>
+        <field name="code">INPATIENT-ADVANCE-DEPOSIT</field>
+        <field name="service_type">admission</field>
+        <field name="default_price">0.0</field>
+        <field name="prepayment_required" eval="False"/>
+        <field name="tax_treatment">exempt</field>
+    </record>
 </odoo>

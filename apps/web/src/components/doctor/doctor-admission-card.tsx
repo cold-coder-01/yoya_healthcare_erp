@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   ADMISSION_REASON_MAX,
@@ -19,7 +19,10 @@ import {
   tokenFor,
   type PendingAdmissionOperation,
 } from "@/lib/admissions-desk-actions";
-import { formatLengthOfStay, locationLabel } from "@/lib/admissions-desk-format";
+import { formatLengthOfStay } from "@/lib/admissions-desk-format";
+import { buildDischargeReview } from "@/lib/doctor-discharge-review";
+import DoctorDischargeReviewDialog from "./doctor-discharge-review-dialog";
+import DoctorInpatientEstimate from "./doctor-inpatient-estimate";
 import { messageFromPayload } from "@/lib/api-error";
 import { formatHospitalDateTime } from "@/lib/clinical-format";
 import type {
@@ -52,10 +55,12 @@ const STATUS_TONE: Record<DoctorAdmissionSummary["status"], string> = {
  * is shown at their CURRENT ward / room / bed.
  *
  * SLICE 4: "Request discharge…" declares the inpatient MEDICALLY ready, offered
- * only on the server's `can_request_discharge`. Write the summary, review
- * (patient, admission, location, summary, warnings, revision), confirm with a
- * pointer click. It frees no bed and shows no money: the Admissions Desk
- * finalizes the discharge. Transfer is never here.
+ * only on the server's `can_request_discharge`. Write the summary, then
+ * "Review discharge" opens a modal wizard (DoctorDischargeReviewDialog:
+ * patient, admission, location, summary, warnings, revision) -- never an
+ * inline card, which a long summary overflowed -- and confirm with a pointer
+ * click. It frees no bed and shows no money: the Admissions Desk finalizes the
+ * discharge. Transfer is never here.
  *
  * Whether the request is offered is the SERVER's `can_request`; when it is
  * not, the server's reason is shown instead. The card keeps the summary the
@@ -71,11 +76,18 @@ export default function DoctorAdmissionCard({
   summary: initial,
   compact = false,
   patientName = null,
+  patientMrn = null,
+  encounterName = null,
+  physicianName = null,
 }: {
   appointmentId: number;
   summary: DoctorAdmissionSummary | undefined;
   /** For the discharge review: the patient this visit is for. */
   patientName?: string | null;
+  patientMrn?: string | null;
+  encounterName?: string | null;
+  /** The visit's doctor, shown as the responsible physician. */
+  physicianName?: string | null;
   /** One-line strip for the consultation workspace. */
   compact?: boolean;
 }) {
@@ -94,8 +106,11 @@ export default function DoctorAdmissionCard({
   const backRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    if (step === "confirm" || step === "cancel" || step === "discharge_confirm") backRef.current?.focus();
+    if (step === "confirm" || step === "cancel") backRef.current?.focus();
   }, [step]);
+
+  /** Back to the summary editor; the typed summary is kept. */
+  const closeDischargeReview = useCallback(() => setStep("discharge_write"), []);
 
   if (!summary) return null;
 
@@ -351,7 +366,10 @@ export default function DoctorAdmissionCard({
             <button
               type="button"
               disabled={!cleanedDischarge}
-              onClick={() => setStep("discharge_confirm")}
+              onClick={() => {
+                setNotice(null);
+                setStep("discharge_confirm");
+              }}
               className="h-7 rounded-md bg-violet-700 px-2.5 cl-meta font-bold text-white hover:bg-violet-800 disabled:opacity-40"
             >
               Review discharge
@@ -361,51 +379,18 @@ export default function DoctorAdmissionCard({
       ) : null}
 
       {step === "discharge_confirm" && admission && cleanedDischarge ? (
-        <div role="group" aria-label="Confirm discharge request" className="flex flex-col gap-1.5 rounded-md border border-violet-200 bg-violet-50/60 px-2 py-1.5">
-          <p className="cl-body text-slate-800">Declare this patient medically ready for discharge?</p>
-          <dl className="grid grid-cols-[110px_minmax(0,1fr)] gap-y-0.5 cl-meta">
-            <dt className="text-slate-500">Patient</dt>
-            <dd className="font-bold text-slate-900">{patientName ?? "—"}</dd>
-            <dt className="text-slate-500">Admission</dt>
-            <dd className="font-mono">{admission.reference}</dd>
-            <dt className="text-slate-500">Location</dt>
-            <dd className="font-mono">{locationLabel(admission.location)}</dd>
-            <dt className="text-slate-500">Summary</dt>
-            <dd className="whitespace-pre-wrap">{cleanedDischarge}</dd>
-            <dt className="text-slate-500">Revision</dt>
-            <dd className="font-mono">{admission.workflow_revision}</dd>
-          </dl>
-          {summary.discharge_warnings.length ? (
-            <ul className="list-disc pl-5 cl-meta text-amber-900">
-              {summary.discharge_warnings.map((warning) => (
-                <li key={warning.code}>{warning.message}</li>
-              ))}
-            </ul>
-          ) : null}
-          <div className="flex justify-end gap-2">
-            <button
-              ref={backRef}
-              type="button"
-              disabled={busy}
-              onClick={() => setStep("discharge_write")}
-              className="h-7 rounded-md border border-slate-300 bg-white px-2.5 cl-meta font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-40"
-            >
-              Go back
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={(event) => {
-                // Pointer only: a keyboard-activated click reports detail 0.
-                if (event.detail === 0) return;
-                void requestDischarge();
-              }}
-              className="h-7 rounded-md bg-violet-700 px-2.5 cl-meta font-bold text-white hover:bg-violet-800 disabled:opacity-40"
-            >
-              {busy ? "Requesting…" : "Request discharge"}
-            </button>
-          </div>
-        </div>
+        <DoctorDischargeReviewDialog
+          review={buildDischargeReview(
+            admission,
+            summary.discharge_warnings,
+            { patientName, patientMrn, encounterName, physicianName },
+            cleanedDischarge,
+          )}
+          busy={busy}
+          notice={notice}
+          onConfirm={() => void requestDischarge()}
+          onClose={closeDischargeReview}
+        />
       ) : null}
 
       {step === "cancel" && admission ? (
@@ -510,7 +495,8 @@ export default function DoctorAdmissionCard({
         </div>
       ) : null}
 
-      {notice ? (
+      {/* While the review is open its notice is shown inside the dialog. */}
+      {notice && step !== "discharge_confirm" ? (
         <p
           role="status"
           className={`rounded border px-2 py-1 cl-meta ${
@@ -523,6 +509,21 @@ export default function DoctorAdmissionCard({
         >
           {notice.text}
         </p>
+      ) : null}
+
+      {/* The inpatient estimate: its own fetch and route, so this card's visit
+          payload stays amount-free. PRE-ADMISSION FIRST -- shown the moment a
+          request exists (status requested), in the consultation strip as well
+          as the patient panel, and kept visible through the stay. */}
+      {(summary.status === "requested" ||
+        summary.status === "admitted" ||
+        summary.status === "transferred" ||
+        summary.status === "discharge_pending") ? (
+        <DoctorInpatientEstimate
+          key={`${admission?.id ?? "none"}:${summary.status}`}
+          appointmentId={appointmentId}
+          compact={compact}
+        />
       ) : null}
     </section>
   );

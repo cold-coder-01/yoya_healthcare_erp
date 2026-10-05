@@ -228,7 +228,9 @@ export function financialLabel(financial: AdmissionFinancial | null | undefined)
     case "due":
       return { text: "Payment required at the cashier before discharge.", tone: "warn" };
     case "refundable":
-      return { text: "Refund due: the patient paid more than the care delivered. The cashier returns it.", tone: "warn" };
+      return { text: "Refund due: care is complete and the patient paid more than the care delivered. Accounting returns it.", tone: "warn" };
+    case "credit":
+      return { text: "Advance / patient credit: patient funds are being held toward ongoing inpatient care.", tone: "ok" };
     case "pending":
       return { text: "Nothing has been delivered or paid yet.", tone: "neutral" };
     case "needs_review":

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { messageFromPayload } from "@/lib/api-error";
+import { messageFromPayload, readJsonEnvelope } from "@/lib/api-error";
 import { formatHospitalTime } from "@/lib/clinical-format";
 import {
   NOTE_FIELDS,
@@ -252,13 +252,17 @@ export default function ConsultationWorkspace({
       setLoadError(null);
       setStatus("idle");
       setStatusMessage(null);
+      let reached = false;
       try {
         const response = await fetch(
           `/api/doctor/visits/${target}/consultation`,
           { cache: "no-store", signal: controller.signal },
         );
-        const payload =
-          (await response.json()) as ApiEnvelope<DoctorConsultationResponse>;
+        reached = true;
+        const payload = (await readJsonEnvelope(
+          response,
+          "The consultation service",
+        )) as ApiEnvelope<DoctorConsultationResponse>;
         if (controller.signal.aborted) return;
 
         if (!response.ok || !payload.success) {
@@ -274,7 +278,10 @@ export default function ConsultationWorkspace({
         }
       } catch {
         if (!controller.signal.aborted) {
-          setLoadError("Unable to reach the consultation service.");
+          // Only a rejected fetch is a connectivity failure.
+          setLoadError(
+            reached ? "The consultation service answered, but its reply could not be displayed. Reload the note before editing further." : "Unable to reach the consultation service.",
+          );
         }
       } finally {
         if (!controller.signal.aborted) {
@@ -394,6 +401,7 @@ export default function ConsultationWorkspace({
     setStatusMessage(null);
     const target = appointmentId;
 
+    let reached = false;
     try {
       const response = await fetch(
         `/api/doctor/visits/${target}/consultation/save`,
@@ -404,7 +412,11 @@ export default function ConsultationWorkspace({
           body: JSON.stringify(payload),
         },
       );
-      const body = (await response.json()) as ApiEnvelope<DoctorConsultationResponse>;
+      reached = true;
+      const body = (await readJsonEnvelope(
+        response,
+        "The consultation service",
+      )) as ApiEnvelope<DoctorConsultationResponse>;
 
       if (!response.ok || !body.success) {
         const code = body.success === false ? body.error.code : null;
@@ -443,7 +455,10 @@ export default function ConsultationWorkspace({
       return true;
     } catch {
       setStatus("error");
-      setStatusMessage("Unable to reach the consultation service.");
+      // Only a rejected fetch is a connectivity failure.
+      setStatusMessage(
+        reached ? "The consultation service answered, but its reply could not be displayed. Reload the note before editing further." : "Unable to reach the consultation service.",
+      );
       return false;
     }
   }, [
@@ -463,8 +478,10 @@ export default function ConsultationWorkspace({
       const response = await fetch(`/api/doctor/visits/${target}/consultation`, {
         cache: "no-store",
       });
-      const payload =
-        (await response.json()) as ApiEnvelope<DoctorConsultationResponse>;
+      const payload = (await readJsonEnvelope(
+        response,
+        "The consultation service",
+      )) as ApiEnvelope<DoctorConsultationResponse>;
       if (response.ok && payload.success) {
         applyServerRecord(payload.data.consultation);
         applyCompletionVerdict(payload.data);
@@ -515,6 +532,7 @@ export default function ConsultationWorkspace({
     setCompleteError(null);
     const target = appointmentId;
 
+    let reached = false;
     try {
       const response = await fetch(
         `/api/doctor/visits/${target}/consultation/complete`,
@@ -527,8 +545,11 @@ export default function ConsultationWorkspace({
           body: JSON.stringify({ version: consultation.version }),
         },
       );
-      const body =
-        (await response.json()) as ApiEnvelope<ConsultationCompleteResponse>;
+      reached = true;
+      const body = (await readJsonEnvelope(
+        response,
+        "The consultation service",
+      )) as ApiEnvelope<ConsultationCompleteResponse>;
 
       if (!response.ok || !body.success) {
         const code = body.success === false ? body.error.code : null;
@@ -560,7 +581,10 @@ export default function ConsultationWorkspace({
       onCompleted?.(body.data.visit_detail);
     } catch {
       setCompleteStatus("error");
-      setCompleteError("Unable to reach the consultation service.");
+      // Only a rejected fetch is a connectivity failure.
+      setCompleteError(
+        reached ? "The consultation service answered, but its reply could not be displayed. Reload the note before editing further." : "Unable to reach the consultation service.",
+      );
     }
   }, [
     appointmentId,
@@ -654,6 +678,9 @@ export default function ConsultationWorkspace({
             appointmentId={appointmentId}
             summary={detail.admission}
             patientName={detail.patient?.name ?? null}
+            patientMrn={detail.patient?.mrn ?? null}
+            encounterName={detail.encounter?.name ?? null}
+            physicianName={detail.visit.doctor?.name ?? null}
             compact
           />
         </div>

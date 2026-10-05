@@ -1,3 +1,4 @@
+import type { InpatientSettlement, SettlementState } from "@/types/inpatient-settlement";
 import type { ApiEnvelope, ReferenceRef } from "@/types/reception";
 
 export type { ApiEnvelope };
@@ -171,6 +172,7 @@ export type CashierActiveServiceRow = {
 export type CashierInpatientLane =
   | "due"
   | "part_paid"
+  | "advance_required"
   | "refund_due"
   | "needs_review"
   | "settled";
@@ -178,6 +180,7 @@ export type CashierInpatientLane =
 /** Why the row is in the queue. Decided server-side. */
 export type CashierInpatientSource =
   | "inpatient_settlement"
+  | "advance"
   | "refund_due"
   | "needs_review";
 
@@ -209,10 +212,22 @@ export type CashierInpatientIdentity = {
   };
 };
 
+/** The advance against the physician's estimate. Server figures. */
+export type CashierInpatientAdvance = {
+  requested: number;
+  received: number;
+  /** How much more the estimate admits (the deposit charge's own ceiling). */
+  outstanding: number;
+  /** In care, before medical discharge, with an estimate given. */
+  open: boolean;
+};
+
 export type CashierInpatientRow = CashierInpatientIdentity & {
   lane: CashierInpatientLane;
   source: CashierInpatientSource;
   financial_state: string;
+  settlement_state: SettlementState;
+  advance: CashierInpatientAdvance;
   currency: string | null;
   remaining_due: number;
   refundable_balance: number;
@@ -228,6 +243,7 @@ export type CashierInpatientCollectability = {
     | "refund_due"
     | "financial_review_required"
     | "settled"
+    | "advance_only"
     | "payment_not_authorized"
     | null;
 };
@@ -253,6 +269,18 @@ export type CashierInpatientDetail = CashierInpatientIdentity & {
     review_reasons: { code: string; message: string }[];
   };
   delivered_by_category: { key: string; label: string; amount: number }[];
+  /** The final settlement, as the Admissions Desk sees it too. */
+  settlement: InpatientSettlement;
+  advance: CashierInpatientAdvance;
+  advance_receipts: CashierInpatientDetail["settlement_receipts"];
+  advance_collectability: { collectable: boolean; max_amount: number; reason: string | null };
+  /** Refund due is SHOWN here and RECORDED by Accounting only. */
+  refund: {
+    refund_due: boolean;
+    amount: number;
+    may_record: boolean;
+    routed_to: "accounting" | null;
+  };
   settlement_receipts: {
     id: number;
     name: string;

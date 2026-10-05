@@ -61,17 +61,27 @@ the amount-free projection the desks serialize. sudo() throughout: the figures
 live on fields readable only by the money roles, and whether a stay is covered
 is a property of the data, not of the ward nurse asking.
 """
+import hashlib
+import json
+
 from odoo import models
 
 from odoo.addons.hospital_billing.models.billing_account import LIVE_CHARGE_STATES
 from odoo.addons.hospital_billing.models.charge_line import AMOUNT_TOLERANCE
 
+from .admission_authority import ADMISSION_ESTIMATE_STATES
+from .admission_cashier import SETTLEMENT_TOKEN_PREFIX
+from .admission_estimate import DEPOSIT_EVENT
 from .admission_stay import STAY_REVIEW_MESSAGES, STAY_STATES
 
 FINANCIAL_STATES = (
     "covered",         # patient share == patient funds
     "due",             # patient share exceeds patient funds
-    "refundable",      # the patient has paid more than their share
+    "refundable",      # care is over (or medically ready): the patient paid
+                       # more than their share, and the excess is theirs back
+    "credit",          # still IN CARE with patient funds above the care so far:
+                       # an advance / patient credit held toward ongoing care,
+                       # NOT a refund -- the stay is still accruing
     "pending",         # nothing delivered and nothing paid yet
     "not_applicable",  # no stay: a draft or cancelled admission
     "needs_review",    # the figures cannot be trusted until someone looks
@@ -86,7 +96,8 @@ PROCEDURE_SOURCE_MODEL = "hospital.procedure.request"
 # it); everything else by the billing catalogue's service_type, snapshotted on
 # the charge -- no clinical record is read to categorise money.
 DELIVERED_CATEGORIES = (
-    "bed_stay", "medication", "laboratory", "radiology", "procedure", "consultation", "other",
+    "admission", "bed_stay", "procedure", "medication", "laboratory", "radiology",
+    "consultation", "other",
 )
 SERVICE_TYPE_CATEGORY = {
     "admission": "bed_stay",
@@ -95,6 +106,33 @@ SERVICE_TYPE_CATEGORY = {
     "radiology": "radiology",
     "procedure": "procedure",
     "consultation": "consultation",
+}
+
+# THE SETTLEMENT STAGES, in the order the desks show them. Each is a part of
+# ONE server-side computation, reported with its result; the browser renders
+# what the server computed and never calls a department itself.
+CARE_STAGES = (
+    ("admission", "Admission", ("admission",)),
+    ("stay", "Stay / bed", ("bed_stay",)),
+    ("procedures", "Procedures", ("procedure",)),
+    ("pharmacy", "Pharmacy", ("medication",)),
+    ("laboratory", "Laboratory", ("laboratory",)),
+    ("radiology", "Radiology", ("radiology",)),
+    ("other", "Consultation & other services", ("consultation", "other")),
+)
+PAYER_STAGE_REASONS = frozenset({"payer_authorization_pending", "sponsor_coverage_unresolved"})
+
+# The final-settlement vocabulary (Advance slice). financial_state keeps its
+# Slice 3 meaning for the discharge gate; settlement_state is the same verdict
+# in the words the settlement window uses. "covered" and "pending" are EVEN.
+SETTLEMENT_STATE = {
+    "due": "due",
+    "refundable": "refund_due",
+    "credit": "credit",
+    "covered": "even",
+    "pending": "even",
+    "needs_review": "needs_review",
+    "not_applicable": "not_applicable",
 }
 
 # Why the figures need review. FIXED SENTENCES, no amount, no payer name.
@@ -123,6 +161,7 @@ NOT_APPLICABLE_STATUS = {
     "billing_blocked": False,
     "settlement_required": False,
     "refund_due": False,
+    "patient_credit": False,
     "review_reasons": [],
 }
 
@@ -151,6 +190,8 @@ class HospitalAdmissionFinancials(models.Model):
             "payer_authorized": 0.0,
             "funds": 0.0,
             "stay_posted": 0.0,
+            "fee_posted": 0.0,
+            "advance": 0.0,
             "pending_delivery": False,
             "authorization_pending": False,
             "live_lines": self.env["hospital.charge.line"].sudo().browse(),
@@ -167,7 +208,14 @@ class HospitalAdmissionFinancials(models.Model):
         lines = self.env["hospital.charge.line"].sudo().with_context(active_test=False).search(
             [("billing_account_id", "=", account.id)]
         )
-        live = lines.filtered(lambda line: line.charge_state in LIVE_CHARGE_STATES)
+        # THE DEPOSIT CHARGE IS MONEY, NEVER CARE. It holds the patient's
+        # advance (see admission_estimate): its receipts are funds, below, and
+        # it contributes nothing to the actual, the estimate of care, the payer
+        # share or "something ordered is still undelivered".
+        deposit = lines.filtered(self._is_deposit_line)
+        live = lines.filtered(
+            lambda line: line.charge_state in LIVE_CHARGE_STATES and line not in deposit
+        )
         result["live_lines"] = live
         for line in live:
             result["actual"] += line.amount_eligible
@@ -178,6 +226,8 @@ class HospitalAdmissionFinancials(models.Model):
                 result["authorization_pending"] = True
             if line.source_model == self.STAY_SOURCE_MODEL and line.source_res_id == self.id:
                 result["stay_posted"] += line.amount_eligible
+                if line.source_event == self.ADMISSION_FEE_EVENT:
+                    result["fee_posted"] += line.amount_eligible
             if line.amount_delivered - line.amount_eligible > AMOUNT_TOLERANCE:
                 if "delivered_charge_unbillable" not in result["review_reasons"]:
                     result["review_reasons"].append("delivered_charge_unbillable")
@@ -190,12 +240,21 @@ class HospitalAdmissionFinancials(models.Model):
         # against a cancelled prepaid service is still the patient's money.
         for line in lines:
             result["funds"] += line.amount_received - line.amount_refunded
+        for line in deposit:
+            result["advance"] += line.amount_received - line.amount_refunded
         return result
+
+    def _is_deposit_line(self, line):
+        return (
+            line.source_model == self.STAY_SOURCE_MODEL
+            and line.source_res_id == self.id
+            and line.source_event == DEPOSIT_EVENT
+        )
 
     def _delivered_category(self, line):
         """One of DELIVERED_CATEGORIES for a live charge line."""
         if line.source_model == self.STAY_SOURCE_MODEL:
-            return "bed_stay"
+            return "admission" if line.source_event == self.ADMISSION_FEE_EVENT else "bed_stay"
         return SERVICE_TYPE_CATEGORY.get(line.service_id.service_type, "other")
 
     def _legacy_procedure_actuals(self):
@@ -274,13 +333,22 @@ class HospitalAdmissionFinancials(models.Model):
             remaining_due=0.0, refundable_balance=0.0, pending_delivery=False,
             delivered_by_category=dict.fromkeys(DELIVERED_CATEGORIES, 0.0),
         )
-        if admission.state not in STAY_STATES:
-            return dict(zero, financial_state="not_applicable", review_reasons=[])
-        if admission.state == "discharged" and not admission.encounter_id:
+        if admission.state not in STAY_STATES or (
             # LEGACY HISTORY (e.g. ADM00001): a stay discharged before visits
             # existed. It was billed, if at all, on a legacy bill that remains
             # readable; it is not recomputed or flagged now.
-            return dict(zero, financial_state="not_applicable", review_reasons=[])
+            admission.state == "discharged" and not admission.encounter_id
+        ):
+            # No stay to settle -- a draft may still hold an ADVANCE, which is
+            # reported (and is all the patient has paid against this stay).
+            summary = dict(zero, financial_state="not_applicable", review_reasons=[])
+            advance = currency.round(sum(
+                line.amount_received - line.amount_refunded
+                for line in admission._deposit_charge()
+            ))
+            summary["prepayment_available"] = advance
+            summary.update(admission._settlement_extras(summary, currency, advance=advance))
+            return summary
 
         reasons = []
         if not admission.encounter_id:
@@ -322,25 +390,45 @@ class HospitalAdmissionFinancials(models.Model):
         patient = currency.round(max(0.0, actual - payer))
         funds = currency.round(charges["funds"] + legacy["funds"] + legacy_admission_paid)
         remaining_due = currency.round(max(0.0, patient - funds))
-        refundable = currency.round(max(0.0, funds - patient))
+        # THE CARE STAGE DECIDES WHAT AN EXCESS MEANS -- here, once, for every
+        # desk. While the patient is in care and not medically ready, funds
+        # above the care delivered SO FAR are an advance / patient credit held
+        # toward care still to come: the stay is accruing and the next bed-day
+        # consumes it. Only once care is over (medically ready, or discharged)
+        # is the excess the patient's to be given back. The money is the same
+        # either way; only its meaning changes, so it is never hidden.
+        excess = currency.round(max(0.0, funds - patient))
+        in_care = (
+            admission.state in ADMISSION_ESTIMATE_STATES
+            and not admission.medical_discharge_ready
+        )
+        refundable = 0.0 if in_care else excess
         reasons = list(dict.fromkeys(reasons))
 
         if reasons:
             state = "needs_review"
         elif remaining_due > AMOUNT_TOLERANCE:
             state = "due"
-        elif refundable > AMOUNT_TOLERANCE:
-            state = "refundable"
+        elif excess > AMOUNT_TOLERANCE:
+            state = "credit" if in_care else "refundable"
         elif actual > AMOUNT_TOLERANCE:
             state = "covered"
         else:
             state = "pending"
 
         by_category = dict(charges["by_category"])
-        by_category["bed_stay"] += unposted
+        # The unposted tail splits into the admission fee (if it was never
+        # posted) and bed-days, so the admission line is never hidden in stay.
+        fee_unposted = min(unposted, max(0.0, stay["admission_fee"] - charges["fee_posted"]))
+        by_category["admission"] += fee_unposted
+        by_category["bed_stay"] += unposted - fee_unposted
         by_category["procedure"] += legacy["actual"]
 
-        return {
+        advance = currency.round(charges["advance"])
+        settlement_paid = currency.round(admission._settlement_receipts_total())
+        other_payments = currency.round(max(0.0, funds - advance - settlement_paid))
+
+        summary = {
             "estimated_or_authorized": currency.round(charges["estimated"] + unposted),
             "actual_delivered": actual,
             "bed_stay": stay["total"],
@@ -352,12 +440,91 @@ class HospitalAdmissionFinancials(models.Model):
             "patient_responsibility": patient,
             "remaining_due": remaining_due,
             "refundable_balance": refundable,
+            # Unapplied patient funds, whatever the care stage: credit while in
+            # care, refundable once care is over.
+            "patient_credit": excess,
             "pending_delivery": charges["pending_delivery"],
             "financial_state": state,
             "review_reasons": reasons,
             "delivered_by_category": {
                 key: currency.round(value) for key, value in by_category.items()
             },
+        }
+        summary.update(admission._settlement_extras(
+            summary, currency, advance=advance, settlement_paid=settlement_paid,
+            other_payments=other_payments,
+        ))
+        return summary
+
+    # ------------------------------------------------------------------
+    # The final-settlement projection (Advance slice)
+    # ------------------------------------------------------------------
+    def _settlement_receipts_total(self):
+        """Confirmed receipts taken at the Cashier as inpatient SETTLEMENT."""
+        self.ensure_one()
+        receipts = self.env["hospital.charge.receipt"].sudo().search([
+            ("intake_token", "=like", (SETTLEMENT_TOKEN_PREFIX % self.id) + "%"),
+            ("state", "=", "confirmed"),
+        ])
+        return sum(receipts.mapped("amount"))
+
+    def _settlement_extras(self, summary, currency, advance=0.0, settlement_paid=0.0,
+                           other_payments=0.0):
+        """What the settlement window adds to the summary. Derived ONLY from
+        figures the summary already holds -- no second formula.
+
+          advance_applied    the part of the patient's funds consumed by their
+                             delivered share: min(funds, share)
+          unapplied_credit   the rest, still the patient's money (== refundable)
+          settlement_difference  funds - share: negative owed, positive credit
+          quote              a fingerprint of the figures a payment is taken
+                             against; a payment quoting stale figures is refused
+        """
+        self.ensure_one()
+        patient = summary["patient_responsibility"]
+        funds = summary["prepayment_available"]
+        reasons = set(summary["review_reasons"])
+        by = summary["delivered_by_category"]
+        stay_reasons = set(STAY_REVIEW_MESSAGES) | {"stay_charge_mismatch"}
+
+        def status(flagged):
+            return "review" if flagged else "complete"
+
+        stages = [
+            {
+                "key": key,
+                "label": label,
+                "amount": currency.round(sum(by.get(bucket, 0.0) for bucket in buckets)),
+                "status": status(key == "stay" and bool(reasons & stay_reasons)),
+            }
+            for key, label, buckets in CARE_STAGES
+        ]
+        stages += [
+            {"key": "payer", "label": "Payer responsibility",
+             "amount": summary["payer_authorized"],
+             "status": status(bool(reasons & PAYER_STAGE_REASONS))},
+            {"key": "payments", "label": "Patient advances & payments",
+             "amount": funds, "status": "complete"},
+            {"key": "reconciliation", "label": "Final reconciliation",
+             "amount": currency.round(funds - patient), "status": status(bool(reasons))},
+        ]
+        fingerprint = json.dumps(
+            [self.id, summary["actual_delivered"], patient, funds, summary["remaining_due"],
+             summary["refundable_balance"], summary["financial_state"]],
+            separators=(",", ":"),
+        )
+        return {
+            "estimate_amount": currency.round(self.sudo().estimated_amount or 0.0),
+            "advance_received": advance,
+            "settlement_paid": settlement_paid,
+            "other_payments": other_payments,
+            "patient_funds": funds,
+            "advance_applied": currency.round(min(funds, patient)),
+            "unapplied_credit": summary.get("patient_credit", summary["refundable_balance"]),
+            "settlement_difference": currency.round(funds - patient),
+            "settlement_state": SETTLEMENT_STATE.get(summary["financial_state"], "even"),
+            "stages": stages,
+            "quote": hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()[:24],
         }
 
     # ------------------------------------------------------------------
@@ -371,8 +538,12 @@ class HospitalAdmissionFinancials(models.Model):
                              or settled from them.
         settlement_required  the patient owes more than they have paid. False
                              when blocked: an untrusted figure asserts nothing.
-        refund_due           the patient has paid more than their share. Also
-                             False when blocked. Deriving it records no refund
+        refund_due           care is over and the patient has paid more than
+                             their share. Also False when blocked, and False
+                             while in care (see patient_credit).
+        patient_credit       in care, not medically ready, and the patient's
+                             funds exceed the care so far: held toward ongoing
+                             care, never "return the money". Deriving it records no refund
                              and moves no money: the cash refund is the
                              Cashier's act, and nothing here consumes it.
         """
@@ -390,7 +561,9 @@ class HospitalAdmissionFinancials(models.Model):
             "financial_state": state,
             "billing_blocked": blocked,
             "settlement_required": (not blocked) and summary["remaining_due"] > AMOUNT_TOLERANCE,
-            "refund_due": (not blocked) and summary["refundable_balance"] > AMOUNT_TOLERANCE,
+            "refund_due": state == "refundable" and summary["refundable_balance"] > AMOUNT_TOLERANCE,
+            # Held toward ongoing care, not owed back. Amount-free like the rest.
+            "patient_credit": state == "credit",
             "review_reasons": [
                 {"code": code, "message": FINANCIAL_REVIEW_MESSAGES.get(code, code)}
                 for code in summary["review_reasons"]

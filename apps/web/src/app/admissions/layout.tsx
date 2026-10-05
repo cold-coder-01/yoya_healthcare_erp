@@ -4,6 +4,7 @@ import AdmissionsUserMenu from "@/components/admissions/admissions-user-menu";
 import FullscreenToggle from "@/components/workstation/fullscreen-toggle";
 import WorkstationNav from "@/components/navigation/workstation-nav";
 import { ADMISSIONS_ROUTE, frontOfHouseNavItems } from "@/lib/reception-roles";
+import { hospitalBrand } from "@/lib/branding";
 import { loadReceptionSession } from "@/lib/reception-session.server";
 
 /**
@@ -23,7 +24,7 @@ import { loadReceptionSession } from "@/lib/reception-session.server";
 export default async function AdmissionsLayout({ children }: { children: ReactNode }) {
   // Never throws; the shell cannot take the workstation down.
   const session = await loadReceptionSession();
-  const brand = session?.companyName ?? "YOYA General Hospital";
+  const brand = hospitalBrand(session?.companyName);
 
   const userName = session?.userName ?? "";
   const initial = userName.trim().charAt(0).toUpperCase() || "·";

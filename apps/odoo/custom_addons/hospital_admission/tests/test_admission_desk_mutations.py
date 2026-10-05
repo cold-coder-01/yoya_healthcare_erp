@@ -46,6 +46,7 @@ class AdmissionDeskMutationCase(AdmissionCase):
             "primary_doctor_id": doctor.id,
             "company_id": self.company.id,
         })
+        self._clear_visit(encounter)
         encounter.write({"state": "active"})
         return appointment, encounter
 

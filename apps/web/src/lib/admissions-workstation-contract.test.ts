@@ -156,8 +156,10 @@ test("Admit is offered only on the server's role capability AND the row's can_ad
   assert.ok(workstation.includes("{admitOpen && shownDetail && mayAdmit ? ("));
   const panel = code(PANEL);
   assert.ok(panel.includes("{mayAdmit && detail.can_admit && onRequestAdmit ? ("));
-  // Four workflow actions plus the read-only Preview.
-  assert.equal((panel.match(/<button/g) ?? []).length, 5);
+  // Four workflow actions, the read-only Preview and the read-only Final
+  // settlement window (Advance slice; discharge role, stay in a bed).
+  assert.equal((panel.match(/<button/g) ?? []).length, 6);
+  assert.ok(panel.includes('{mayDischarge && (detail.state === "admitted" || detail.state === "transferred") ? ('));
   // Only the workstation reads the capability; nothing else invents it.
   for (const [name, source] of ALL) {
     if (name === "admissions-workstation.tsx") continue;

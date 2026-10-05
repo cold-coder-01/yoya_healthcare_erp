@@ -116,15 +116,17 @@ function Narrative({ label, text }: { label: string; text: string | null }) {
   );
 }
 
-function Banner({ tone, children }: { tone: "amber" | "red"; children: React.ReactNode }) {
+function Banner({ tone, children }: { tone: "amber" | "red" | "green"; children: React.ReactNode }) {
   const style =
     tone === "red"
       ? "border-red-300 bg-red-50 text-red-900"
-      : "border-amber-300 bg-amber-50 text-amber-900";
+      : tone === "green"
+        ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+        : "border-amber-300 bg-amber-50 text-amber-900";
   return (
     <div role="status" className={`flex items-start gap-2 rounded border px-3 py-2 cl-secondary ${style}`}>
       <span aria-hidden className="mt-px font-bold">
-        !
+        {tone === "green" ? "✓" : "!"}
       </span>
       <p className="font-semibold">{children}</p>
     </div>
@@ -385,7 +387,7 @@ export default function RadRequestPanel({
     );
   }
 
-  const clearance = clearanceNotice(detail.lane);
+  const clearance = clearanceNotice(detail.lane, detail.financial_cover);
   const review = reviewMessage(detail);
   const offerSchedule = capabilities?.schedule_study === true && canScheduleStudy(detail);
   const offerStart = capabilities?.start_exam === true && canStartExam(detail);
@@ -421,7 +423,9 @@ export default function RadRequestPanel({
 
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-3 py-3">
         {review ? <Banner tone="red">{review}</Banner> : null}
-        {clearance ? <Banner tone="amber">{clearance}</Banner> : null}
+        {clearance ? (
+          <Banner tone={detail.lane === "awaiting_clearance" ? "amber" : "green"}>{clearance}</Banner>
+        ) : null}
 
         {outcome ? (
           <div role="status" className="rounded border border-emerald-300 bg-emerald-50 px-3 py-2 cl-secondary font-semibold text-emerald-900">

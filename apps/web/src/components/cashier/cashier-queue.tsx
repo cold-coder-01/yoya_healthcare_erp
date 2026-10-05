@@ -8,6 +8,7 @@ import type {
 import {
   cashierLabel,
   inpatientLaneLabel,
+  inpatientRowFigure,
   inpatientLaneTone,
   inpatientLocation,
   inpatientStateLabel,
@@ -129,11 +130,7 @@ export default function CashierQueue({
                       {row.patient.name}
                     </span>
                     <span className="shrink-0 font-mono text-sm font-semibold tabular-nums text-slate-900">
-                      {money(
-                        row.lane === "refund_due"
-                          ? row.refundable_balance
-                          : row.remaining_due,
-                      )}
+                      {money(inpatientRowFigure(row))}
                     </span>
                   </div>
                   <div className="mt-0.5 flex items-center justify-between gap-2">
@@ -146,7 +143,7 @@ export default function CashierQueue({
                         row.lane,
                       )}`}
                     >
-                      {inpatientLaneLabel(row.lane)}
+                      {inpatientLaneLabel(row.lane, row.advance)}
                     </span>
                   </div>
                   <div className="mt-1 flex flex-wrap items-center gap-1">

@@ -90,7 +90,7 @@ test("ward-only is conservative: ANY second role keeps the broader landing", () 
     [{ manager: true, receptionist: true, doctor: true }, RECEPTION_ROUTE],
     [{ system_administrator: true, manager: true, receptionist: true, doctor: true }, RECEPTION_ROUTE],
     [{ cashier: true }, CASHIER_ROUTE],
-    [{ accountant: true }, CASHIER_ROUTE],
+    [{ accountant: true }, "/accountant"],
     [{ doctor: true }, DOCTOR_ROUTE],
     [{ lab_technician: true }, LABORATORY_ROUTE],
     [{ radiology_technician: true }, RADIOLOGY_ROUTE],

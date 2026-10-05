@@ -61,3 +61,15 @@ export function pickCancelRequestBody(body: Record<string, unknown>): Record<str
     expected_revision: body.expected_revision,
   };
 }
+
+/** EXACTLY the Doctor estimate fields (Advance slice): an amount and why.
+ *  The admission is found through the visit by Odoo; no payment, balance or
+ *  settlement figure is ever sent from here. */
+export function pickEstimateBody(body: Record<string, unknown>): Record<string, unknown> {
+  return {
+    operation_token: body.operation_token,
+    expected_revision: body.expected_revision,
+    amount: body.amount,
+    reason: body.reason,
+  };
+}

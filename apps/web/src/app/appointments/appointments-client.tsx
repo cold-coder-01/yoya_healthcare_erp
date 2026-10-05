@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { HOSPITAL_DISPLAY_NAME } from "@/lib/branding";
+
 type Appointment = {
   id: number;
   name: string;
@@ -182,7 +184,7 @@ export default function AppointmentsClient() {
         <header className="mb-8 flex flex-col gap-4 border-b border-slate-200 pb-6 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <p className="text-sm font-semibold uppercase tracking-[0.18em] text-emerald-700">
-              YOYA General Hospital
+              {HOSPITAL_DISPLAY_NAME}
             </p>
             <h1 className="mt-3 text-3xl font-semibold tracking-tight">
               Demo appointments

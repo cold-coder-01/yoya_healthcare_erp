@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { messageFromPayload } from "@/lib/api-error";
+import { messageFromPayload, readJsonEnvelope } from "@/lib/api-error";
 import {
   formatBloodGroup,
   formatHospitalDate,
@@ -183,7 +183,11 @@ export default function DoctorPatientPanel({
         `/api/doctor/visits/${appointmentId}/start-consultation`,
         { method: "POST", cache: "no-store" },
       );
-      const payload = (await response.json()) as ApiEnvelope<unknown>;
+      // A non-JSON answer is an HTTP error with a status, not "unreachable".
+      const payload = (await readJsonEnvelope(
+        response,
+        "The consultation service",
+      )) as ApiEnvelope<unknown>;
 
       if (!response.ok || !payload.success) {
         // Odoo's own sentence, verbatim. It names which of the four gates
@@ -425,6 +429,9 @@ export default function DoctorPatientPanel({
             appointmentId={visit.appointment_id}
             summary={detail.admission}
             patientName={patient.name}
+            patientMrn={patient.mrn}
+            encounterName={encounter?.name ?? null}
+            physicianName={visit.doctor?.name ?? null}
           />
         ) : null}
 

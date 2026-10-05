@@ -16,6 +16,7 @@ const LABELS: Record<string, string> = {
   cleared: "Cleared",
   credit_authorized: "Authorized",
   emergency_bypass: "Emergency bypass",
+  inpatient_credit: "Covered by inpatient advance",
   funded: "Funded",
   partially_funded: "Partially funded",
   unfunded: "Unfunded",

@@ -10,6 +10,7 @@ from datetime import datetime, time
 import pytz
 
 from odoo.addons.hospital_billing.models.charge_line import (
+    ACCOUNTING_GROUPS,
     OPERATIONAL_INTAKE_GROUPS,
 )
 from odoo.osv import expression
@@ -301,6 +302,31 @@ CASHIER_DESK_GROUPS = OPERATIONAL_INTAKE_GROUPS
 def may_cashier_desk(env):
     """May this user open the Cashier Desk and read its worklist?"""
     return _in_any(env, CASHIER_DESK_GROUPS)
+
+
+# Who may OPEN the Accountant Desk: hospital_billing's ACCOUNTING_GROUPS, the
+# very groups its refund_advance() guard admits (Accountant, Manager,
+# Administrator). IMPORTED, not restated, so the desk and the refund can never
+# disagree. Not the Cashier: collecting money and returning it are different
+# acts. The desk offers no payment intake, whatever else the role may hold.
+ACCOUNTANT_DESK_GROUPS = ACCOUNTING_GROUPS
+
+
+def may_accountant_desk(env):
+    """May this user open the Accountant Desk and record inpatient refunds?"""
+    return _in_any(env, ACCOUNTANT_DESK_GROUPS)
+
+
+def accountant_capability_flags(env):
+    """What the Accountant Desk may do. Every flag mirrors a server guard.
+
+    Deliberately NARROW: the desk records refunds and nothing else -- no
+    payment intake, no estimate, no admission, transfer, discharge or bed.
+    """
+    return {
+        "accountant_desk": may_accountant_desk(env),
+        "record_refund": may_accountant_desk(env),
+    }
 
 
 # Who may OPEN the Insurance/Credit Desk (a read gate). Mirrors

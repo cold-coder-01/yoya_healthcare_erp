@@ -91,12 +91,13 @@ test("the doctor requests discharge only on the server's can_request_discharge, 
   assert.ok(CARD.includes("if (busy || !admission || !cleanedDischarge || !summary?.can_request_discharge) return;"));
   assert.ok(CARD.includes("dischargeRequestBody(admission.workflow_revision, cleanedDischarge, token)"));
   assert.ok(CARD.includes('tokenFor(pendingRef.current, "medical_discharge", admission.id, signature, () => crypto.randomUUID())'));
+  // The review is a modal wizard now; its contract lives in
+  // doctor-discharge-review.test.ts.
   const confirm = CARD.slice(CARD.indexOf('{step === "discharge_confirm" && admission && cleanedDischarge ? ('));
-  assert.ok(confirm.includes("if (event.detail === 0) return;"));
-  for (const label of ["Patient", "Admission", "Location", "Summary", "Revision"]) {
-    assert.ok(confirm.includes(`>${label}</dt>`), label);
-  }
-  assert.ok(confirm.includes("summary.discharge_warnings.map"));
+  assert.ok(confirm.includes("<DoctorDischargeReviewDialog"));
+  assert.ok(confirm.includes("summary.discharge_warnings"));
+  assert.ok(confirm.includes("onConfirm={() => void requestDischarge()}"));
+  assert.ok(code("components/doctor/doctor-discharge-review-dialog.tsx").includes("if (event.detail === 0) return;"));
   // The doctor never frees a bed, finalizes, or sees money.
   assert.doesNotMatch(CARD, /finalizeDischargePath|bedsPath|bed_id|amount|financial_state/);
 });

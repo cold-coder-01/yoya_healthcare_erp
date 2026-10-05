@@ -5,7 +5,7 @@
   S. delivered service                -> in its category
   T. bed/stay                         -> bed_stay, posted before settling
   U. payer-covered                    -> not the patient's due
-  V. refundable                       -> refund_due lane, nothing collectable
+  V. refundable                       -> refund_due lane once medically ready
   H/I/J. exact, partial, remainder    -> due -> part_paid -> settled; the
                                          discharge gate follows by itself
   K. more than due                    -> refused, nothing charged
@@ -35,12 +35,26 @@ class CashierSettlementCase(FinancialCase):
         super().setUpClass()
         cls.cashier = cls._make_user("adm_cashier", [G_CASHIER])
 
-    def _settle(self, admission, amount, user=None, key=None, **kwargs):
+    def _settle(self, admission, amount, user=None, key=None, quote=None, **kwargs):
+        """Settle quoting the figures as they stand (what the desk shows),
+        unless a test passes its own quote."""
+        if quote is None:
+            self.env.invalidate_all()
+            quote = admission.sudo()._inpatient_financial_summary()["quote"]
         receipt, replayed = admission.with_user(user or self.cashier)._cashier_record_settlement(
-            amount, kwargs.pop("method", "cash"), idempotency_key=key or uuid.uuid4().hex, **kwargs
+            amount, kwargs.pop("method", "cash"), idempotency_key=key or uuid.uuid4().hex,
+            quote=quote, **kwargs
         )
         self.env.invalidate_all()
         return receipt, replayed
+
+    def _ready(self, admission):
+        """The physician declares the patient medically ready."""
+        self.env.invalidate_all()
+        admission.with_user(self.doctor_user)._desk_request_medical_discharge(
+            "Well; home.", str(uuid.uuid4()), admission.sudo().workflow_revision
+        )
+        self.env.invalidate_all()
 
     def _facts(self, admission, now=None, user=None):
         self.env.invalidate_all()
@@ -218,6 +232,9 @@ class TestSettlementPayment(CashierSettlementCase):
         charge = self._charge(admission, 10, 100.0)
         self._pay(admission, 1000.0)
         self._deliver(charge, 4)
+        # Credit DURING care is the advance still working, not a refund owed.
+        self.assertEqual(self._facts(admission)["lane"], "settled")
+        self._ready(admission)
         facts = self._facts(admission)
         self.assertEqual(facts["lane"], "refund_due")
         self.assertEqual(facts["source"], "refund_due")

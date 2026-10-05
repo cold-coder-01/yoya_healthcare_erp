@@ -95,7 +95,7 @@ PREPAID_LAB_FEE = 640.0
 EXPECTED_ROW_KEYS = {
     "id", "request_code", "state", "status", "status_label",
     "priority", "priority_label", "request_date", "created_at",
-    "billing_blocked", "active", "patient", "ordering_physician",
+    "billing_blocked", "financial_cover", "active", "patient", "ordering_physician",
     "test_count", "tests_summary", "encounter_code", "department",
     "result_count", "released_count",
 }

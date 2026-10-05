@@ -2,6 +2,7 @@ import type {
   CashierCollectability,
   CashierInpatientIdentity,
   CashierInpatientLane,
+  CashierInpatientRow,
   CashierLane,
   CashierServiceCategory,
   ResponsibilityMode,
@@ -40,6 +41,7 @@ const STATE_LABELS: Record<string, string> = {
   credit_authorized: "Credit authorized",
   sponsor_cleared: "Sponsor cleared",
   emergency_bypass: "Emergency bypass",
+  inpatient_credit: "Covered by inpatient advance",
   awaiting_cashier: "Awaiting cashier",
   ready_doctor: "Ready for doctor",
   // Appointment workflow states, for the active-service lane. A visit sits in
@@ -157,12 +159,21 @@ export function serviceCategorySummary(
 const INPATIENT_LANE_LABELS: Record<CashierInpatientLane, string> = {
   due: "Payment required",
   part_paid: "Part paid",
+  advance_required: "Advance required",
   refund_due: "Refund due",
   needs_review: "Needs review",
   settled: "Settled",
 };
 
-export function inpatientLaneLabel(lane: CashierInpatientLane) {
+/** With the stay's advance: once some advance is held, a revised-up estimate
+ *  asks for the DIFFERENCE -- "Additional advance required". */
+export function inpatientLaneLabel(
+  lane: CashierInpatientLane,
+  advance?: { received: number } | null,
+) {
+  if (lane === "advance_required" && (advance?.received ?? 0) > 0) {
+    return "Additional advance required";
+  }
   return INPATIENT_LANE_LABELS[lane] ?? cashierLabel(lane);
 }
 
@@ -174,11 +185,21 @@ export function inpatientLaneTone(lane: CashierInpatientLane) {
       return "border-amber-300 bg-amber-50 text-amber-900";
     case "refund_due":
       return "border-sky-300 bg-sky-50 text-sky-800";
+    case "advance_required":
+      return "border-violet-300 bg-violet-50 text-violet-800";
     case "needs_review":
       return "border-red-300 bg-red-50 text-red-800";
     default:
       return "border-slate-300 bg-slate-100 text-slate-600";
   }
+}
+
+/** The one server figure a queue row leads with, by lane: the refundable
+ *  credit, the uncovered estimate, or the balance due. Chosen, never computed. */
+export function inpatientRowFigure(row: CashierInpatientRow) {
+  if (row.lane === "refund_due") return row.refundable_balance;
+  if (row.lane === "advance_required") return row.advance?.outstanding ?? 0;
+  return row.remaining_due;
 }
 
 /** The stay's workflow state, as a fact. Never a clinical finding. */

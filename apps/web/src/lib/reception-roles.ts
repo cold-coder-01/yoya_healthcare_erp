@@ -97,6 +97,7 @@ export const LABORATORY_ROUTE = "/laboratory";
 export const RADIOLOGY_ROUTE = "/radiology";
 export const PHARMACY_ROUTE = "/pharmacy";
 export const ADMISSIONS_ROUTE = "/admissions";
+export const ACCOUNTANT_ROUTE = "/accountant";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -331,10 +332,11 @@ export function canUseFrontDesk(roles: ReceptionRoles | null): boolean {
 /**
  * Cashier Desk visibility.
  *
- * Mirrors the server's CASHIER_DESK_GROUPS (yoya_emr_api reception_scope),
- * which is OPERATIONAL_INTAKE_GROUPS: cashier, accountant, manager, admin.
- * The server refuses the worklist for anyone else, so this only decides
- * whether the link and the landing route are offered.
+ * Cashier, Manager, System Administrator. NARROWER than the server's
+ * CASHIER_DESK_GROUPS (OPERATIONAL_INTAKE_GROUPS, which still lists the
+ * Accountant): the Accountant works /accountant -- refunds and financial
+ * review -- and is no longer OFFERED the payment window. This decides what is
+ * offered; the server decides what is allowed.
  *
  * A Front Desk Nurse is deliberately absent, mirroring the server's exclusion
  * of the Cashier from the front-desk worklist. The two workstations do not
@@ -344,12 +346,21 @@ export function canUseCashier(roles: ReceptionRoles | null): boolean {
   if (!roles) {
     return false;
   }
-  return (
-    roles.cashier ||
-    roles.accountant ||
-    roles.manager ||
-    roles.system_administrator
-  );
+  return roles.cashier || roles.manager || roles.system_administrator;
+}
+
+/**
+ * Accountant Desk visibility.
+ *
+ * Mirrors the server's ACCOUNTANT_DESK_GROUPS (yoya_emr_api reception_scope),
+ * which is hospital_billing's ACCOUNTING_GROUPS -- the groups its refund guard
+ * admits: Accountant, Manager, System Administrator. Not the Cashier.
+ */
+export function canUseAccountantDesk(roles: ReceptionRoles | null): boolean {
+  if (!roles) {
+    return false;
+  }
+  return roles.accountant || roles.manager || roles.system_administrator;
 }
 
 /**
@@ -387,8 +398,15 @@ export function landingRouteForRoles(roles: ReceptionRoles | null): string {
   if (canUseReception(roles)) {
     return RECEPTION_ROUTE;
   }
+  // ACCOUNTANT before cashier. The accountant used to fall into the cashier
+  // branch (canUseCashier listed them) and landed on a payment window they
+  // must not work -- refunds and financial review live on /accountant. NARROW
+  // flag: manager and admin were claimed by reception above.
+  if (roles?.accountant === true) {
+    return ACCOUNTANT_ROUTE;
+  }
   // Narrow on purpose: only a user whose reception-side identity is "cashier"
-  // (or accountant) lands here. Manager and admin were already routed above.
+  // lands here. Manager and admin were already routed above.
   if (canUseCashier(roles)) {
     return CASHIER_ROUTE;
   }

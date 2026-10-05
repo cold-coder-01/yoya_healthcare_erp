@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { formatHospitalDateTime } from "@/lib/clinical-format";
 import {
@@ -14,6 +14,8 @@ import {
 import type { AdmissionDetail, CountAndLatest, NamedRef } from "@/types/admissions-desk";
 
 import AdmissionLanePill from "./admission-lane-pill";
+import AdmissionClearanceNote from "./admission-clearance-note";
+import FinalSettlementDialog from "./final-settlement-dialog";
 
 /**
  * One admission. Its actions are offered only when the SERVER says so twice
@@ -103,6 +105,10 @@ export default function AdmissionDetailPanel({
   /** Opens the read-only Quick Preview. Never gated: it shows only this payload. */
   onRequestPreview?: () => void;
 }) {
+  // The Final settlement window is this panel's own: it is read-only and
+  // re-runs the server calculation every time it opens.
+  const [settlementOpen, setSettlementOpen] = useState(false);
+
   if (error) {
     return (
       <section aria-label="Admission detail" className="rounded-lg border border-slate-200 bg-white p-4 cl-body text-red-700">
@@ -148,6 +154,13 @@ export default function AdmissionDetailPanel({
             Showing the last loaded version; the refresh did not complete.
           </p>
         ) : null}
+        {detail.admission_clearance ? (
+          <AdmissionClearanceNote
+            admissionId={detail.id}
+            clearance={detail.admission_clearance}
+            mayReadAmounts={mayDischarge}
+          />
+        ) : null}
         {/* ONE action row: Preview (read only, always) beside whichever
             workflow actions the server offered. The hint lines became titles
             so the row stays one line tall. */}
@@ -180,6 +193,16 @@ export default function AdmissionDetailPanel({
               className="h-8 rounded-md bg-sky-700 px-3 cl-meta font-bold text-white hover:bg-sky-800"
             >
               Transfer patient…
+            </button>
+          ) : null}
+          {mayDischarge && (detail.state === "admitted" || detail.state === "transferred") ? (
+            <button
+              type="button"
+              onClick={() => setSettlementOpen(true)}
+              title="Calculates what the stay cost, what was paid and what remains."
+              className="h-8 rounded-md border border-emerald-300 bg-white px-3 cl-meta font-bold text-emerald-800 hover:bg-emerald-50"
+            >
+              Final settlement…
             </button>
           ) : null}
           {mayDischarge && detail.discharge?.can_finalize_discharge && onRequestFinalize ? (
@@ -365,6 +388,20 @@ export default function AdmissionDetailPanel({
           )}
         </Section>
       </div>
+      {settlementOpen ? (
+        <FinalSettlementDialog
+          admissionId={detail.id}
+          onClose={() => setSettlementOpen(false)}
+          onContinueToFinalize={
+            detail.discharge?.can_finalize_discharge && onRequestFinalize
+              ? () => {
+                  setSettlementOpen(false);
+                  onRequestFinalize();
+                }
+              : undefined
+          }
+        />
+      ) : null}
     </section>
   );
 }

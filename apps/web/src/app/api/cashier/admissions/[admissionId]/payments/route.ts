@@ -12,8 +12,8 @@ import type { CashierInpatientPaymentResult } from "@/types/cashier";
 /**
  * Settle an inpatient account (all or part of the remaining balance).
  *
- * THE BODY IS REBUILT, NOT FORWARDED. Exactly five fields leave this route:
- * amount, payment_method, payment_reference, note, idempotency_key. The
+ * THE BODY IS REBUILT, NOT FORWARDED. Exactly six fields leave this route:
+ * amount, payment_method, payment_reference, note, idempotency_key, quote. The
  * admission, visit, billing account, remaining balance, patient share and
  * financial state are all derived in Odoo -- a browser that sends them is
  * simply not heard, and Odoo refuses the request if they reach it by any other
@@ -58,6 +58,10 @@ export async function POST(
           payment_reference: body.payment_reference ?? null,
           note: body.note ?? null,
           idempotency_key: idempotencyKey.trim(),
+          // The settlement FINGERPRINT the cashier was shown -- an opaque
+          // server value, not a total. Odoo refuses the payment if the
+          // figures moved since (inpatient_quote_stale).
+          quote: typeof body.quote === "string" ? body.quote : null,
         },
       ),
     );

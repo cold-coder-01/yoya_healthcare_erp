@@ -369,6 +369,10 @@ def serialize_queue_row(request):
         "created_at": datetime_value(request.create_date),
         # A BOOLEAN VERDICT. Never an amount, never a payer, never a message.
         "billing_blocked": bool(request.billing_blocked),
+        # HOW the pending service is financially covered, as a WORD:
+        # "service", "inpatient_credit" (an active inpatient's held advance),
+        # "shortfall" (that credit falls short) or null. Never a figure.
+        "financial_cover": request.billing_financial_cover or None,
         "active": bool(request.active),
         "patient": serialize_patient_identity(request.patient_id),
         # hospital.doctor, which Radiology roles may read. A physician with no

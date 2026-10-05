@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 
 import FrontDeskUserMenu from "@/components/front-desk/front-desk-user-menu";
 import FullscreenToggle from "@/components/workstation/fullscreen-toggle";
+import { hospitalBrand } from "@/lib/branding";
 import { loadReceptionSession } from "@/lib/reception-session.server";
 
 /**
@@ -22,7 +23,7 @@ import { loadReceptionSession } from "@/lib/reception-session.server";
 export default async function CashierLayout({ children }: { children: ReactNode }) {
   const session = await loadReceptionSession();
 
-  const brand = session?.companyName ?? "YOYA General Hospital";
+  const brand = hospitalBrand(session?.companyName);
   const roleLabel = session?.roles?.cashier ? "Cashier" : "Cashier Desk";
 
   return (

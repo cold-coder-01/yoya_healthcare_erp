@@ -66,7 +66,25 @@ class AdmissionsMutationCase(AdmissionsDeskCase):
             user or self.doctor_user,
         )
 
-    def _http_admit(self, admission, bed, user=None, op=None, revision=None, bed_id="__bed__"):
+    def _clear_for_admission(self, admission):
+        """Advance slice: a self-pay request needs the estimate and the full
+        advance -- or an authorized emergency bypass -- before a bed. Suites
+        that are NOT about admission money clear the request through the
+        existing emergency route, authorized by a Hospital Manager with a
+        reason, so their figures stay exactly as they were. The gate itself is
+        exercised through the real estimate -> advance flow in
+        test_admission_clearance_api."""
+        admission = admission.sudo()
+        if admission._admission_financial_clearance()["cleared"]:
+            return
+        admission.encounter_id.with_user(self.manager).write({
+            "emergency_bypass": True,
+            "emergency_bypass_reason": "Test fixture: admission money is not under test here.",
+        })
+
+    def _http_admit(self, admission, bed, user=None, op=None, revision=None, bed_id="__bed__", clear=True):
+        if clear and admission.sudo().state == "draft" and admission.sudo().encounter_id:
+            self._clear_for_admission(admission)
         body = {
             "operation_token": op or token(),
             "expected_revision": admission.sudo().workflow_revision if revision is None else revision,
@@ -116,6 +134,11 @@ class TestTheFlow(AdmissionsMutationCase):
         rows = {r["id"]: r for r in self._worklist(self.receptionist, q=admission.name)["rows"]}
         row = rows[admission.id]
         self.assertEqual(row["lane"], "awaiting_bed")
+        # Advance slice: a self-pay request is not admittable until cleared.
+        self.assertFalse(row["can_admit"])
+        self.assertEqual(row["admission_clearance"]["state"], "awaiting_estimate")
+        self._clear_for_admission(admission)
+        [row] = [r for r in self._worklist(self.receptionist)["rows"] if r["id"] == admission.id]
         self.assertTrue(row["can_admit"])
         self.assertEqual(row["workflow_revision"], 1)
 

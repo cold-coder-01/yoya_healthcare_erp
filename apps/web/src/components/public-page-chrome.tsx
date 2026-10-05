@@ -1,12 +1,14 @@
 import Image from "next/image";
 
+import { HOSPITAL_LOGO_ALT, HOSPITAL_LOGO_SRC } from "@/lib/branding";
+
 export function YoyaLogo({ compact = false }: { compact?: boolean }) {
   const size = compact ? 136 : 172;
 
   return (
     <Image
-      src="/images/yoya-hospital-logo.png"
-      alt="YOYA Hospital"
+      src={HOSPITAL_LOGO_SRC}
+      alt={HOSPITAL_LOGO_ALT}
       width={size}
       height={size}
       priority

@@ -59,6 +59,11 @@ import logging
 
 from psycopg2 import IntegrityError
 
+from odoo.addons.hospital_admission.models.admission_cashier import CashierSettlementError
+from odoo.addons.hospital_admission.models.admission_financials import (
+    FINANCIAL_REVIEW_MESSAGES,
+)
+
 from odoo import http
 from odoo.exceptions import AccessError, UserError, ValidationError
 from odoo.http import request
@@ -93,6 +98,7 @@ from ..services.admissions_desk_serializers import (
     serialize_session,
     transfer_counts,
 )
+from ..services.cashier_serializers import serialize_inpatient_settlement
 from ..services.api_response import (
     ApiError,
     api_error_response,
@@ -251,6 +257,20 @@ def _load_admission_for_mutation(env, admission_id):
     if not record:
         raise desk_error("admission_not_found")
     return record
+
+
+def _clearance_with_amounts(admission):
+    if admission.state != "draft":
+        return None
+    verdict = admission._admission_financial_clearance()
+    return {
+        "state": verdict["state"],
+        "cleared": bool(verdict["cleared"]),
+        "message": verdict["message"],
+        "estimate": verdict["estimate"],
+        "advance_received": verdict["advance_received"],
+        "remaining": verdict["remaining"],
+    }
 
 
 class YoyaEmrAdmissionsController(http.Controller):
@@ -422,6 +442,51 @@ class YoyaEmrAdmissionsController(http.Controller):
                 may_finalize=may_admissions_finalize_discharge(env),
             ),
             "capabilities": admissions_desk_capability_flags(env),
+        })
+
+    # ------------------------------------------------------------------
+    # Advance slice: the FINAL SETTLEMENT window (read-only, with amounts)
+    # ------------------------------------------------------------------
+    @http.route(
+        "%s/<int:admission_id>/settlement" % ADMISSIONS_API,
+        type="http", auth="user", methods=["GET"], csrf=False,
+    )
+    @admissions_endpoint
+    def admissions_settlement(self, admission_id, **params):
+        """The stay's final settlement, as the discharging clerk needs it:
+        estimate, advance, care delivered by category, payer and patient
+        shares, funds, the result, and the server-reported calculation stages.
+
+        THE ONE ADMISSIONS PAYLOAD THAT CARRIES AMOUNTS, and deliberately a
+        separate route: the census, detail and bed board stay amount-free for
+        every desk role. This one is for the people who finalize the discharge
+        (DESK_SETTLEMENT_READ_GROUPS) -- never the ward nurse or the doctor. It
+        moves no money; the Cashier collects.
+        """
+        env = request.env
+        _require_admissions_desk(env)
+        try:
+            admission = env["hospital.admission"]._admissions_settlement_find(admission_id)
+        except CashierSettlementError:
+            raise ApiError("admission_not_found", "Admission not found.", 404) from None
+        facts = admission._cashier_detail()
+        return success_response({
+            "admission": {
+                "id": facts["admission"]["id"],
+                "reference": facts["admission"]["name"],
+                "state": facts["admission"]["state"],
+                "medical_discharge_ready": facts["admission"]["medical_discharge_ready"],
+            },
+            "patient": dict(facts["patient"]),
+            "encounter": {"id": facts["encounter"]["id"], "name": facts["encounter"]["name"]},
+            "currency": facts["currency"],
+            "settlement": serialize_inpatient_settlement(
+                facts["summary"], FINANCIAL_REVIEW_MESSAGES
+            ),
+            "discharge_allowed": admission._discharge_financial_refusal(facts["summary"]) is None,
+            # Pre-admission readiness WITH its figures (clerk and oversight
+            # only -- this route). None once the patient is in a bed.
+            "admission_clearance": _clearance_with_amounts(admission),
         })
 
     # ------------------------------------------------------------------

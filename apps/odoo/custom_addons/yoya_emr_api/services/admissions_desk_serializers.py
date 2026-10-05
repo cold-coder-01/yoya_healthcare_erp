@@ -170,6 +170,7 @@ CLEARANCE_MESSAGES = {
     "credit_authorized": None,
     "sponsor_cleared": None,
     "emergency_bypass": None,
+    "inpatient_credit": None,
     "pending": "Financial clearance for this visit is pending at the front desk or cashier.",
 }
 CLEARANCE_FALLBACK_MESSAGE = "Financial clearance has not been confirmed for this visit."
@@ -514,10 +515,30 @@ def _may_cancel_this(admission, lane, may_cancel):
     return bool(_safe(admission._desk_may_cancel_request, default=False))
 
 
+def serialize_admission_clearance(admission, lane):
+    """Advance slice: may this REQUEST be given a bed, financially? The
+    model's verdict (hospital.admission._admission_financial_clearance) as a
+    state, a boolean and a fixed sentence -- NO amount, so every desk role,
+    the ward nurse included, may see WHY Admit is not offered. The figures
+    (estimate, advance received, remaining) are served only on the clerk's
+    settlement route. None once the patient is in a bed."""
+    if lane not in ADMITTABLE_LANES:
+        return None
+    verdict = _safe(admission._admission_financial_clearance, default=None)
+    if verdict is None:
+        return {
+            "state": "unavailable",
+            "cleared": False,
+            "message": "The admission's financial readiness could not be determined.",
+        }
+    return {"state": verdict["state"], "cleared": bool(verdict["cleared"]), "message": verdict["message"]}
+
+
 def serialize_row(
     admission, lane, reasons, encounter, transfers=0, now=None,
     may_admit=False, may_transfer=False, may_cancel=False, may_finalize=False,
 ):
+    clearance = serialize_admission_clearance(admission, lane)
     return {
         "id": admission.id,
         "reference": admission.name,
@@ -526,7 +547,11 @@ def serialize_row(
         "workflow_revision": admission.workflow_revision,
         # AFFORDANCES ONLY. The role may act AND this record is in a lane that
         # allows it. The model re-checks every condition under its locks.
-        "can_admit": bool(may_admit and lane in ADMITTABLE_LANES),
+        # Advance slice: and only once financially cleared for admission.
+        "can_admit": bool(
+            may_admit and lane in ADMITTABLE_LANES and clearance is not None and clearance["cleared"]
+        ),
+        "admission_clearance": clearance,
         "can_transfer": bool(may_transfer and lane in TRANSFERABLE_LANES),
         "can_cancel_request": _may_cancel_this(admission, lane, may_cancel),
         # Slice 4. Medical readiness is a fact the census shows; whether the
@@ -615,6 +640,7 @@ FINANCIAL_UNAVAILABLE = {
     "billing_blocked": True,
     "settlement_required": False,
     "refund_due": False,
+    "patient_credit": False,
     "review_reasons": [
         {
             "code": "financial_unavailable",
@@ -634,6 +660,7 @@ def serialize_financial(admission):
         "billing_blocked": bool(status["billing_blocked"]),
         "settlement_required": bool(status["settlement_required"]),
         "refund_due": bool(status["refund_due"]),
+        "patient_credit": bool(status.get("patient_credit")),
         "review_reasons": [
             {"code": reason["code"], "message": reason["message"]}
             for reason in status["review_reasons"]

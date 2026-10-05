@@ -22,7 +22,10 @@ import type {
 
 import CashierFinancialPanel from "./cashier-financial-panel";
 import CashierInpatientPanel from "./cashier-inpatient-panel";
-import CashierInpatientPayment from "./cashier-inpatient-payment";
+import CashierInpatientPayment, {
+  type InpatientPaymentMode,
+} from "./cashier-inpatient-payment";
+import CashierInpatientRefund from "./cashier-inpatient-refund";
 import CashierPaymentForm from "./cashier-payment-form";
 import CashierQueue from "./cashier-queue";
 
@@ -90,6 +93,8 @@ export default function CashierWorkstation() {
   const [selectedAdmissionId, setSelectedAdmissionId] = useState<number | null>(null);
   const [inpatient, setInpatient] = useState<CashierInpatientDetail | null>(null);
   const [inpatientToken, setInpatientToken] = useState(0);
+  // Which inpatient action the last receipt / error belongs to.
+  const [receiptMode, setReceiptMode] = useState<InpatientPaymentMode>("settlement");
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search.trim()), 250);
@@ -260,15 +265,17 @@ export default function CashierWorkstation() {
   // The same recovery rule as the visit payment: on ANY failure, re-read the
   // account and the queue; never resubmit. On success the response IS the new
   // account, and the queue is refreshed so a settled stay leaves it.
-  const handleInpatientPayment = useCallback(
-    async (input: PaymentInput) => {
-      if (selectedAdmissionId === null) return;
+  const handleInpatientMoney = useCallback(
+    async (kind: InpatientPaymentMode, input: PaymentInput) => {
+      if (selectedAdmissionId === null || inpatient === null) return;
       setSubmitting(true);
       setPaymentError(null);
+      setReceiptMode(kind);
 
       try {
+        const path = kind === "advance" ? "advance" : "payments";
         const response = await fetch(
-          `/api/cashier/admissions/${selectedAdmissionId}/payments`,
+          `/api/cashier/admissions/${selectedAdmissionId}/${path}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -278,6 +285,9 @@ export default function CashierWorkstation() {
               payment_reference: input.reference,
               note: input.note,
               idempotency_key: newIdempotencyKey(),
+              // A settlement quotes the figures on screen; if they moved, the
+              // server refuses and the refetch below shows the new ones.
+              ...(kind === "settlement" ? { quote: inpatient.settlement.quote } : {}),
             }),
           },
         );
@@ -291,7 +301,7 @@ export default function CashierWorkstation() {
           return;
         }
 
-        // The payment response IS the canonical account plus the receipt.
+        // The response IS the canonical account plus the receipt.
         setInpatient(payload.data);
         setReceipt(payload.data.receipt);
         setPaymentError(null);
@@ -300,6 +310,39 @@ export default function CashierWorkstation() {
         setPaymentError("Unable to reach the YOYA EMR gateway.");
         setInpatientToken((token) => token + 1);
         setRefreshToken((token) => token + 1);
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [selectedAdmissionId, inpatient],
+  );
+
+  const handleInpatientRefund = useCallback(
+    async (input: { amount: number; reason: string }) => {
+      if (selectedAdmissionId === null) return;
+      setSubmitting(true);
+      setPaymentError(null);
+      try {
+        const response = await fetch(`/api/cashier/admissions/${selectedAdmissionId}/refund`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            amount: input.amount,
+            reason: input.reason,
+            idempotency_key: crypto.randomUUID(),
+          }),
+        });
+        const payload = (await response.json()) as ApiEnvelope<CashierInpatientDetail>;
+        if (!response.ok || !payload.success || !payload.data) {
+          setPaymentError(messageFromPayload(payload, "Unable to record the refund."));
+          setInpatientToken((token) => token + 1);
+          return;
+        }
+        setInpatient(payload.data);
+        setRefreshToken((token) => token + 1);
+      } catch {
+        setPaymentError("Unable to reach the YOYA EMR gateway.");
+        setInpatientToken((token) => token + 1);
       } finally {
         setSubmitting(false);
       }
@@ -492,16 +535,37 @@ export default function CashierWorkstation() {
       {/* RIGHT: collect */}
       <section className="w-[320px] shrink-0 overflow-y-auto">
         {inpatient ? (
-          <CashierInpatientPayment
-            // Remount on a new admission OR a changed balance, exactly as the
-            // visit form is re-armed.
-            key={`${inpatient.admission.id}:${inpatient.collectability.max_amount}`}
-            account={inpatient}
-            receipt={receipt}
-            submitting={submitting}
-            error={paymentError}
-            onSubmit={handleInpatientPayment}
-          />
+          <div className="flex flex-col gap-2">
+            <CashierInpatientPayment
+              // Remount on a new admission OR a changed balance, exactly as
+              // the visit form is re-armed.
+              key={`settle:${inpatient.admission.id}:${inpatient.collectability.max_amount}`}
+              account={inpatient}
+              mode="settlement"
+              receipt={receiptMode === "settlement" ? receipt : null}
+              submitting={submitting}
+              error={receiptMode === "settlement" ? paymentError : null}
+              onSubmit={(input) => handleInpatientMoney("settlement", input)}
+            />
+            {inpatient.advance_collectability.collectable || receiptMode === "advance" ? (
+              <CashierInpatientPayment
+                key={`advance:${inpatient.admission.id}:${inpatient.advance_collectability.max_amount}`}
+                account={inpatient}
+                mode="advance"
+                receipt={receiptMode === "advance" ? receipt : null}
+                submitting={submitting}
+                error={receiptMode === "advance" ? paymentError : null}
+                onSubmit={(input) => handleInpatientMoney("advance", input)}
+              />
+            ) : null}
+            <CashierInpatientRefund
+              key={`refund:${inpatient.admission.id}:${inpatient.refund.amount}`}
+              account={inpatient}
+              submitting={submitting}
+              error={paymentError}
+              onRefund={handleInpatientRefund}
+            />
+          </div>
         ) : visit ? (
           <CashierPaymentForm
             // Remount on a new visit OR a changed outstanding figure, so the
