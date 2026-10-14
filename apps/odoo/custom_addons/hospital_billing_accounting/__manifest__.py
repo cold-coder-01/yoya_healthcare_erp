@@ -11,7 +11,7 @@ It does NOT create a second billing system. It only maps hospital bill source
 types and payment methods to accounting accounts/journals and posts manual
 journal entries through explicit button clicks.
 """,
-    "version": "18.0.1.3.0",
+    "version": "18.0.1.4.0",
     "category": "Healthcare",
     "author": "Synergy Tech soln",
     "license": "LGPL-3",

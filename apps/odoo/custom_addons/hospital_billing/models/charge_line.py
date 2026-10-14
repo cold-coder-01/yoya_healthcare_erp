@@ -94,7 +94,12 @@ G_CASHIER = "hospital_billing.group_hospital_cashier"
 # money are separable duties; a receptionist observes payment state (see
 # OPERATIONAL_MONEY_READ) but cannot create it. Manager and admin are listed
 # explicitly -- manager implies receptionist, not cashier.
-OPERATIONAL_INTAKE_GROUPS = (G_CASHIER, G_ACCOUNTANT, G_MANAGER, G_ADMIN)
+#
+# The ACCOUNTANT is deliberately ABSENT as well. Taking money at the window and
+# accounting for it (applying, refunding, posting) are separated duties: the
+# Accountant holds ACCOUNTING_GROUPS below and reads money through
+# OPERATIONAL_MONEY_READ, but cannot create a receipt on any path.
+OPERATIONAL_INTAKE_GROUPS = (G_CASHIER, G_MANAGER, G_ADMIN)
 
 # Applying and refunding money is an accounting act.
 ACCOUNTING_GROUPS = (G_ACCOUNTANT, G_MANAGER, G_ADMIN)

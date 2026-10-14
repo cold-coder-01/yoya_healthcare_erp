@@ -248,7 +248,12 @@ class TestInpatientPayment(CashierInpatientCase):
         financial = self._ok(DETAIL % admission.id, self.receptionist)["admission"]["financial"]
         self.assertTrue(financial["settlement_required"])
 
+        # The Accountant holds no Cashier intake authority (separated duties).
         response, payload = self._pay(admission, due - 1000.0, user=self.accountant)
+        self.assertEqual(response.status_code, 403, payload)
+        self.assertEqual(payload["error"]["code"], "payment_not_authorized")
+        self.assertEqual(self._remaining(admission), due - 1000.0)
+        response, payload = self._pay(admission, due - 1000.0)
         self.assertEqual(response.status_code, 200, payload)
         self.assertEqual(payload["data"]["financial"]["remaining_due"], 0.0)
         self.assertEqual(len(payload["data"]["settlement_receipts"]), 2)

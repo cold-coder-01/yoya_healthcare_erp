@@ -130,6 +130,21 @@ SETTLEMENT_STATUS = {
     "inpatient_refund_exceeds_credit": 400,
     "inpatient_refund_reason_required": 400,
     "inpatient_operation_conflict": 409,
+    "inpatient_refund_method_required": 400,
+    "inpatient_refund_reference_required": 400,
+    # Inpatient accounting (Accountant Desk).
+    "accounting_unavailable": 409,
+    "accounting_not_authorized": 403,
+    "payer_accounting_outside_scope": 409,
+    "accounting_review_required": 409,
+    "accounting_post_not_open": 409,
+    "accounting_nothing_to_post": 409,
+    "accounting_legacy_required": 409,
+    "accounting_legacy_not_applicable": 409,
+    "accounting_date_invalid": 400,
+    "accounting_configuration_incomplete": 409,
+    "accounting_posting_failed": 409,
+    "accounting_close_mismatch": 409,
 }
 
 # Figures the SERVER derives. A body carrying any of them is refused, not
@@ -141,6 +156,10 @@ INPATIENT_FORBIDDEN_BODY_KEYS = frozenset({
     "financial_state", "lane", "settlement_paid", "patient_funds",
     "estimated_amount", "estimate_amount", "advance_received", "settlement_state",
 })
+
+# A refund body (Cashier and Accountant desks alike); payment_reference is
+# the one optional key, required by the model for a non-cash method.
+REFUND_REQUIRED_KEYS = frozenset({"amount", "reason", "idempotency_key", "payment_method"})
 
 WORKLIST_LIMIT_DEFAULT = 100
 WORKLIST_LIMIT_MAX = 300
@@ -328,8 +347,8 @@ def _require_cashier_desk(env):
     if not may_cashier_desk(env):
         raise ApiError(
             "cashier_desk_not_authorized",
-            "The Cashier Desk requires the Hospital Cashier, Accountant, "
-            "Hospital Manager or Hospital System Administrator role.",
+            "The Cashier Desk requires the Hospital Cashier, Hospital Manager or "
+            "Hospital System Administrator role.",
             403,
         )
 
@@ -632,7 +651,7 @@ class YoyaEmrCashierController(http.Controller):
             raise ApiError(
                 "payment_not_authorized",
                 "Recording operational payment requires the Hospital Cashier, "
-                "Accountant, Hospital Manager or Hospital System Administrator role.",
+                "Hospital Manager or Hospital System Administrator role.",
                 403,
             )
 
@@ -790,17 +809,24 @@ class YoyaEmrCashierController(http.Controller):
     def record_inpatient_refund(self, admission_id, **kwargs):
         """Record the refund of unapplied patient credit. ACCOUNTING ONLY.
 
-        Body: {"amount": number, "reason": text, "idempotency_key": uuid}.
-        Exactly those keys. Accountant / Hospital Manager / System
-        Administrator; the Cashier sees Refund Due and is refused here.
+        Body: {"amount": number, "reason": text, "idempotency_key": uuid,
+        "payment_method": "cash" | "bank_transfer" | "mobile_money"} and, for
+        a non-cash method, "payment_reference". Hospital Manager / System
+        Administrator at this desk (the Accountant records refunds at the
+        Accountant Desk); the Cashier sees Refund Due and is refused here.
         """
         env = request.env
         _require_cashier_desk(env)
         body = read_json_body()
-        if not isinstance(body, dict) or set(body) != {"amount", "reason", "idempotency_key"}:
+        if (
+            not isinstance(body, dict)
+            or not REFUND_REQUIRED_KEYS <= set(body)
+            or set(body) - REFUND_REQUIRED_KEYS - {"payment_reference"}
+        ):
             raise ApiError(
                 "payment_validation_failed",
-                "A refund body is exactly: amount, reason, idempotency_key.",
+                "A refund body is exactly: amount, reason, idempotency_key, "
+                "payment_method and, for a non-cash refund, payment_reference.",
                 400,
             )
         amount = coerce_number("amount", body.get("amount"))
@@ -808,7 +834,9 @@ class YoyaEmrCashierController(http.Controller):
         try:
             with env.cr.savepoint():
                 admission, replayed = admission._cashier_record_refund(
-                    amount, body.get("reason"), body.get("idempotency_key")
+                    amount, body.get("reason"), body.get("idempotency_key"),
+                    payment_method=body.get("payment_method"),
+                    payment_reference=body.get("payment_reference"),
                 )
                 env.invalidate_all()
                 payload = serialize_cashier_inpatient_detail(
@@ -833,7 +861,7 @@ def _require_payment_role(env):
         raise ApiError(
             "payment_not_authorized",
             "Recording operational payment requires the Hospital Cashier, "
-            "Accountant, Hospital Manager or Hospital System Administrator role.",
+            "Hospital Manager or Hospital System Administrator role.",
             403,
         )
 

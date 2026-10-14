@@ -127,7 +127,8 @@ test("the advance, refund and payment routes rebuild their bodies exactly", () =
   );
   assert.deepEqual(
     postedKeys(code(read("app/api/cashier/admissions/[admissionId]/refund/route.ts"))),
-    ["amount", "idempotency_key", "reason"],
+    // payment_reference is forwarded only when one was typed (conditional spread).
+    ["amount", "idempotency_key", "payment_method", "reason"],
   );
   assert.deepEqual(
     postedKeys(code(read("app/api/cashier/admissions/[admissionId]/payments/route.ts"))),

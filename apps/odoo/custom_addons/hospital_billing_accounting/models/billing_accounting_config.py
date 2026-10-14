@@ -7,6 +7,30 @@ G_MANAGER = "hospital_management.group_hospital_manager"
 G_ADMIN = "hospital_management.group_hospital_system_administrator"
 CONFIG_GROUPS = (G_ACCOUNTANT, G_MANAGER, G_ADMIN)
 
+# THE PATIENT-ADVANCE LEDGER of a company. Configuration rows are per source
+# type, but a patient's advance is one pool: whichever row a receipt, an
+# application or a refund resolves through, these mappings must be the same,
+# or money received into one liability could be applied or refunded out of
+# another. _company_advance_config() refuses a company whose rows disagree.
+ADVANCE_LEDGER_FIELDS = (
+    "cash_account_id",
+    "bank_account_id",
+    "mobile_money_account_id",
+    "patient_advance_liability_account_id",
+    "patient_credit_liability_account_id",
+    "advance_receipt_journal_id",
+    "advance_application_journal_id",
+    "advance_refund_journal_id",
+)
+
+# Business refund method -> the liquidity mapping it is paid out of. The
+# browser names a METHOD; only the company configuration names an account.
+REFUND_LIQUIDITY_FIELDS = {
+    "cash": "cash_account_id",
+    "bank_transfer": "bank_account_id",
+    "mobile_money": "mobile_money_account_id",
+}
+
 
 class HospitalBillingAccountingConfig(models.Model):
     _name = "hospital.billing.accounting.config"
@@ -235,7 +259,57 @@ class HospitalBillingAccountingConfig(models.Model):
             journal = self[field_name]
             if journal and journal.type not in ("general", "cash", "bank"):
                 errors.append(f"{label} must be a general, cash or bank journal")
+            if journal and not journal.active:
+                errors.append(f"{label} is archived")
         return errors
+
+    @api.model
+    def _company_advance_config(self, company):
+        """The ONE validated patient-advance configuration of `company`.
+
+        Prefers the Admission row, else the oldest active row; fails closed
+        when the company has none, when it is incomplete, or when another
+        active row of the same company maps the advance ledger differently.
+        Read under sudo: the mapping is configuration, and the caller's own
+        authority is checked by every posting entry point."""
+        configs = self.sudo().with_context(active_test=True).search(
+            [("company_id", "=", company.id), ("active", "=", True)], order="id"
+        )
+        if not configs:
+            raise UserError(
+                "No hospital accounting configuration exists for %s." % company.name
+            )
+        preferred = configs.filtered(lambda config: config.source_type == "admission")[:1] or configs[:1]
+        preferred._assert_advance_configuration()
+        for config in configs - preferred:
+            for field_name in ADVANCE_LEDGER_FIELDS:
+                if config[field_name] and config[field_name] != preferred[field_name]:
+                    raise UserError(
+                        "Patient-advance mappings differ between %s and %s (%s). A company "
+                        "must post every patient advance through one advance ledger."
+                        % (
+                            preferred.display_name,
+                            config.display_name,
+                            self._fields[field_name].string,
+                        )
+                    )
+        return preferred
+
+    def _refund_liquidity_account(self, payment_method):
+        """The configured liquidity account a refund by `payment_method` is
+        paid out of, or a refusal. Never derived from names or ids."""
+        self.ensure_one()
+        field_name = REFUND_LIQUIDITY_FIELDS.get(payment_method)
+        if not field_name:
+            raise UserError("Refund method %s has no liquidity mapping." % payment_method)
+        account = self[field_name]
+        if not account:
+            raise UserError(
+                "No %s is configured for refunds." % self._fields[field_name].string
+            )
+        if self.company_id not in account.company_ids:
+            raise UserError("The refund liquidity account belongs to another company.")
+        return account
 
     @api.depends(
         "cash_account_id",

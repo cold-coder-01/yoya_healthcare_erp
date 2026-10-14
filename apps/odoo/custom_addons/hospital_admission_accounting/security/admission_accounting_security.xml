@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="rule_admission_accounting_operation_company" model="ir.rule">
+        <field name="name">Inpatient accounting operations: allowed companies</field>
+        <field name="model_id" ref="model_hospital_admission_accounting_operation"/>
+        <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        <field name="groups" eval="[(4, ref('hospital_management.group_hospital_accountant')), (4, ref('hospital_management.group_hospital_manager')), (4, ref('hospital_management.group_hospital_system_administrator'))]"/>
+    </record>
+</odoo>

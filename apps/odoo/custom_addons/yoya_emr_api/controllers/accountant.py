@@ -4,11 +4,16 @@
     GET  /yoya-emr/api/v1/accountant/worklist?lane=&q=
     GET  /yoya-emr/api/v1/accountant/admissions/<id>
     POST /yoya-emr/api/v1/accountant/admissions/<id>/refund
+    POST /yoya-emr/api/v1/accountant/admissions/<id>/post-accounting
+    POST /yoya-emr/api/v1/accountant/admissions/<id>/post-legacy-accounting
 
 Accountant, Hospital Manager, System Administrator (hospital_billing's
 ACCOUNTING_GROUPS). Every figure is the settlement authority's; the refund is
 hospital.admission._cashier_record_refund(), the existing accounting act --
-no second ledger, no new formula, no payment intake, no clinical act. The
+no second ledger, no new formula, no payment intake, no clinical act. Posting
+is hospital.admission._accounting_post() / _accounting_post_legacy(): the
+accounting bridge's domain authority -- this file reproduces no accounting
+rule and names no account or journal, only a business payment method. The
 worklist is NOT date-driven: a refund owed on a stay discharged last week is
 still here. No sudo() in this file: the model methods decide visibility by the
 caller's own record rules.
@@ -39,11 +44,13 @@ from ..services.api_response import (
     success_response,
 )
 from ..services.reception_scope import accountant_capability_flags, may_accountant_desk
-from .cashier import SETTLEMENT_STATUS
+from .cashier import REFUND_REQUIRED_KEYS, SETTLEMENT_STATUS
 
 _logger = logging.getLogger(__name__)
 
-REFUND_BODY_KEYS = frozenset({"amount", "reason", "idempotency_key"})
+POST_ACCOUNTING_BODY_KEYS = frozenset({"idempotency_key"})
+LEGACY_REQUIRED_KEYS = frozenset({"idempotency_key", "payment_method"})
+LEGACY_OPTIONAL_KEYS = frozenset({"payment_reference", "accounting_date"})
 SEARCH_MAX_LENGTH = 80
 
 
@@ -180,7 +187,10 @@ class YoyaEmrAccountantController(http.Controller):
     @accountant_endpoint
     def accountant_refund(self, admission_id, **params):
         """Record a refund of unapplied patient credit -- discharged stays
-        included. Body: exactly {amount, reason, idempotency_key}.
+        included. Body: {amount, reason, idempotency_key, payment_method}
+        plus payment_reference for a non-cash method. Atomic with its
+        accounting: the stay's accounting close and the refund entry post in
+        the same savepoint, or nothing is refunded.
 
         The model re-derives everything under the admission's row lock: the
         caller's accounting role, that care is over, the settlement state,
@@ -191,18 +201,89 @@ class YoyaEmrAccountantController(http.Controller):
         env = request.env
         _require_accountant_desk(env)
         body = read_json_body()
-        if not isinstance(body, dict) or set(body) != REFUND_BODY_KEYS:
+        if (
+            not isinstance(body, dict)
+            or not REFUND_REQUIRED_KEYS <= set(body)
+            or set(body) - REFUND_REQUIRED_KEYS - {"payment_reference"}
+        ):
             raise ApiError(
                 "refund_validation_failed",
-                "A refund body is exactly: amount, reason, idempotency_key.",
+                "A refund body is exactly: amount, reason, idempotency_key, "
+                "payment_method and, for a non-cash refund, payment_reference.",
                 400,
             )
         amount = coerce_number("amount", body.get("amount"))
         admission = env["hospital.admission"]._accounting_find(admission_id)
         with env.cr.savepoint():
             admission, replayed = admission._cashier_record_refund(
-                amount, body.get("reason"), body.get("idempotency_key")
+                amount, body.get("reason"), body.get("idempotency_key"),
+                payment_method=body.get("payment_method"),
+                payment_reference=body.get("payment_reference"),
             )
             payload = _detail(env, admission)
         payload["replayed"] = bool(replayed)
+        return success_response(payload)
+
+    @http.route(
+        "/yoya-emr/api/v1/accountant/admissions/<int:admission_id>/post-accounting",
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @accountant_endpoint
+    def accountant_post_accounting(self, admission_id, **params):
+        """Post a DISCHARGED stay's accounting: unposted receipts, delivered
+        care invoice, advance application. Body: exactly {idempotency_key}.
+        A replay returns the first result and posts nothing twice."""
+        env = request.env
+        _require_accountant_desk(env)
+        body = read_json_body()
+        if not isinstance(body, dict) or set(body) != POST_ACCOUNTING_BODY_KEYS:
+            raise ApiError(
+                "accounting_validation_failed",
+                "A post-accounting body is exactly: idempotency_key.",
+                400,
+            )
+        admission = env["hospital.admission"]._accounting_find(admission_id)
+        with env.cr.savepoint():
+            operation, replayed = admission._accounting_post(body.get("idempotency_key"))
+            payload = _detail(env, admission)
+        payload["replayed"] = bool(replayed)
+        payload["posted_reference"] = operation.sudo().name
+        return success_response(payload)
+
+    @http.route(
+        "/yoya-emr/api/v1/accountant/admissions/<int:admission_id>/post-legacy-accounting",
+        type="http", auth="user", methods=["POST"], csrf=False,
+    )
+    @accountant_endpoint
+    def accountant_post_legacy_accounting(self, admission_id, **params):
+        """Post the accounting of refunds recorded before refund accounting
+        existed. Body: {idempotency_key, payment_method} plus
+        payment_reference (non-cash) and accounting_date (YYYY-MM-DD,
+        optional, not in the future). The method is the Accountant's
+        statement -- never assumed."""
+        env = request.env
+        _require_accountant_desk(env)
+        body = read_json_body()
+        if (
+            not isinstance(body, dict)
+            or not LEGACY_REQUIRED_KEYS <= set(body)
+            or set(body) - LEGACY_REQUIRED_KEYS - LEGACY_OPTIONAL_KEYS
+        ):
+            raise ApiError(
+                "accounting_validation_failed",
+                "A legacy-accounting body is exactly: idempotency_key, payment_method "
+                "and, where needed, payment_reference and accounting_date.",
+                400,
+            )
+        admission = env["hospital.admission"]._accounting_find(admission_id)
+        with env.cr.savepoint():
+            operation, replayed = admission._accounting_post_legacy(
+                body.get("idempotency_key"),
+                body.get("payment_method"),
+                payment_reference=body.get("payment_reference"),
+                accounting_date=body.get("accounting_date"),
+            )
+            payload = _detail(env, admission)
+        payload["replayed"] = bool(replayed)
+        payload["posted_reference"] = operation.sudo().name
         return success_response(payload)

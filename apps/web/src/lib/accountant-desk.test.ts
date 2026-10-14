@@ -18,6 +18,7 @@ import {
   accountantLaneTone,
   paymentKindLabel,
   refundPreview,
+  refundReferenceRequired,
 } from "./accountant-format.ts";
 import {
   ACCOUNTANT_ROUTE,
@@ -54,6 +55,8 @@ const REFUND_ROUTE = code("app/api/accountant/admissions/[admissionId]/refund/ro
 const WORKLIST_ROUTE = code("app/api/accountant/worklist/route.ts");
 const DETAIL_ROUTE = code("app/api/accountant/admissions/[admissionId]/route.ts");
 const SESSION_ROUTE = code("app/api/accountant/session/route.ts");
+const POST_ROUTE = code("app/api/accountant/admissions/[admissionId]/post-accounting/route.ts");
+const LEGACY_ROUTE = code("app/api/accountant/admissions/[admissionId]/post-legacy-accounting/route.ts");
 const SIDEBAR = code("components/reception/reception-sidebar.tsx");
 
 test("an accountant login lands on /accountant, never /cashier", () => {
@@ -74,14 +77,18 @@ test("oversight is offered both desks; the sidebar links the Accountant Desk", (
   assert.ok(SIDEBAR.includes('{ label: "Accountant Desk", href: ACCOUNTANT_ROUTE, visible: showAccountant }'));
 });
 
-test("lanes: All / Refund due / Needs review / Completed-Refunded; refund due amber, refunded green", () => {
-  assert.deepEqual(ACCOUNTANT_TABS.map((tab) => tab.key), ["all", "refund_due", "needs_review", "refunded"]);
+test("lanes: All / Refund due / Needs review / Accounting pending / Completed-Refunded", () => {
+  assert.deepEqual(
+    ACCOUNTANT_TABS.map((tab) => tab.key),
+    ["all", "refund_due", "needs_review", "accounting_pending", "refunded"],
+  );
+  assert.equal(accountantLaneLabel("accounting_pending"), "Accounting pending");
   assert.equal(accountantLaneLabel("refund_due"), "Refund due");
   assert.match(accountantLaneTone("refund_due"), /amber/);
   assert.match(accountantLaneTone("refunded"), /emerald/);
   assert.match(accountantLaneTone("needs_review"), /red/);
   assert.equal(
-    ACCOUNTANT_EMPTY_STATE, "No inpatient refunds currently require accounting action.",
+    ACCOUNTANT_EMPTY_STATE, "No inpatient accounts currently require accounting action.",
   );
   assert.ok(DESK.includes("{ACCOUNTANT_EMPTY_STATE}"));
   assert.doesNotMatch(DESK, /not authorized to record operational payment/);
@@ -129,11 +136,47 @@ test("the detail panel renders identity, admission, settlement, care and history
   assert.equal(paymentKindLabel("settlement"), "Settlement payment");
 });
 
-test("the accounting limitation is stated, never hidden", () => {
-  assert.ok(DESK.includes("Operational refund recorded"));
-  assert.ok(DESK.includes("REFUND_ACCOUNTING_PENDING"));
-  assert.ok(DIALOG.includes("REFUND_ACCOUNTING_PENDING"));
-  assert.doesNotMatch(DESK + DIALOG, /Posted to accounting/i);
+test("accounting status is the server's: posted only when the server says so", () => {
+  // The status pill renders the server's label; a refund row says posted
+  // only from its own accounting_posted fact, otherwise legacy pending.
+  assert.ok(DESK.includes("{accounting.label}"));
+  assert.ok(DESK.includes("row.accounting_posted"));
+  assert.ok(DESK.includes("Legacy accounting pending"));
+  assert.ok(DESK.includes("accounting.may_post ?"));
+  assert.ok(DESK.includes("accounting.may_post_legacy ?"));
+  assert.ok(DIALOG.includes("REFUND_ACCOUNTING_ATOMIC"));
+  // No browser-side accounting: no account, journal, debit or credit.
+  assert.doesNotMatch(DESK + DIALOG, /journal_id|account_id|debit|credit/i);
+});
+
+test("a refund needs a method, and a reference for non-cash; methods come from the server", () => {
+  const methods = [
+    { key: "cash" as const, label: "Cash", reference_required: false },
+    { key: "bank_transfer" as const, label: "Bank transfer", reference_required: true },
+  ];
+  assert.equal(refundReferenceRequired(methods, "cash"), false);
+  assert.equal(refundReferenceRequired(methods, "bank_transfer"), true);
+  assert.equal(refundReferenceRequired(methods, "unknown"), true);
+  assert.ok(DESK.includes("detail?.accounting.refund_methods ?? []"));
+  assert.ok(DESK.includes("payment_method: method,"));
+  assert.ok(DESK.includes("(!referenceRequired || reference.trim())"));
+  assert.ok(DIALOG.includes("Refund method") && DIALOG.includes("Payment reference"));
+});
+
+test("Post accounting and Post legacy accounting go through the BFF with one token each", () => {
+  assert.ok(DESK.includes("fetch(`/api/accountant/admissions/${detail.admission.id}/${kind}`"));
+  assert.ok(DESK.includes('postAccounting("post-accounting")'));
+  assert.ok(DESK.includes('postAccounting("post-legacy-accounting")'));
+  assert.ok(DESK.includes("pendingPost.current = { signature, token: crypto.randomUUID() };"));
+  assert.ok(DESK.includes("No method is assumed."));
+  assert.ok(POST_ROUTE.includes("`/yoya-emr/api/v1/accountant/admissions/${parsed.value}/post-accounting`"));
+  assert.ok(POST_ROUTE.includes("{ idempotency_key: idempotencyKey.trim() }"));
+  assert.ok(LEGACY_ROUTE.includes("`/yoya-emr/api/v1/accountant/admissions/${parsed.value}/post-legacy-accounting`"));
+  assert.ok(LEGACY_ROUTE.includes("payment_method: body.payment_method,"));
+  for (const source of [POST_ROUTE, LEGACY_ROUTE]) {
+    assert.ok(source.includes("await requireOdooSession()"));
+    assert.doesNotMatch(source, /https?:\/\/|localhost|:8069/);
+  }
 });
 
 test("Record refund opens the Review refund modal, not a browser confirm", () => {
@@ -169,7 +212,8 @@ test("the refund goes through the Accountant BFF with one token per intended ref
 
 test("the BFF routes are pass-throughs to the accountant API, the refund body rebuilt", () => {
   assert.ok(REFUND_ROUTE.includes("`/yoya-emr/api/v1/accountant/admissions/${parsed.value}/refund`"));
-  assert.match(REFUND_ROUTE, /amount: body\.amount,\s*reason: body\.reason,\s*idempotency_key: idempotencyKey\.trim\(\),/);
+  assert.match(REFUND_ROUTE, /amount: body\.amount,\s*reason: body\.reason,\s*payment_method: body\.payment_method,/);
+  assert.ok(REFUND_ROUTE.includes("idempotency_key: idempotencyKey.trim(),"));
   assert.ok(REFUND_ROUTE.includes("await requireOdooSession()"));
   assert.ok(WORKLIST_ROUTE.includes("`/yoya-emr/api/v1/accountant/worklist${url.search}`"));
   assert.ok(DETAIL_ROUTE.includes("`/yoya-emr/api/v1/accountant/admissions/${parsed.value}`"));
@@ -188,8 +232,11 @@ test("no cashier payment entry, no clinical or admissions controls on the desk",
   ]) {
     assert.doesNotMatch(both, forbidden, String(forbidden));
   }
-  // No payment-method picker: payment_method is only READ in the history.
-  assert.doesNotMatch(DESK, /<select/);
+  // The only pickers are REFUND methods from the server's list; incoming
+  // payment_method is only READ in the history.
+  const selects = DESK.match(/<select/g) ?? [];
+  assert.equal(selects.length, 2);
+  assert.equal((DESK.match(/refund_methods\.map|methods\.map/g) ?? []).length, 2);
   assert.ok(DESK.includes("{row.payment_method ?? \"—\"}"));
 });
 

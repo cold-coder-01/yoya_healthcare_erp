@@ -6,13 +6,15 @@ import {
   ACCOUNTANT_EMPTY_STATE,
   ACCOUNTANT_TABS,
   DEFAULT_REFUND_REASON,
-  REFUND_ACCOUNTING_PENDING,
   accountantAdmissionStatus,
   accountantLaneLabel,
   accountantLaneTone,
+  accountingStatusTone,
   locationText,
   paymentKindLabel,
+  refundMethodLabel,
   refundPreview,
+  refundReferenceRequired,
   type AccountantTab,
 } from "@/lib/accountant-format";
 import { messageFromPayload } from "@/lib/api-error";
@@ -26,14 +28,17 @@ import AccountantRefundReviewDialog from "./accountant-refund-review-dialog";
 /**
  * THE ACCOUNTANT DESK: inpatient refunds and settlement review.
  *
- * Queue (left) -> the selected account's settlement (centre) -> the one
- * authorized action, Record refund (right). Every figure is the server's;
- * the most a refund may be is `refund.max_amount`. There is NO payment intake,
- * estimate, admission, transfer, discharge, bed or clinical control here.
+ * Queue (left) -> the selected account's settlement (centre) -> the
+ * authorized actions (right): the stay's accounting status, Post accounting,
+ * Post legacy accounting and Record refund. Every figure and every verdict is
+ * the server's; the most a refund may be is `refund.max_amount`, the refund
+ * METHODS are the server's list, and the browser never names an account or a
+ * journal. There is NO payment intake, estimate, admission, transfer,
+ * discharge, bed or clinical control here.
  *
- * A refund carries ONE operation token per intended refund: an unknown outcome
- * keeps it, so a retry replays on the server instead of refunding twice. After
- * any answer the account and the queue are re-read from the server.
+ * Every money act carries ONE operation token per intended act: an unknown
+ * outcome keeps it, so a retry replays on the server instead of posting or
+ * refunding twice. After any answer the account and the queue are re-read.
  */
 export default function AccountantWorkstation() {
   const [tab, setTab] = useState<AccountantTab>("refund_due");
@@ -51,6 +56,14 @@ export default function AccountantWorkstation() {
 
   const [amount, setAmount] = useState("");
   const [reason, setReason] = useState(DEFAULT_REFUND_REASON);
+  const [method, setMethod] = useState("");
+  const [reference, setReference] = useState("");
+  const [legacyMethod, setLegacyMethod] = useState("");
+  const [legacyReference, setLegacyReference] = useState("");
+  const [legacyDate, setLegacyDate] = useState("");
+  const [posting, setPosting] = useState(false);
+  const [postError, setPostError] = useState<string | null>(null);
+  const pendingPost = useRef<{ signature: string; token: string } | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [refundError, setRefundError] = useState<string | null>(null);
@@ -132,18 +145,81 @@ export default function AccountantWorkstation() {
     setRefundError(null);
     setNotice(null);
     setReason(DEFAULT_REFUND_REASON);
+    setMethod("");
+    setReference("");
+    setLegacyMethod("");
+    setLegacyReference("");
+    setLegacyDate("");
+    setPostError(null);
     pending.current = null;
+    pendingPost.current = null;
   }, []);
 
   const preview = useMemo(
     () => refundPreview(detail?.refund.max_amount ?? 0, amount),
     [detail, amount],
   );
-  const canReview = Boolean(detail?.refund.may_record && preview.valid && reason.trim());
+  const methods = detail?.accounting.refund_methods ?? [];
+  const referenceRequired = Boolean(method) && refundReferenceRequired(methods, method);
+  const canReview = Boolean(
+    detail?.refund.may_record && preview.valid && reason.trim() && method &&
+      (!referenceRequired || reference.trim()),
+  );
+  const legacyReferenceRequired = Boolean(legacyMethod) && refundReferenceRequired(methods, legacyMethod);
+  const canPostLegacy = Boolean(
+    detail?.accounting.may_post_legacy && legacyMethod && (!legacyReferenceRequired || legacyReference.trim()),
+  );
+
+  /** Post accounting / Post legacy accounting: one token per intended post. */
+  async function postAccounting(kind: "post-accounting" | "post-legacy-accounting") {
+    if (!detail || posting) return;
+    const body: Record<string, string> =
+      kind === "post-accounting"
+        ? {}
+        : {
+            payment_method: legacyMethod,
+            ...(legacyReference.trim() ? { payment_reference: legacyReference.trim() } : {}),
+            ...(legacyDate ? { accounting_date: legacyDate } : {}),
+          };
+    const signature = `${kind}|${detail.admission.id}|${JSON.stringify(body)}`;
+    if (pendingPost.current?.signature !== signature) {
+      pendingPost.current = { signature, token: crypto.randomUUID() };
+    }
+    setPosting(true);
+    setPostError(null);
+    try {
+      const response = await fetch(`/api/accountant/admissions/${detail.admission.id}/${kind}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ ...body, idempotency_key: pendingPost.current.token }),
+      });
+      const payload = (await response.json()) as ApiEnvelope<AccountantDetail>;
+      if (!response.ok || !payload.success || !payload.data) {
+        if (response.status < 500) pendingPost.current = null;
+        setPostError(messageFromPayload(payload, "Unable to post accounting."));
+        setDetailToken((token) => token + 1);
+        setQueueToken((token) => token + 1);
+        return;
+      }
+      pendingPost.current = null;
+      applyDetail(payload.data);
+      setNotice(
+        payload.data.replayed
+          ? "This accounting was already posted."
+          : `Accounting posted${payload.data.posted_reference ? ` (${payload.data.posted_reference})` : ""}.`,
+      );
+      setQueueToken((token) => token + 1);
+    } catch {
+      setPostError("The posting outcome is unknown. Retry to finish the same request safely.");
+    } finally {
+      setPosting(false);
+    }
+  }
 
   async function recordRefund() {
     if (!detail || !canReview || busy) return;
-    const signature = `${detail.admission.id}|${preview.refund.toFixed(2)}|${reason.trim()}`;
+    const signature = `${detail.admission.id}|${preview.refund.toFixed(2)}|${reason.trim()}|${method}|${reference.trim()}`;
     if (pending.current?.signature !== signature) {
       pending.current = { signature, token: crypto.randomUUID() };
     }
@@ -157,6 +233,8 @@ export default function AccountantWorkstation() {
         body: JSON.stringify({
           amount: preview.refund,
           reason: reason.trim(),
+          payment_method: method,
+          ...(reference.trim() ? { payment_reference: reference.trim() } : {}),
           idempotency_key: pending.current.token,
         }),
       });
@@ -176,7 +254,7 @@ export default function AccountantWorkstation() {
       setNotice(
         payload.data.replayed
           ? "This refund was already recorded."
-          : `Operational refund recorded. ${REFUND_ACCOUNTING_PENDING}.`,
+          : "Refund recorded. Accounting posted.",
       );
       setQueueToken((token) => token + 1);
     } catch {
@@ -294,12 +372,27 @@ export default function AccountantWorkstation() {
           <p className="text-xs text-slate-500">The authorized action appears here.</p>
         ) : (
           <div className="flex flex-col gap-2">
-            <h2 className="text-[11px] font-bold uppercase tracking-wide text-slate-600">Record refund</h2>
             {notice ? (
               <p role="status" className="rounded border border-emerald-300 bg-emerald-50 px-2 py-1.5 text-xs text-emerald-900">
                 {notice}
               </p>
             ) : null}
+            <AccountingPanel
+              detail={detail}
+              posting={posting}
+              error={postError}
+              legacyMethod={legacyMethod}
+              legacyReference={legacyReference}
+              legacyDate={legacyDate}
+              legacyReferenceRequired={legacyReferenceRequired}
+              canPostLegacy={canPostLegacy}
+              onLegacyMethod={setLegacyMethod}
+              onLegacyReference={setLegacyReference}
+              onLegacyDate={setLegacyDate}
+              onPost={() => void postAccounting("post-accounting")}
+              onPostLegacy={() => void postAccounting("post-legacy-accounting")}
+            />
+            <h2 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-slate-600">Record refund</h2>
             {detail.refund.may_record ? (
               <>
                 <div className="rounded border border-amber-300 bg-amber-50 px-2 py-1.5">
@@ -324,6 +417,35 @@ export default function AccountantWorkstation() {
                 />
                 {preview.exceeds ? (
                   <p className="text-[11px] font-medium text-red-700">More than the refundable balance.</p>
+                ) : null}
+                <label htmlFor="accountant-refund-method" className="text-xs font-medium text-slate-700">
+                  Refund method <span className="text-red-600">*</span>
+                </label>
+                <select
+                  id="accountant-refund-method"
+                  value={method}
+                  onChange={(event) => setMethod(event.target.value)}
+                  className="h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm outline-none focus:border-amber-600"
+                >
+                  <option value="">Select method…</option>
+                  {methods.map((option) => (
+                    <option key={option.key} value={option.key}>{option.label}</option>
+                  ))}
+                </select>
+                {referenceRequired ? (
+                  <>
+                    <label htmlFor="accountant-refund-reference" className="text-xs font-medium text-slate-700">
+                      Payment reference <span className="text-red-600">*</span>
+                    </label>
+                    <input
+                      id="accountant-refund-reference"
+                      type="text"
+                      maxLength={128}
+                      value={reference}
+                      onChange={(event) => setReference(event.target.value)}
+                      className="h-9 w-full rounded-md border border-slate-300 px-2 text-sm outline-none focus:border-amber-600"
+                    />
+                  </>
                 ) : null}
                 <label htmlFor="accountant-refund-reason" className="text-xs font-medium text-slate-700">
                   Reason <span className="text-red-600">*</span>
@@ -372,6 +494,8 @@ export default function AccountantWorkstation() {
           amount={preview.refund}
           after={preview.after}
           reason={reason.trim()}
+          methodLabel={refundMethodLabel(methods, method)}
+          reference={reference.trim() || null}
           busy={busy}
           error={refundError}
           onConfirm={() => void recordRefund()}
@@ -483,12 +607,19 @@ function AccountantSettlementDetail({ detail }: { detail: AccountantDetail }) {
               <tr key={`out-${row.id}`} className="border-t border-slate-100">
                 <td className="py-1 pr-2 font-mono">{row.reference}</td>
                 <td className="py-1 pr-2">Refund{row.reason ? ` · ${row.reason}` : ""}</td>
-                <td className="py-1 pr-2">—</td>
+                <td className="py-1 pr-2">
+                  {refundMethodLabel(detail.accounting.refund_methods, row.payment_method)}
+                  {row.payment_reference ? <span className="block font-mono text-[10px]">{row.payment_reference}</span> : null}
+                </td>
                 <td className="py-1 pr-2">{row.actor ?? "—"}</td>
                 <td className="py-1 pr-2 whitespace-nowrap">{formatHospitalDateTime(row.at, "—")}</td>
                 <td className="py-1 pr-2">
                   Operational refund recorded
-                  <span className="block text-[10px] text-amber-800">{REFUND_ACCOUNTING_PENDING}</span>
+                  <span className={`block text-[10px] ${row.accounting_posted ? "text-emerald-800" : "text-amber-800"}`}>
+                    {row.accounting_posted
+                      ? `Accounting posted${row.accounting_reference ? ` · ${row.accounting_reference}` : ""}`
+                      : "Legacy accounting pending"}
+                  </span>
                 </td>
                 <td className="py-1 text-right font-mono font-semibold tabular-nums text-amber-900">− {figure(row.amount)}</td>
               </tr>
@@ -499,6 +630,133 @@ function AccountantSettlementDetail({ detail }: { detail: AccountantDetail }) {
         )}
       </Band>
     </div>
+  );
+}
+
+/**
+ * The stay's ACCOUNTING: the server's status, its reference, and the two
+ * posting actions it allows. A status, not a ledger: no journal lines.
+ */
+function AccountingPanel({
+  detail,
+  posting,
+  error,
+  legacyMethod,
+  legacyReference,
+  legacyDate,
+  legacyReferenceRequired,
+  canPostLegacy,
+  onLegacyMethod,
+  onLegacyReference,
+  onLegacyDate,
+  onPost,
+  onPostLegacy,
+}: {
+  detail: AccountantDetail;
+  posting: boolean;
+  error: string | null;
+  legacyMethod: string;
+  legacyReference: string;
+  legacyDate: string;
+  legacyReferenceRequired: boolean;
+  canPostLegacy: boolean;
+  onLegacyMethod: (value: string) => void;
+  onLegacyReference: (value: string) => void;
+  onLegacyDate: (value: string) => void;
+  onPost: () => void;
+  onPostLegacy: () => void;
+}) {
+  const accounting = detail.accounting;
+  return (
+    <section aria-label="Accounting" className="flex flex-col gap-1.5">
+      <h2 className="text-[11px] font-bold uppercase tracking-wide text-slate-600">Accounting</h2>
+      <div className={`rounded border px-2 py-1.5 text-xs ${accountingStatusTone(accounting.status)}`}>
+        <p className="text-[10px] font-bold uppercase tracking-wide" data-testid="accounting-status">
+          {accounting.label}
+        </p>
+        {accounting.reference ? (
+          <p className="mt-0.5 font-mono text-[11px]">
+            {accounting.reference}
+            {accounting.posted_at ? ` · ${formatHospitalDateTime(accounting.posted_at, "")}` : ""}
+          </p>
+        ) : null}
+        {accounting.status === "legacy_pending" ? (
+          <p className="mt-0.5">
+            Refunds recorded before refund accounting: {money(accounting.legacy_refund_total)}
+          </p>
+        ) : null}
+        {accounting.reason && !accounting.may_post && !accounting.may_post_legacy ? (
+          <p className="mt-0.5">{accounting.reason}</p>
+        ) : null}
+      </div>
+      {error ? (
+        <p className="rounded border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-red-700">{error}</p>
+      ) : null}
+      {accounting.may_post ? (
+        <button
+          type="button"
+          disabled={posting}
+          onClick={onPost}
+          className="h-9 w-full rounded-md bg-sky-700 text-sm font-semibold text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+        >
+          {posting ? "Posting…" : "Post accounting"}
+        </button>
+      ) : null}
+      {accounting.may_post_legacy ? (
+        <div className="flex flex-col gap-1.5 rounded border border-amber-200 p-2">
+          <p className="text-[11px] text-slate-600">
+            State how the earlier refund was paid. No method is assumed.
+          </p>
+          <label htmlFor="accountant-legacy-method" className="text-xs font-medium text-slate-700">
+            Refund method <span className="text-red-600">*</span>
+          </label>
+          <select
+            id="accountant-legacy-method"
+            value={legacyMethod}
+            onChange={(event) => onLegacyMethod(event.target.value)}
+            className="h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm outline-none focus:border-amber-600"
+          >
+            <option value="">Select method…</option>
+            {accounting.refund_methods.map((option) => (
+              <option key={option.key} value={option.key}>{option.label}</option>
+            ))}
+          </select>
+          {legacyReferenceRequired ? (
+            <>
+              <label htmlFor="accountant-legacy-reference" className="text-xs font-medium text-slate-700">
+                Payment reference <span className="text-red-600">*</span>
+              </label>
+              <input
+                id="accountant-legacy-reference"
+                type="text"
+                maxLength={128}
+                value={legacyReference}
+                onChange={(event) => onLegacyReference(event.target.value)}
+                className="h-9 w-full rounded-md border border-slate-300 px-2 text-sm outline-none focus:border-amber-600"
+              />
+            </>
+          ) : null}
+          <label htmlFor="accountant-legacy-date" className="text-xs font-medium text-slate-700">
+            Accounting date (optional)
+          </label>
+          <input
+            id="accountant-legacy-date"
+            type="date"
+            value={legacyDate}
+            onChange={(event) => onLegacyDate(event.target.value)}
+            className="h-9 w-full rounded-md border border-slate-300 px-2 text-sm outline-none focus:border-amber-600"
+          />
+          <button
+            type="button"
+            disabled={!canPostLegacy || posting}
+            onClick={onPostLegacy}
+            className="h-9 w-full rounded-md bg-amber-700 text-sm font-semibold text-white hover:bg-amber-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+          >
+            {posting ? "Posting…" : "Post legacy accounting"}
+          </button>
+        </div>
+      ) : null}
+    </section>
   );
 }
 

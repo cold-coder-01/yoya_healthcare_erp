@@ -13,10 +13,13 @@ import type { AccountantDetail } from "@/types/accountant";
  * Record a refund of unapplied inpatient credit -- discharged stays
  * included. AN ACCOUNTING ACT.
  *
- * Exactly {amount, reason, idempotency_key} leave this route; a body naming
- * anything else is rebuilt, not forwarded. Odoo re-checks the role, that care
- * is over, the settlement state and the refundable balance under the
- * admission's row lock, and replays the same key instead of refunding twice.
+ * Exactly {amount, reason, payment_method, idempotency_key} -- plus
+ * payment_reference when one was typed -- leave this route; a body naming
+ * anything else is rebuilt, not forwarded. The browser names a business
+ * METHOD only; Odoo maps it to the company's configured ledger, re-checks the
+ * role, that care is over, the settlement state and the refundable balance
+ * under the admission's row lock, posts the refund's accounting in the same
+ * step, and replays the same key instead of refunding twice.
  */
 export async function POST(
   request: Request,
@@ -51,6 +54,10 @@ export async function POST(
         {
           amount: body.amount,
           reason: body.reason,
+          payment_method: body.payment_method,
+          ...(typeof body.payment_reference === "string" && body.payment_reference.trim()
+            ? { payment_reference: body.payment_reference.trim() }
+            : {}),
           idempotency_key: idempotencyKey.trim(),
         },
       ),

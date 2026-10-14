@@ -120,8 +120,8 @@ DISCHARGED_SCAN_MAX = 100
 CASHIER_SETTLEMENT_MESSAGES = {
     "inpatient_not_found": "Inpatient account not found.",
     "inpatient_desk_not_authorized": (
-        "Inpatient settlement requires the Hospital Cashier, Accountant, Hospital "
-        "Manager or Hospital System Administrator role."
+        "Inpatient settlement requires the Hospital Cashier, Hospital Manager or "
+        "Hospital System Administrator role."
     ),
     "inpatient_financial_review_required": (
         "The inpatient account's figures need review before any payment can be "
@@ -184,7 +184,68 @@ CASHIER_SETTLEMENT_MESSAGES = {
     "inpatient_operation_conflict": (
         "This idempotency key was already used for a different request."
     ),
+    "inpatient_refund_method_required": (
+        "A refund needs a payment method: cash, bank transfer or mobile money. "
+        "Nothing was changed."
+    ),
+    "inpatient_refund_reference_required": (
+        "A bank-transfer or mobile-money refund needs its payment reference. "
+        "Nothing was changed."
+    ),
+    # Inpatient accounting (the admission accounting bridge).
+    "accounting_unavailable": (
+        "Hospital accounting is not installed on this system, so nothing can be "
+        "posted. Nothing was changed."
+    ),
+    "accounting_not_authorized": (
+        "Inpatient accounting is posted by the Accountant, Hospital Manager or "
+        "Hospital System Administrator."
+    ),
+    "payer_accounting_outside_scope": (
+        "This stay has a payer or sponsor. Payer accounting is outside the "
+        "self-pay accounting close. Nothing was posted."
+    ),
+    "accounting_review_required": (
+        "The settlement figures need review before anything can be posted. "
+        "Nothing was posted."
+    ),
+    "accounting_post_not_open": (
+        "Accounting is posted from this desk once the stay is discharged. "
+        "Nothing was posted."
+    ),
+    "accounting_nothing_to_post": (
+        "Everything on this stay is already posted to accounting. Nothing was changed."
+    ),
+    "accounting_legacy_required": (
+        "This stay has refunds recorded before refund accounting existed. Post the "
+        "legacy accounting first. Nothing was posted."
+    ),
+    "accounting_legacy_not_applicable": (
+        "This stay has no legacy refund awaiting accounting. Nothing was posted."
+    ),
+    "accounting_date_invalid": (
+        "The accounting date must be a valid date that is not in the future. "
+        "Nothing was posted."
+    ),
+    "accounting_configuration_incomplete": (
+        "The hospital accounting configuration is incomplete. Nothing was posted "
+        "or refunded."
+    ),
+    "accounting_posting_failed": (
+        "The accounting entry could not be posted (for example a locked period or "
+        "an invalid journal). Nothing was posted or refunded."
+    ),
+    "accounting_close_mismatch": (
+        "The accounting entries would not match the settlement figures. Nothing was "
+        "posted or refunded; the account needs review."
+    ),
 }
+
+# The business methods a refund may be paid by. The browser names a METHOD;
+# the accounting bridge maps it to the company's configured liquidity
+# account. Vocabulary from hospital_billing's PAYMENT_METHODS.
+REFUND_PAYMENT_METHODS = ("cash", "bank_transfer", "mobile_money")
+REFUND_REFERENCE_MAX_LENGTH = 128
 
 
 class CashierSettlementError(UserError):
@@ -193,6 +254,18 @@ class CashierSettlementError(UserError):
     def __init__(self, code):
         self.code = code
         super().__init__(CASHIER_SETTLEMENT_MESSAGES[code])
+
+
+class AdmissionAccountingError(CashierSettlementError):
+    """An accounting refusal: the fixed sentence, plus -- for configuration
+    and posting failures -- the accounting layer's own explanation (which
+    mapping is missing, which period is locked). Never clinical detail."""
+
+    def __init__(self, code, detail=None):
+        super().__init__(code)
+        self.detail = (detail or "").strip() or None
+        if self.detail:
+            self.args = ("%s %s" % (CASHIER_SETTLEMENT_MESSAGES[code], self.detail),)
 
 
 def _clean_amount(amount):
@@ -620,7 +693,23 @@ class HospitalAdmissionCashier(models.Model):
     # ------------------------------------------------------------------
     # THE refund (an accounting act)
     # ------------------------------------------------------------------
-    def _cashier_record_refund(self, amount, reason, idempotency_key):
+    @api.model
+    def _clean_refund_method(self, payment_method, payment_reference):
+        """(method, reference) or a fixed refusal. A business method only --
+        never an account or a journal."""
+        if payment_method not in REFUND_PAYMENT_METHODS:
+            raise CashierSettlementError("inpatient_refund_method_required")
+        if payment_reference is not None and not isinstance(payment_reference, str):
+            raise CashierSettlementError("inpatient_refund_reference_required")
+        reference = (payment_reference or "").strip()
+        if len(reference) > REFUND_REFERENCE_MAX_LENGTH:
+            raise CashierSettlementError("inpatient_refund_reference_required")
+        if payment_method != "cash" and not reference:
+            raise CashierSettlementError("inpatient_refund_reference_required")
+        return payment_method, reference or None
+
+    def _cashier_record_refund(self, amount, reason, idempotency_key, payment_method=None,
+                               payment_reference=None):
         """Give back unapplied patient credit. Returns (admission, replayed).
 
         Accountant / Manager / Administrator only. Recorded as refund_advance()
@@ -629,6 +718,13 @@ class HospitalAdmissionCashier(models.Model):
         nothing else: no delivered charge, invoice, or revenue figure moves, so
         a refund can never become negative revenue. Only once the stay is over
         or medically ready: credit during care is the advance still working.
+
+        PAID BY A METHOD (cash, bank transfer, mobile money; a reference for
+        the non-cash ones), and ATOMIC WITH ITS ACCOUNTING: with the admission
+        accounting bridge installed, _accounting_before_refund() closes the
+        stay's accounting and posts Dr Advance Liability / Cr cash-bank first.
+        Every step runs inside one savepoint, so an accounting refusal leaves
+        no operational refund, no entry and no reconciliation behind.
         """
         self.ensure_one()
         if not self._cashier_may_refund():
@@ -642,11 +738,18 @@ class HospitalAdmissionCashier(models.Model):
             token = self._desk_clean_token(idempotency_key)
         except AdmissionDeskError:
             raise CashierSettlementError("inpatient_idempotency_key_required") from None
+        payment_method, payment_reference = self._clean_refund_method(
+            payment_method, payment_reference
+        )
 
         admission = self.sudo()
         admission._lock_for_occupancy(self.env["hospital.bed"])
         digest = admission.with_env(caller).sudo()._desk_digest(
-            "refund", {"admission": admission.id, "amount": amount, "reason": reason}
+            "refund",
+            {
+                "admission": admission.id, "amount": amount, "reason": reason,
+                "payment_method": payment_method, "payment_reference": payment_reference,
+            },
         )
         try:
             if admission._desk_find_replay("refund", token, digest):
@@ -662,49 +765,58 @@ class HospitalAdmissionCashier(models.Model):
         if amount - summary["refundable_balance"] > AMOUNT_TOLERANCE:
             raise CashierSettlementError("inpatient_refund_exceeds_credit")
 
-        account = admission._billing_account()
-        lines = self.env["hospital.charge.line"].sudo().with_context(active_test=False).search(
-            [("billing_account_id", "=", account.id)], order="id asc"
-        )
-        deposit = lines.filtered(admission._is_deposit_line)
-        remaining = amount
-        for line in deposit + (lines - deposit):
-            if remaining <= AMOUNT_TOLERANCE:
-                break
-            held = line.amount_prepayment_held
-            if held <= AMOUNT_TOLERANCE:
-                continue
-            take = min(remaining, held)
-            line.with_env(caller).refund_advance(take, reason)
-            remaining -= take
-        if remaining > AMOUNT_TOLERANCE:
-            # Credit exists on paper but no line holds the cash to return: the
-            # money has been applied (invoiced) and must go through Accounting.
-            raise CashierSettlementError("inpatient_nothing_refundable")
+        with self.env.cr.savepoint():
+            # Accounting FIRST (close, then Dr Advance Liability / Cr cash-bank),
+            # so a refusal there raises before any operational line moves.
+            posting = admission.with_env(caller)._accounting_before_refund(
+                amount, payment_method, payment_reference, token
+            )
+            account = admission._billing_account()
+            lines = self.env["hospital.charge.line"].sudo().with_context(active_test=False).search(
+                [("billing_account_id", "=", account.id)], order="id asc"
+            )
+            deposit = lines.filtered(admission._is_deposit_line)
+            remaining = amount
+            for line in deposit + (lines - deposit):
+                if remaining <= AMOUNT_TOLERANCE:
+                    break
+                held = line.amount_prepayment_held
+                if held <= AMOUNT_TOLERANCE:
+                    continue
+                take = min(remaining, held)
+                line.with_env(caller).refund_advance(take, reason)
+                remaining -= take
+            if remaining > AMOUNT_TOLERANCE:
+                # Credit exists on paper but no line holds the cash to return: the
+                # money has been applied (invoiced) and must go through Accounting.
+                raise CashierSettlementError("inpatient_nothing_refundable")
 
-        # The audit row IS the refund's history entry (the Accountant Desk reads
-        # it): structured, so no reader parses prose. No second ledger.
-        self.env.invalidate_all()
-        after = admission._inpatient_financial_summary()["refundable_balance"]
-        admission._audit(
-            patient_id=admission.patient_id.id,
-            model_name=admission._name,
-            record_id=admission.id,
-            action_type="update",
-            description="Refund of %.2f recorded on %s: %s" % (amount, admission.name, reason),
-            old_value=json.dumps({"refundable_balance": summary["refundable_balance"]}),
-            new_value=json.dumps({
-                "kind": REFUND_AUDIT_KIND,
-                "amount": amount,
-                "refundable_before": summary["refundable_balance"],
-                "refundable_after": after,
-                "reason": reason,
-                "operation_token": token,
-            }),
-        )
-        # Recorded for replay without a workflow-revision bump: a refund moves
-        # money, not the stay.
-        self.env.flush_all()
-        admission._desk_record_operation("refund", token, digest)
-        self.env.flush_all()
+            # The audit row IS the refund's history entry (the Accountant Desk reads
+            # it): structured, so no reader parses prose. No second ledger.
+            self.env.invalidate_all()
+            after = admission._inpatient_financial_summary()["refundable_balance"]
+            log = admission._audit(
+                patient_id=admission.patient_id.id,
+                model_name=admission._name,
+                record_id=admission.id,
+                action_type="update",
+                description="Refund of %.2f recorded on %s: %s" % (amount, admission.name, reason),
+                old_value=json.dumps({"refundable_balance": summary["refundable_balance"]}),
+                new_value=json.dumps({
+                    "kind": REFUND_AUDIT_KIND,
+                    "amount": amount,
+                    "refundable_before": summary["refundable_balance"],
+                    "refundable_after": after,
+                    "reason": reason,
+                    "operation_token": token,
+                    "payment_method": payment_method,
+                    "payment_reference": payment_reference,
+                }),
+            )
+            admission.with_env(caller)._accounting_after_refund(posting, log)
+            # Recorded for replay without a workflow-revision bump: a refund moves
+            # money, not the stay.
+            self.env.flush_all()
+            admission._desk_record_operation("refund", token, digest)
+            self.env.flush_all()
         return admission, False

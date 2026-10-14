@@ -52,9 +52,11 @@ class AdvanceCase(CashierSettlementCase):
         self.env.invalidate_all()
         return receipt, replayed
 
-    def _refund(self, admission, amount, user=None, key=None, reason="Unused advance returned"):
+    def _refund(self, admission, amount, user=None, key=None, reason="Unused advance returned",
+                method="cash", reference=None):
+        self._map_services_for_accounting()
         result = admission.with_user(user or self.accountant)._cashier_record_refund(
-            amount, reason, key or str(uuid.uuid4())
+            amount, reason, key or str(uuid.uuid4()), payment_method=method, payment_reference=reference
         )
         self.env.invalidate_all()
         return result
@@ -258,10 +260,11 @@ class TestSettlementScenarios(AdvanceCase):
         admission = self._stay(actual=57000.0)
         quote = self._summary(admission)["quote"]
         self._settle(admission, 7000.0, quote=quote)
-        # The second cashier was shown the same 7,000 and the same quote.
+        # The second collector (a manager at the window) was shown the same
+        # 7,000 and the same quote.
         with self.assertRaises(CashierSettlementError) as caught:
             with self.env.cr.savepoint():
-                self._settle(admission, 7000.0, quote=quote, user=self.accountant)
+                self._settle(admission, 7000.0, quote=quote, user=self.manager)
         self.assertIn(caught.exception.code, ("inpatient_quote_stale", "inpatient_nothing_due"))
         self.assertEqual(self._summary(admission)["patient_funds"], 57000.0)
 
@@ -679,7 +682,11 @@ class TestRefund(AdvanceCase):
         self.assertEqual(summary["patient_funds"], 48000.0)
         care.invalidate_recordset()
         self.assertEqual(care.mapped("amount_eligible"), eligible_before)
-        self.assertEqual(sum(care.mapped("amount_invoiced")), 0.0)
+        # The refund's accounting close invoices the DELIVERED care (when the
+        # accounting bridge is installed) -- the whole 48,000, never less for
+        # the refund -- and nothing is ever credited by a refund.
+        invoiced = 48000.0 if "hospital.admission.accounting.operation" in self.env else 0.0
+        self.assertEqual(sum(care.mapped("amount_invoiced")), invoiced)
         self.assertEqual(sum(care.mapped("amount_credited")), 0.0)
         deposit = admission.sudo()._deposit_charge()
         self.assertEqual(deposit.amount_refunded_from_advance, 2000.0)

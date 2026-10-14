@@ -39,7 +39,9 @@ class TestAccountantDeskApi(AdvanceApiCase):
         return appointment, encounter, admission
 
     def _refund(self, admission, amount, user=None, key=None, **extra):
-        body = {"amount": amount, "reason": REASON, "idempotency_key": key or str(uuid.uuid4())}
+        self._map_services_for_accounting()
+        body = {"amount": amount, "reason": REASON, "idempotency_key": key or str(uuid.uuid4()),
+                "payment_method": "cash"}
         body.update(extra)
         return self._post(ACC_REFUND % admission.id, body, user or self.accountant)
 
@@ -50,14 +52,18 @@ class TestAccountantDeskApi(AdvanceApiCase):
     # -- A / B ----------------------------------------------------------
     def test_a_b_the_accountant_session_and_routing_flags(self):
         data = self._ok(SESSION, self.accountant)
-        self.assertEqual(data["capabilities"], {"accountant_desk": True, "record_refund": True})
+        self.assertEqual(
+            data["capabilities"], {"accountant_desk": True, "record_refund": True, "post_accounting": True}
+        )
         roles = self._ok(RECEPTION_SESSION, self.accountant)["roles"]
         # The narrow flag the front end routes a pure accountant to /accountant on.
         self.assertTrue(roles["accountant"])
         self.assertFalse(roles["cashier"])
         for user in (self.cashier, self.doctor_user, self.receptionist, self.nurse_a):
             caps = self._ok(SESSION, user)["capabilities"]
-            self.assertEqual(caps, {"accountant_desk": False, "record_refund": False}, user.login)
+            self.assertEqual(
+                caps, {"accountant_desk": False, "record_refund": False, "post_accounting": False}, user.login
+            )
 
     # -- D / E / T / F --------------------------------------------------
     def test_d_e_f_t_a_discharged_refund_is_listed_and_detailed(self):
@@ -109,8 +115,13 @@ class TestAccountantDeskApi(AdvanceApiCase):
         self.assertEqual(data["lane"], "refunded")
         [out] = data["refunds_out"]
         self.assertEqual((out["direction"], out["amount"], out["reason"]), ("out", 43400.0, REASON))
-        self.assertFalse(out["accounting_posted"])
-        self.assertEqual(out["accounting_note"], "Operational refund recorded. Accounting journal posting pending.")
+        # Posted in the same step: the refund entry exists and is named.
+        self.assertTrue(out["accounting_posted"])
+        self.assertTrue(out["accounting_reference"])
+        self.assertEqual(out["payment_method"], "cash")
+        self.assertEqual(out["accounting_note"], "Accounting posted.")
+        self.assertEqual(data["accounting"]["status"], "posted")
+        self.assertEqual(data["accounting"]["label"], "Accounting posted")
         self.assertEqual(data["refund"]["may_record"], False)
 
         # I: the same key replays and refunds nothing twice.
@@ -171,7 +182,8 @@ class TestAccountantDeskApi(AdvanceApiCase):
         # The Cashier's own refund route still refuses the Cashier (unchanged policy).
         response, payload = self._post(
             "/yoya-emr/api/v1/cashier/admissions/%s/refund" % admission.id,
-            {"amount": 100, "reason": "x", "idempotency_key": str(uuid.uuid4())}, self.cashier,
+            {"amount": 100, "reason": "x", "idempotency_key": str(uuid.uuid4()), "payment_method": "cash"},
+            self.cashier,
         )
         self.assertEqual(response.status_code, 403, payload)
         self.env.invalidate_all()
