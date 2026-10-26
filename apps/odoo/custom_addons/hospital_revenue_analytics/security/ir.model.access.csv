@@ -1,0 +1,3 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_revenue_fact_finance,hospital.revenue.fact finance,model_hospital_revenue_fact,group_hospital_revenue_analytics,1,0,0,0
+access_revenue_charge_fact_finance,hospital.revenue.charge.fact finance,model_hospital_revenue_charge_fact,group_hospital_revenue_analytics,1,0,0,0

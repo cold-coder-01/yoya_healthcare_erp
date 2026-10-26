@@ -1,9 +1,11 @@
+import Link from "next/link";
 import type { ReactNode } from "react";
 
 import FrontDeskUserMenu from "@/components/front-desk/front-desk-user-menu";
 import FullscreenToggle from "@/components/workstation/fullscreen-toggle";
 import { hospitalBrand } from "@/lib/branding";
 import { loadReceptionSession } from "@/lib/reception-session.server";
+import { ANALYTICS_ROUTE } from "@/lib/revenue-analytics-format";
 
 /**
  * The Accountant Desk shell: the same sidebarless workstation shape as
@@ -30,6 +32,13 @@ export default async function AccountantLayout({ children }: { children: ReactNo
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {/* Accountants hold Finance Analytics by role; the server still gates it. */}
+          <Link
+            href={ANALYTICS_ROUTE}
+            className="rounded px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+          >
+            Revenue Analytics
+          </Link>
           <FullscreenToggle />
           <FrontDeskUserMenu userName={session?.userName ?? null} roleLabel={roleLabel} />
         </div>
