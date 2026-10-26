@@ -6,11 +6,43 @@
  */
 import type { InpatientSettlement } from "./inpatient-settlement";
 
-export type AccountantLane = "refund_due" | "needs_review" | "refunded";
+export type AccountantLane = "refund_due" | "needs_review" | "accounting_pending" | "refunded";
 
 export type AccountantCapabilities = {
   accountant_desk: boolean;
   record_refund: boolean;
+  post_accounting: boolean;
+};
+
+/** The stay's accounting status, derived by the server from ledger facts. */
+export type AccountingStatus =
+  | "unavailable"
+  | "nothing_to_post"
+  | "not_posted"
+  | "posted"
+  | "legacy_pending"
+  | "outside_scope";
+
+/** A business refund method. The server maps it to the company's ledger. */
+export type RefundMethod = "cash" | "bank_transfer" | "mobile_money";
+
+export type RefundMethodOption = {
+  key: RefundMethod;
+  label: string;
+  reference_required: boolean;
+};
+
+export type AccountantAccounting = {
+  status: AccountingStatus;
+  label: string;
+  reference: string | null;
+  posted_at: string | null;
+  posted_by: string | null;
+  legacy_refund_total: number;
+  may_post: boolean;
+  may_post_legacy: boolean;
+  reason: string | null;
+  refund_methods: RefundMethodOption[];
 };
 
 export type AccountantSession = {
@@ -49,6 +81,7 @@ export type AccountantRow = AccountantIdentity & {
   remaining_due: number;
   refunded_total: number;
   last_refund_at: string | null;
+  accounting_status: AccountingStatus | null;
 };
 
 export type AccountantWorklist = {
@@ -86,8 +119,14 @@ export type AccountantRefundOut = {
   actor: string | null;
   at: string | null;
   state: "recorded";
-  /** Always false today: no GL cash-out journal is posted yet. */
-  accounting_posted: false;
+  payment_method: RefundMethod | null;
+  payment_reference: string | null;
+  /** True only when the refund entry exists and is posted in the ledger. */
+  accounting_posted: boolean;
+  accounting_reference: string | null;
+  accounting_posted_at: string | null;
+  /** Recorded before refund accounting existed. */
+  legacy: boolean;
   accounting_note: string;
 };
 
@@ -108,5 +147,8 @@ export type AccountantDetail = AccountantIdentity & {
   refunds_out: AccountantRefundOut[];
   refunded_total: number;
   refund: AccountantRefundVerdict;
+  accounting: AccountantAccounting;
   replayed?: boolean;
+  /** The posting's reference, returned by Post accounting / Post legacy accounting. */
+  posted_reference?: string;
 };

@@ -12,7 +12,10 @@ import type { CashierInpatientDetail } from "@/types/cashier";
 /**
  * Record the refund of unapplied inpatient credit. AN ACCOUNTING ACT.
  *
- * Exactly {amount, reason, idempotency_key} leave this route. Odoo refuses
+ * Exactly {amount, reason, payment_method, idempotency_key} (plus
+ * payment_reference when given) leave this route. The Cashier Desk itself
+ * routes every refund to the Accountant Desk; this pass-through remains for
+ * oversight API callers. Odoo refuses
  * the Cashier (403) and admits the Accountant, Hospital Manager and System
  * Administrator; it also caps the refund at the unapplied credit and records
  * it without touching delivered care, invoices or revenue.
@@ -50,6 +53,10 @@ export async function POST(
         {
           amount: body.amount,
           reason: body.reason,
+          payment_method: body.payment_method,
+          ...(typeof body.payment_reference === "string" && body.payment_reference.trim()
+            ? { payment_reference: body.payment_reference.trim() }
+            : {}),
           idempotency_key: idempotencyKey.trim(),
         },
       ),

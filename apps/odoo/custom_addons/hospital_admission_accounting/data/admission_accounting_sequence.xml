@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo noupdate="1">
+    <record id="sequence_admission_accounting_operation" model="ir.sequence">
+        <field name="name">Inpatient Accounting Operation Sequence</field>
+        <field name="code">hospital.admission.accounting.operation</field>
+        <field name="prefix">IPAC</field>
+        <field name="padding">6</field>
+        <field name="number_next">1</field>
+    </record>
+</odoo>

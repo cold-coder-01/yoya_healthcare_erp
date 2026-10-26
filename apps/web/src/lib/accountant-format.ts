@@ -9,6 +9,8 @@ import type {
   AccountantIdentity,
   AccountantLane,
   AccountantPaymentIn,
+  AccountingStatus,
+  RefundMethodOption,
 } from "@/types/accountant";
 
 export type AccountantTab = "all" | AccountantLane;
@@ -17,28 +19,51 @@ export const ACCOUNTANT_TABS: { key: AccountantTab; label: string }[] = [
   { key: "all", label: "All" },
   { key: "refund_due", label: "Refund due" },
   { key: "needs_review", label: "Needs review" },
+  { key: "accounting_pending", label: "Accounting pending" },
   { key: "refunded", label: "Completed / Refunded" },
 ];
 
-export const ACCOUNTANT_EMPTY_STATE = "No inpatient refunds currently require accounting action.";
+export const ACCOUNTANT_EMPTY_STATE = "No inpatient accounts currently require accounting action.";
 
 export const DEFAULT_REFUND_REASON =
   "Refund of unused inpatient advance after final inpatient settlement.";
 
-export const REFUND_ACCOUNTING_PENDING = "Accounting journal posting pending";
+/** Stated in the review: the refund and its ledger entry are one step. */
+export const REFUND_ACCOUNTING_ATOMIC =
+  "The stay's accounting is posted and the refund entry is recorded in the same step; if accounting cannot post, nothing is refunded";
 
 const LANE_LABELS: Record<AccountantLane, string> = {
   refund_due: "Refund due",
   needs_review: "Needs review",
+  accounting_pending: "Accounting pending",
   refunded: "Refunded",
 };
 
-/** Refund due amber, review red, refunded green. */
+/** Refund due amber, review red, accounting pending sky, refunded green. */
 const LANE_TONES: Record<AccountantLane, string> = {
   refund_due: "border-amber-300 bg-amber-50 text-amber-900",
   needs_review: "border-red-300 bg-red-50 text-red-800",
+  accounting_pending: "border-sky-300 bg-sky-50 text-sky-900",
   refunded: "border-emerald-300 bg-emerald-50 text-emerald-800",
 };
+
+/** Accounting status tone. The label itself is the server's. */
+export function accountingStatusTone(status: AccountingStatus | null | undefined): string {
+  if (status === "posted") return "border-emerald-300 bg-emerald-50 text-emerald-800";
+  if (status === "not_posted" || status === "legacy_pending") return "border-amber-300 bg-amber-50 text-amber-900";
+  if (status === "outside_scope") return "border-red-300 bg-red-50 text-red-800";
+  return "border-slate-300 bg-slate-50 text-slate-700";
+}
+
+/** Whether a refund method (from the server's list) needs a reference. */
+export function refundReferenceRequired(methods: RefundMethodOption[], method: string): boolean {
+  return methods.find((option) => option.key === method)?.reference_required ?? true;
+}
+
+export function refundMethodLabel(methods: RefundMethodOption[], method: string | null): string {
+  if (!method) return "—";
+  return methods.find((option) => option.key === method)?.label ?? method;
+}
 
 export function accountantLaneLabel(lane: AccountantLane | null | undefined): string {
   return lane ? LANE_LABELS[lane] ?? lane : "No accounting action";

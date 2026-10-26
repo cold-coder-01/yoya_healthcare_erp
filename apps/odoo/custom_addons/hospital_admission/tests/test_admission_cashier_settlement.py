@@ -260,10 +260,32 @@ class TestSettlementPayment(CashierSettlementCase):
 @tagged("post_install", "-at_install", "admission_cashier")
 class TestSettlementAuthority(CashierSettlementCase):
     def test_money_roles_may_settle(self):
-        for user in (self.cashier, self.accountant, self.manager, self.admin):
+        for user in (self.cashier, self.manager, self.admin):
             admission = self._due_stay()
             receipt, _ = self._settle(admission, 100.0, user=user)
             self.assertEqual(receipt.received_by_id, user)
+
+    def test_the_accountant_may_not_take_cashier_intake(self):
+        """Taking money and accounting for it are separated duties: the
+        Accountant reads the settlement but holds no intake authority -- not
+        for a settlement, not for an advance, not through the billing
+        account's own intake path."""
+        admission = self._due_stay()
+        receipts = self._receipts(admission)
+        with self.assertRaises(AccessError):
+            self.env["hospital.admission"].with_user(self.accountant)._cashier_inpatient_census()
+        with self.assertRaises(AccessError):
+            self._settle(admission, 100.0, user=self.accountant)
+        with self.assertRaises(AccessError):
+            admission.with_user(self.accountant)._cashier_record_advance(
+                100.0, "cash", idempotency_key=uuid.uuid4().hex
+            )
+        account = admission.sudo()._billing_account()
+        with self.assertRaises(AccessError):
+            account.with_user(self.accountant).record_operational_payment(
+                100.0, "cash", intake_token=uuid.uuid4().hex
+            )
+        self.assertEqual(self._receipts(admission), receipts)
 
     def test_other_roles_may_neither_see_nor_settle(self):
         admission = self._due_stay()

@@ -54,10 +54,12 @@ class TestAccountantDesk(AdvanceCase):
         found = self.env["hospital.admission"].with_user(user or self.accountant)._accounting_find(admission.id)
         return found._accounting_detail()
 
-    def _refund_as(self, admission, amount, user=None, key=None, reason="Unused inpatient advance"):
+    def _refund_as(self, admission, amount, user=None, key=None, reason="Unused inpatient advance",
+                   method="cash", reference=None):
+        self._map_services_for_accounting()
         found = self.env["hospital.admission"].with_user(user or self.accountant)._accounting_find(admission.id)
         result = found.with_user(user or self.accountant)._cashier_record_refund(
-            amount, reason, key or str(uuid.uuid4())
+            amount, reason, key or str(uuid.uuid4()), payment_method=method, payment_reference=reference
         )
         self.env.invalidate_all()
         return result
@@ -158,7 +160,9 @@ class TestAccountantDesk(AdvanceCase):
             (43400.0, 43400.0, 0.0, self.accountant.name),
         )
         self.assertEqual(refund["reason"], "Refund of unused inpatient advance after final inpatient settlement.")
-        self.assertFalse(refund["accounting_posted"])
+        # Posted in the same step when the accounting bridge is installed.
+        self.assertEqual(refund["accounting_posted"], "hospital.admission.accounting.operation" in self.env)
+        self.assertEqual(refund["payment_method"], "cash")
         self.assertEqual(refund["reference"], "%s/RF1" % record.name)
         # It leaves Refund Due and appears under Refunded.
         row = self._census()[admission.id]

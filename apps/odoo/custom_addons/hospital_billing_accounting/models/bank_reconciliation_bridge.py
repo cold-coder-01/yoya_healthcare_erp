@@ -93,14 +93,14 @@ class HospitalChargeReceiptBankBridge(models.Model):
             return config.bank_receipt_clearing_account_id
         return super()._resolve_liquidity_account(config)
 
-    def action_post_receipt_accounting(self):
-        result = super().action_post_receipt_accounting()
+    def _post_receipt_accounting(self, config=None):
+        result = super()._post_receipt_accounting(config=config)
         for receipt in self.sudo():
             if receipt.payment_method != BANK_METHOD:
                 if receipt.bank_reconciliation_state != 'not_required':
                     receipt.with_context(**{CONTROLLED_CTX: True}).write({'bank_reconciliation_state': 'not_required'})
                 continue
-            config = receipt._get_advance_accounting_config()
+            config = config or receipt._get_advance_accounting_config()
             config._assert_bank_reconciliation_configuration()
             clearing_line = receipt.accounting_move_id.line_ids.filtered(
                 lambda line: line.account_id == config.bank_receipt_clearing_account_id and line.debit > AMOUNT_TOLERANCE and not line.reconciled

@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_admission_accounting_operation_list" model="ir.ui.view">
+        <field name="name">hospital.admission.accounting.operation.list</field>
+        <field name="model">hospital.admission.accounting.operation</field>
+        <field name="arch" type="xml">
+            <list create="false" edit="false" delete="false">
+                <field name="name"/>
+                <field name="kind"/>
+                <field name="admission_id"/>
+                <field name="encounter_id"/>
+                <field name="patient_id"/>
+                <field name="amount"/>
+                <field name="payment_method"/>
+                <field name="move_id"/>
+                <field name="performed_by_id"/>
+                <field name="performed_at"/>
+                <field name="company_id" groups="base.group_multi_company"/>
+                <field name="currency_id" column_invisible="1"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_admission_accounting_operation_form" model="ir.ui.view">
+        <field name="name">hospital.admission.accounting.operation.form</field>
+        <field name="model">hospital.admission.accounting.operation</field>
+        <field name="arch" type="xml">
+            <form create="false" edit="false" delete="false">
+                <sheet>
+                    <h1><field name="name"/></h1>
+                    <group>
+                        <group>
+                            <field name="kind"/>
+                            <field name="admission_id"/>
+                            <field name="encounter_id"/>
+                            <field name="patient_id"/>
+                            <field name="billing_account_id"/>
+                            <field name="company_id" groups="base.group_multi_company"/>
+                        </group>
+                        <group>
+                            <field name="amount"/>
+                            <field name="currency_id" invisible="1"/>
+                            <field name="payment_method"/>
+                            <field name="payment_reference"/>
+                            <field name="accounting_date"/>
+                            <field name="journal_id"/>
+                            <field name="move_id"/>
+                            <field name="close_id"/>
+                            <field name="performed_by_id"/>
+                            <field name="performed_at"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Receipts Posted"><field name="receipt_ids"/></page>
+                        <page string="Invoices Posted"><field name="invoice_ids"/></page>
+                        <page string="Advance Applications"><field name="application_ids"/></page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_admission_accounting_operation" model="ir.actions.act_window">
+        <field name="name">Inpatient Accounting</field>
+        <field name="res_model">hospital.admission.accounting.operation</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <record id="menu_admission_accounting_operation" model="ir.ui.menu">
+        <field name="name">Inpatient Accounting</field>
+        <field name="parent_id" ref="hospital_billing_accounting.menu_billing_accounting_bridge"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_admission_accounting_operation')"/>
+        <field name="sequence">30</field>
+    </record>
+</odoo>

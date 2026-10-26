@@ -380,6 +380,26 @@ class TestPaymentAuthorizationBoundary(TransactionCase):
 
         self.assertEqual(self._receipt_count(), before)
 
+    def test_account_method_accountant_denied(self):
+        """Taking money and accounting for it are separated duties: the
+        Accountant applies, refunds and posts, but takes no Cashier intake --
+        through the account launcher or by allocating against a charge."""
+        accountant = self._make_user(
+            "boundary_accountant", ["hospital_management.group_hospital_accountant"]
+        )
+        charge = self._new_charge()
+        account = self._account_for(charge)
+        before = self._receipt_count()
+        with self.assertRaises(AccessError):
+            account.with_user(accountant).record_operational_payment(
+                300.0, "cash", intake_token=uuid.uuid4().hex
+            )
+        with self.assertRaises(AccessError):
+            self.env["hospital.charge.receipt.allocation"].with_user(accountant)._assert_intake_group(
+                "record a payment"
+            )
+        self.assertEqual(self._receipt_count(), before)
+
     def test_account_method_rogue_with_acl_denied(self):
         charge = self._new_charge()
         account = self._account_for(charge)
@@ -547,5 +567,10 @@ class TestPaymentAuthorizationBoundary(TransactionCase):
         )
         self.assertIn(G_CASHIER, charge_line.OPERATIONAL_INTAKE_GROUPS)
         self.assertNotIn(G_RECEPTIONIST, charge_line.OPERATIONAL_INTAKE_GROUPS)
+        # Intake vs accounting: the Accountant is in exactly one of them.
+        self.assertNotIn(charge_line.G_ACCOUNTANT, charge_line.OPERATIONAL_INTAKE_GROUPS)
+        self.assertIn(charge_line.G_ACCOUNTANT, charge_line.ACCOUNTING_GROUPS)
+        self.assertIn(charge_line.G_ACCOUNTANT, charge_line.OPERATIONAL_MONEY_READ)
+        self.assertNotIn(G_CASHIER, charge_line.ACCOUNTING_GROUPS)
         self.assertIn(G_CASHIER, charge_line.OPERATIONAL_MONEY_READ)
         self.assertIn(G_RECEPTIONIST, charge_line.OPERATIONAL_MONEY_READ)

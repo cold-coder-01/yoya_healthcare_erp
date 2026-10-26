@@ -755,15 +755,17 @@ def serialize_inpatient_advance_collectability(env, facts):
 
 
 def serialize_inpatient_refund(env, facts):
-    """Refund due is SHOWN to the Cashier and ROUTED to Accounting. Only the
-    accounting groups (hospital_billing's refund_advance guard) may record it."""
-    may_refund = any(env.user.has_group(group) for group in ACCOUNTING_GROUPS)
+    """Refund due is SHOWN at the Cashier and ROUTED to the Accountant Desk,
+    for every role. A refund is an accounting act paid by a stated method and
+    posted to the ledger in the same step; the Cashier Desk takes money in
+    and is not an accounting workstation. (The Manager and Administrator,
+    who hold the accounting groups, record it at the Accountant Desk.)"""
     due = facts["lane"] == "refund_due"
     return {
         "refund_due": due,
         "amount": float_value(facts["summary"]["refundable_balance"]) if due else 0.0,
-        "may_record": bool(due and may_refund),
-        "routed_to": None if may_refund else "accounting",
+        "may_record": False,
+        "routed_to": "accounting",
     }
 
 

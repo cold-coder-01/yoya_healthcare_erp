@@ -166,9 +166,27 @@ class HospitalChargeReceiptAccounting(models.Model):
 
     def action_post_receipt_accounting(self):
         assert_invoice_authorized(self.env, "post patient receipt accounting")
+        return self._post_receipt_accounting()
+
+    def _post_receipt_accounting(self, config=None):
+        """Dr liquidity / Cr Patient Advance Liability, once per receipt.
+
+        LOCK, THEN CHECK. The receipt row is taken FOR UPDATE and re-read
+        before accounting_move_id is examined, so two concurrent posters
+        serialize: the second waits, sees the first one's move and returns
+        it instead of creating another. `config` is an already-validated
+        company advance configuration (the inpatient close passes one);
+        omitted, the receipt's own source-type configuration is used as
+        before."""
+        assert_invoice_authorized(self.env, "post patient receipt accounting")
         result = True
         for receipt in self:
             receipt_sudo = receipt.sudo()
+            self.env.flush_all()
+            self.env.cr.execute(
+                "SELECT id FROM hospital_charge_receipt WHERE id = %s FOR UPDATE", [receipt_sudo.id]
+            )
+            receipt_sudo.invalidate_recordset()
             if receipt_sudo.accounting_move_id:
                 result = receipt_sudo.accounting_move_id.with_user(self.env.user)
                 continue
@@ -176,25 +194,30 @@ class HospitalChargeReceiptAccounting(models.Model):
                 raise UserError("Only confirmed receipts can be posted to accounting.")
             if receipt_sudo.amount <= AMOUNT_TOLERANCE:
                 raise UserError("Receipt amount must be greater than zero.")
-            config = receipt_sudo._get_advance_accounting_config()
+            if config is None:
+                receipt_config = receipt_sudo._get_advance_accounting_config()
+            else:
+                receipt_config = config
+                if receipt_config.company_id != (receipt_sudo.company_id or self.env.company):
+                    raise UserError("Receipt %s belongs to another company." % receipt_sudo.name)
             company = receipt_sudo.company_id or self.env.company
             currency = receipt_sudo.currency_id or company.currency_id
             partner = receipt_sudo.patient_id.accounting_partner_id.commercial_partner_id
             if not partner:
                 raise UserError("Patient %s has no accounting partner." % receipt_sudo.patient_id.display_name)
             amount = currency.round(receipt_sudo.amount)
-            liquidity = receipt_sudo._resolve_liquidity_account(config)
+            liquidity = receipt_sudo._resolve_liquidity_account(receipt_config)
             move = self.env["account.move"].sudo().create(
                 {
                     "move_type": "entry",
                     "date": fields.Date.context_today(receipt_sudo),
-                    "journal_id": config.advance_receipt_journal_id.id,
+                    "journal_id": receipt_config.advance_receipt_journal_id.id,
                     "company_id": company.id,
                     "currency_id": currency.id,
                     "ref": "Patient Advance Receipt - %s" % receipt_sudo.name,
                     "line_ids": [
                         (0, 0, {"name": "Patient advance received - %s" % receipt_sudo.name, "account_id": liquidity.id, "partner_id": partner.id, "debit": amount, "credit": 0.0}),
-                        (0, 0, {"name": "Patient advance liability - %s" % receipt_sudo.name, "account_id": config.patient_advance_liability_account_id.id, "partner_id": partner.id, "debit": 0.0, "credit": amount}),
+                        (0, 0, {"name": "Patient advance liability - %s" % receipt_sudo.name, "account_id": receipt_config.patient_advance_liability_account_id.id, "partner_id": partner.id, "debit": 0.0, "credit": amount}),
                     ],
                 }
             )
@@ -345,6 +368,17 @@ class HospitalBillingEngineAdvanceAccounting(models.AbstractModel):
     @api.model
     def apply_patient_advance_to_invoice(self, invoice, amount=None, request_token=None, source_receipts=None):
         assert_invoice_authorized(self.env, "apply patient advances to invoices")
+        return self._apply_patient_advance_to_invoice(
+            invoice, amount=amount, request_token=request_token, source_receipts=source_receipts
+        )
+
+    @api.model
+    def _apply_patient_advance_to_invoice(self, invoice, amount=None, request_token=None, source_receipts=None, config=None, date=None):
+        """Dr Patient Advance Liability / Cr Patient Receivable, reconciled
+        on both sides. `config` is an already-validated company advance
+        configuration (the inpatient close passes one); omitted, the billing
+        account's first source-type configuration is used as before."""
+        assert_invoice_authorized(self.env, "apply patient advances to invoices")
         if isinstance(invoice, int):
             invoice = self.env["account.move"].browse(invoice)
         invoice.ensure_one()
@@ -369,7 +403,10 @@ class HospitalBillingEngineAdvanceAccounting(models.AbstractModel):
                 raise UserError("The retry token belongs to another invoice application.")
             return existing
         self.env.cr.execute("SELECT id FROM account_move WHERE id = %s FOR UPDATE", [invoice.id])
-        config = self._get_any_invoice_config(account)
+        if config is None:
+            config = self._get_any_invoice_config(account)
+        elif config.company_id != invoice.company_id:
+            raise UserError("The advance configuration belongs to another company.")
         invoice.invalidate_recordset()
         residual = invoice.amount_residual
         if invoice.currency_id.compare_amounts(residual, 0.0) <= 0:
@@ -394,7 +431,7 @@ class HospitalBillingEngineAdvanceAccounting(models.AbstractModel):
                 move = self.env["account.move"].sudo().create(
                     {
                         "move_type": "entry",
-                        "date": fields.Date.context_today(invoice),
+                        "date": date or fields.Date.context_today(invoice),
                         "journal_id": config.advance_application_journal_id.id,
                         "company_id": invoice.company_id.id,
                         "currency_id": invoice.currency_id.id,
@@ -427,7 +464,18 @@ class HospitalBillingEngineAdvanceAccounting(models.AbstractModel):
         return application.with_user(self.env.user)
 
     @api.model
+    def _advance_application_is_pooled(self, invoice):
+        """True when the patient's money for this invoice is POOLED away from
+        the invoiced charge lines (an inpatient deposit). Such an application
+        is authoritative in the GL and its application record only: copying
+        it onto care lines that never received the cash would breach
+        applied <= received per line. Overridden by the admission bridge."""
+        return False
+
+    @api.model
     def _sync_charge_application_amounts(self, invoice):
+        if self._advance_application_is_pooled(invoice):
+            return
         allocations = invoice.hospital_charge_allocation_ids.filtered(lambda alloc: alloc.allocation_type == "invoice" and alloc.state in ("draft", "posted"))
         if not allocations:
             return

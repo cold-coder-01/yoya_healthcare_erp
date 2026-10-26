@@ -320,12 +320,14 @@ def may_accountant_desk(env):
 def accountant_capability_flags(env):
     """What the Accountant Desk may do. Every flag mirrors a server guard.
 
-    Deliberately NARROW: the desk records refunds and nothing else -- no
-    payment intake, no estimate, no admission, transfer, discharge or bed.
+    Deliberately NARROW: the desk records refunds and posts inpatient
+    accounting, and nothing else -- no payment intake, no estimate, no
+    admission, transfer, discharge or bed.
     """
     return {
         "accountant_desk": may_accountant_desk(env),
         "record_refund": may_accountant_desk(env),
+        "post_accounting": may_accountant_desk(env),
     }
 
 

@@ -8,7 +8,7 @@ import {
   PreviewPill,
   PreviewSection,
 } from "@/components/workstation/workstation-preview";
-import { accountantAdmissionStatus, REFUND_ACCOUNTING_PENDING } from "@/lib/accountant-format";
+import { accountantAdmissionStatus, REFUND_ACCOUNTING_ATOMIC } from "@/lib/accountant-format";
 import { money } from "@/lib/cashier-format";
 import type { AccountantDetail } from "@/types/accountant";
 
@@ -26,6 +26,8 @@ export default function AccountantRefundReviewDialog({
   amount,
   after,
   reason,
+  methodLabel,
+  reference,
   busy,
   error,
   onConfirm,
@@ -35,6 +37,8 @@ export default function AccountantRefundReviewDialog({
   amount: number;
   after: number;
   reason: string;
+  methodLabel: string;
+  reference: string | null;
   busy: boolean;
   error: string | null;
   onConfirm: () => void;
@@ -130,14 +134,18 @@ export default function AccountantRefundReviewDialog({
               <dd className="border-t border-slate-300 pt-1 text-right font-bold" data-testid="refund-after">{figure(after)}</dd>
             </dl>
           </PreviewSection>
+          <PreviewSection title="Paid by" columns={2}>
+            <PreviewField label="Refund method">{methodLabel}</PreviewField>
+            <PreviewField label="Payment reference">{reference ?? "—"}</PreviewField>
+          </PreviewSection>
           <PreviewSection title="Reason">
             <p className="whitespace-pre-wrap break-words cl-body text-slate-900">{reason}</p>
           </PreviewSection>
           <PreviewSection title="Accounting">
             <p className="cl-meta text-slate-600">
               Records an operational refund of the patient&apos;s own unapplied money. It does not
-              reopen the admission, the visit or the bed, and does not change delivered care.{" "}
-              {REFUND_ACCOUNTING_PENDING}.
+              reopen the admission, the visit or the bed, and does not change delivered care or
+              revenue. {REFUND_ACCOUNTING_ATOMIC}.
             </p>
           </PreviewSection>
         </div>

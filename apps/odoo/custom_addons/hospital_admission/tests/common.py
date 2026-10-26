@@ -27,7 +27,120 @@ G_ADMIN = "hospital_management.group_hospital_system_administrator"
 G_DPO = "hospital_management.group_hospital_data_protection_officer"
 
 
-class AdmissionCase(TransactionCase):
+class InpatientAccountingFixture:
+    """Shared by the admission model suites and the yoya_emr_api HTTP suites."""
+
+    # ------------------------------------------------------------------
+    # Inpatient accounting fixture
+    # ------------------------------------------------------------------
+    # With hospital_admission_accounting installed a refund is ATOMIC WITH
+    # ITS ACCOUNTING and fails closed on a missing mapping. Suites that record
+    # refunds therefore need one complete, company-scoped mapping: test
+    # accounts and journals, every active configuration row pointing at them,
+    # and an invoice product + exempt sale tax on the billing services in
+    # play. Without the accounting modules this is a no-op. Created inside the
+    # running TEST (cached on the test instance, never on the class), so it is
+    # rolled back with that test and can never leak into the next one.
+    def _accounting_fixture(self):
+        if "hospital.admission.accounting.operation" not in self.env:
+            return None
+        cached = self.__dict__.get("_accounting")
+        if cached is not None:
+            # A first call made inside assertRaises ran in a savepoint that
+            # was rolled back: rebuild instead of trusting a vanished fixture.
+            if cached["advance"].exists() and cached["product"].exists():
+                return cached
+            self.__dict__.pop("_accounting_mapped_services", None)
+        env = self.env(su=True)
+        company = getattr(self, "company", None) or self.env.company
+        tag = uuid.uuid4().hex[:4].upper()
+
+        def account(code, name, account_type, reconcile=False):
+            return env["account.account"].create({
+                "code": "%s%s" % (code, tag), "name": "%s %s" % (name, tag),
+                "account_type": account_type, "reconcile": reconcile,
+                "company_ids": [(6, 0, company.ids)],
+            })
+
+        def journal(code, name, kind, default_account):
+            return env["account.journal"].create({
+                "name": "%s %s" % (name, tag), "code": "%s%s" % (code, tag[:3]),
+                "type": kind, "company_id": company.id,
+                "default_account_id": default_account.id,
+            })
+
+        cash = account("TIPC", "IP Cash", "asset_cash")
+        bank = account("TIPB", "IP Bank", "asset_cash")
+        mobile = account("TIPM", "IP Mobile", "asset_cash")
+        advance = account("TIPA", "IP Patient Advances", "liability_current", reconcile=True)
+        credit = account("TIPR", "IP Patient Credit", "liability_current", reconcile=True)
+        revenue = account("TIPI", "IP Healthcare Revenue", "income")
+        probe = env["res.partner"].with_company(company).create({"name": "IP receivable probe %s" % tag})
+        receivable = probe.property_account_receivable_id
+        values = {
+            "receivable_account_id": receivable.id,
+            "revenue_account_id": revenue.id,
+            "journal_id": journal("S", "IP Invoices", "sale", revenue).id,
+            "cash_account_id": cash.id,
+            "bank_account_id": bank.id,
+            "mobile_money_account_id": mobile.id,
+            "patient_advance_liability_account_id": advance.id,
+            "patient_credit_liability_account_id": credit.id,
+            "advance_receipt_journal_id": journal("R", "IP Advance Receipts", "general", cash).id,
+            "advance_application_journal_id": journal("A", "IP Advance Application", "general", advance).id,
+            "advance_refund_journal_id": journal("F", "IP Advance Refunds", "general", cash).id,
+        }
+        values["invoice_journal_id"] = values["journal_id"]
+        Config = env["hospital.billing.accounting.config"].with_context(active_test=False)
+        for source_type, _label in Config.SOURCE_TYPES:
+            config = Config.search(
+                [("company_id", "=", company.id), ("source_type", "=", source_type)], limit=1
+            )
+            if config:
+                config.write(dict(values, active=True))
+            else:
+                Config.create(dict(values, company_id=company.id, source_type=source_type))
+        product = env["product.product"].create({
+            "name": "IP Hospital Service %s" % tag, "type": "service", "sale_ok": True,
+        })
+        product.product_tmpl_id.with_company(company).write({"property_account_income_id": revenue.id})
+        exempt = env["account.tax"].search([
+            ("company_id", "=", company.id), ("type_tax_use", "=", "sale"),
+            ("amount", "=", 0.0), ("invoice_label", "=", "tax06"), ("active", "=", True),
+        ], limit=1) or env["account.tax"].create({
+            "name": "IP 0%% Exempt %s" % tag, "amount": 0.0, "amount_type": "percent",
+            "type_tax_use": "sale", "invoice_label": "tax06", "company_id": company.id,
+        })
+        self._accounting = {
+            "cash": cash, "bank": bank, "mobile": mobile, "advance": advance,
+            "credit": credit, "revenue": revenue, "receivable": receivable,
+            "product": product, "exempt_tax": exempt, "values": values, "company": company,
+        }
+        return self._accounting
+
+    def _map_services_for_accounting(self):
+        """Give every exempt billing service in play the fixture's invoice
+        product and exempt tax. Called just before a refund or a close, so
+        services a suite created after setUpClass are covered too."""
+        fixture = self._accounting_fixture()
+        if not fixture:
+            return None
+        # Each service is mapped ONCE per test: a test that later removes a
+        # mapping on purpose keeps it removed.
+        mapped = self.__dict__.setdefault("_accounting_mapped_services", set())
+        services = self.env["hospital.billing.service"].sudo().with_context(active_test=False).search([
+            ("company_id", "in", [False, fixture["company"].id]), ("tax_treatment", "=", "exempt"),
+            ("id", "not in", list(mapped)),
+        ])
+        mapped.update(services.ids)
+        services.write({
+            "invoice_product_id": fixture["product"].id,
+            "invoice_tax_ids": [(6, 0, fixture["exempt_tax"].ids)],
+        })
+        return fixture
+
+
+class AdmissionCase(InpatientAccountingFixture, TransactionCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()

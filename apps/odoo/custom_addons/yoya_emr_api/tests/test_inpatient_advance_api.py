@@ -13,6 +13,8 @@ import uuid
 
 from odoo.tests import tagged
 
+from odoo.addons.hospital_admission.tests.common import InpatientAccountingFixture
+
 from .test_admissions_desk_api import DETAIL
 from .test_admissions_desk_mutations_api import VISIT
 from .test_cashier_inpatient_settlement_api import (
@@ -29,7 +31,7 @@ SETTLEMENT = DETAIL + "/settlement"
 
 
 @tagged("post_install", "-at_install", "inpatient_advance")
-class AdvanceApiCase(CashierInpatientCase):
+class AdvanceApiCase(InpatientAccountingFixture, CashierInpatientCase):
     def _estimate(self, appointment, admission, amount, user=None, **extra):
         body = {
             "operation_token": str(uuid.uuid4()),
@@ -259,14 +261,22 @@ class TestQuoteAndRefundApi(AdvanceApiCase):
         self.assertEqual(detail["refund"]["routed_to"], "accounting")
         self.assertFalse(detail["refund"]["may_record"])
 
-        body = {"amount": 2000, "reason": "Unused advance", "idempotency_key": str(uuid.uuid4())}
+        body = {"amount": 2000, "reason": "Unused advance", "idempotency_key": str(uuid.uuid4()),
+                "payment_method": "cash"}
         response, payload = self._post(REFUND % admission.id, body, self.cashier)
         self.assertEqual(response.status_code, 403, payload)
+        # The Accountant has no Cashier Desk at all: the refund is recorded at
+        # the Accountant Desk, with its accounting, in one step.
         response, payload = self._post(REFUND % admission.id, body, self.accountant)
+        self.assertEqual(response.status_code, 403, payload)
+        self.assertEqual(payload["error"]["code"], "cashier_desk_not_authorized")
+        self._map_services_for_accounting()
+        accountant_refund = "/yoya-emr/api/v1/accountant/admissions/%s/refund" % admission.id
+        response, payload = self._post(accountant_refund, body, self.accountant)
         self.assertEqual(response.status_code, 200, payload)
         self.assertEqual(payload["data"]["settlement"]["state"], "even")
         self.assertEqual(payload["data"]["settlement"]["actual_delivered"], 48000.0)
-        response, payload = self._post(REFUND % admission.id, body, self.accountant)
+        response, payload = self._post(accountant_refund, body, self.accountant)
         self.assertTrue(payload["data"]["replayed"])
 
 
