@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!--
+        TWO READ-ONLY ROLES, NEITHER IMPLIED BY A CLINICAL OR CASH ROLE.
+
+        Finance analytics: every panel, including data quality, the unbilled
+        backlog detail and the GL reconciliation.
+
+        Executive: aggregates only: doctor, department and service rankings
+        and amounts. No patient identifier, no drill-down, no data-quality
+        internals, no write action (this module has none to offer anyone).
+
+        Hospital Manager deliberately implies NEITHER. That group implies
+        Receptionist, Doctor and Nurse; it is an operational role, and being
+        broad there must not buy financial analytics here.
+    -->
+    <record id="group_hospital_revenue_analytics" model="res.groups">
+        <field name="name">Hospital Finance Analytics</field>
+        <field name="category_id" ref="hospital_management.module_category_hospital_management"/>
+        <field name="comment">Detailed recognized-revenue analytics: doctor, service and
+            department breakdowns, the unbilled delivered backlog, data quality and the
+            GL reconciliation. Read-only.</field>
+    </record>
+
+    <record id="group_hospital_executive" model="res.groups">
+        <field name="name">Hospital Executive</field>
+        <field name="category_id" ref="hospital_management.module_category_hospital_management"/>
+        <field name="comment">Read-only aggregate revenue KPIs, trends and rankings. No
+            patient identifiers, no drill-down, no data-quality internals.</field>
+    </record>
+
+    <!-- The Accountant receives Finance analytics automatically. -->
+    <record id="hospital_management.group_hospital_accountant" model="res.groups">
+        <field name="implied_ids" eval="[(4, ref('group_hospital_revenue_analytics'))]"/>
+    </record>
+
+    <!-- The System Administrator receives both. -->
+    <record id="hospital_management.group_hospital_system_administrator" model="res.groups">
+        <field name="implied_ids" eval="[(4, ref('group_hospital_revenue_analytics')), (4, ref('group_hospital_executive'))]"/>
+    </record>
+
+    <!-- Finance may read the fact rows of its allowed companies only. -->
+    <record id="rule_revenue_fact_company" model="ir.rule">
+        <field name="name">Revenue fact: allowed companies</field>
+        <field name="model_id" ref="model_hospital_revenue_fact"/>
+        <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        <field name="groups" eval="[(4, ref('group_hospital_revenue_analytics'))]"/>
+    </record>
+
+    <record id="rule_revenue_charge_fact_company" model="ir.rule">
+        <field name="name">Revenue charge fact: allowed companies</field>
+        <field name="model_id" ref="model_hospital_revenue_charge_fact"/>
+        <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        <field name="groups" eval="[(4, ref('group_hospital_revenue_analytics'))]"/>
+    </record>
+</odoo>
