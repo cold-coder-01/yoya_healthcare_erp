@@ -1,0 +1,337 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <template id="report_surgery_summary_template">
+        <t t-call="web.html_container">
+            <t t-foreach="docs" t-as="doc">
+                <t t-call="web.external_layout">
+                    <div class="page">
+                        <style>
+                            .hospital-section-title {
+                                color: #006A4F;
+                                font-size: 14px;
+                                font-weight: 700;
+                                margin: 14px 0 6px;
+                                border-bottom: 1px solid #006A4F;
+                                padding-bottom: 3px;
+                            }
+                            .hospital-report-table {
+                                width: 100%;
+                                border-collapse: collapse;
+                                margin-bottom: 10px;
+                            }
+                            .hospital-report-table th,
+                            .hospital-report-table td {
+                                border: 1px solid #DDDDDD;
+                                padding: 5px 7px;
+                                font-size: 11px;
+                                vertical-align: top;
+                            }
+                            .hospital-info-table td:first-child,
+                            .hospital-info-table td:nth-child(3) {
+                                width: 18%;
+                                color: #555555;
+                                font-weight: 700;
+                                background: #F9FAFB;
+                            }
+                            .hospital-empty-note {
+                                color: #666666;
+                                font-style: italic;
+                                margin: 4px 0 10px;
+                                font-size: 11px;
+                            }
+                            .hospital-footer-note {
+                                color: #555555;
+                                font-size: 11px;
+                                margin-top: 20px;
+                                border-top: 1px solid #DDDDDD;
+                                padding-top: 6px;
+                            }
+                            .badge-state {
+                                display: inline-block;
+                                padding: 2px 7px;
+                                border-radius: 4px;
+                                font-size: 10px;
+                                font-weight: 700;
+                                background: #e8f4f0;
+                                color: #006A4F;
+                            }
+                        </style>
+
+                        <t t-set="report_title" t-value="'Surgery Summary'"/>
+                        <t t-set="report_ref_label" t-value="'Surgery Ref'"/>
+                        <t t-set="report_ref" t-value="doc.name"/>
+                        <t t-set="report_date_label" t-value="'Surgery Date'"/>
+                        <t t-set="report_date" t-value="doc.planned_start or doc.request_date"/>
+                        <t t-call="hospital_management.hospital_report_header"/>
+
+                        <!-- Patient & Case -->
+                        <div class="hospital-section-title">Patient &amp; Case</div>
+                        <table class="hospital-report-table hospital-info-table">
+                            <tbody>
+                                <tr>
+                                    <td>Patient</td>
+                                    <td><span t-field="doc.patient_id"/></td>
+                                    <td>Surgery Ref</td>
+                                    <td><span t-field="doc.name"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Admission</td>
+                                    <td><span t-out="doc.admission_id.display_name or 'N/A'"/></td>
+                                    <td>Surgery Type</td>
+                                    <td><span t-out="doc.surgery_type_id.display_name or 'N/A'"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Theatre</td>
+                                    <td><span t-out="doc.theatre_id.display_name or 'N/A'"/></td>
+                                    <td>Status</td>
+                                    <td><span class="badge-state" t-out="doc.state or ''"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Urgency</td>
+                                    <td><span t-field="doc.urgency"/></td>
+                                    <td>Surgical Risk</td>
+                                    <td><span t-field="doc.surgical_risk"/></td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <!-- Schedule -->
+                        <div class="hospital-section-title">Schedule</div>
+                        <table class="hospital-report-table hospital-info-table">
+                            <tbody>
+                                <tr>
+                                    <td>Planned Start</td>
+                                    <td><span t-out="doc.planned_start or 'N/A'"/></td>
+                                    <td>Planned End</td>
+                                    <td><span t-out="doc.planned_end or 'N/A'"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Actual Start</td>
+                                    <td><span t-out="doc.actual_start or 'N/A'"/></td>
+                                    <td>Actual End</td>
+                                    <td><span t-out="doc.actual_end or 'N/A'"/></td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <!-- Surgical Team -->
+                        <div class="hospital-section-title">Surgical Team</div>
+                        <t t-if="doc.team_member_ids">
+                            <table class="hospital-report-table">
+                                <thead>
+                                    <tr>
+                                        <th>Role</th>
+                                        <th>Physician</th>
+                                        <th>User</th>
+                                        <th>Name</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <t t-foreach="doc.team_member_ids" t-as="member">
+                                        <tr>
+                                            <td><span t-field="member.role"/></td>
+                                            <td><span t-out="member.physician_id.display_name or ''"/></td>
+                                            <td><span t-out="member.user_id.display_name or ''"/></td>
+                                            <td><span t-out="member.name or ''"/></td>
+                                        </tr>
+                                    </t>
+                                </tbody>
+                            </table>
+                        </t>
+                        <t t-if="not doc.team_member_ids">
+                            <p class="hospital-empty-note">No surgical team members recorded.</p>
+                        </t>
+
+                        <!-- Pre-op Checklist -->
+                        <div class="hospital-section-title">Pre-op Checklist</div>
+                        <t t-if="doc.preop_checklist_id">
+                            <table class="hospital-report-table hospital-info-table">
+                                <tbody>
+                                    <tr>
+                                        <td>Checklist</td>
+                                        <td><span t-out="doc.preop_checklist_id.name or ''"/></td>
+                                        <td>Status</td>
+                                        <td><span t-field="doc.preop_checklist_id.state"/></td>
+                                    </tr>
+                                    <tr>
+                                        <td>Consent Verified</td>
+                                        <td><span t-field="doc.preop_checklist_id.consent_verified"/></td>
+                                        <td>Site Marked</td>
+                                        <td><span t-field="doc.preop_checklist_id.site_marked"/></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </t>
+                        <t t-if="not doc.preop_checklist_id">
+                            <p class="hospital-empty-note">No pre-op checklist recorded.</p>
+                        </t>
+
+                        <!-- Anesthesia -->
+                        <div class="hospital-section-title">Anesthesia</div>
+                        <t t-if="doc.anesthesia_note_id">
+                            <table class="hospital-report-table hospital-info-table">
+                                <tbody>
+                                    <tr>
+                                        <td>Anesthesia Type</td>
+                                        <td><span t-field="doc.anesthesia_note_id.anesthesia_type"/></td>
+                                        <td>Anesthetist</td>
+                                        <td><span t-out="doc.anesthesia_note_id.anesthetist_id.display_name or 'N/A'"/></td>
+                                    </tr>
+                                    <tr>
+                                        <td>Complications</td>
+                                        <td colspan="3"><span t-out="doc.anesthesia_note_id.complications or 'N/A'"/></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </t>
+                        <t t-if="not doc.anesthesia_note_id">
+                            <p class="hospital-empty-note">No anesthesia note recorded.</p>
+                        </t>
+
+                        <!-- Operation Report -->
+                        <div class="hospital-section-title">Operation Report</div>
+                        <t t-if="doc.operation_report_id">
+                            <table class="hospital-report-table hospital-info-table">
+                                <tbody>
+                                    <tr>
+                                        <td>Procedure Performed</td>
+                                        <td colspan="3"><span t-out="doc.operation_report_id.procedure_performed or 'N/A'"/></td>
+                                    </tr>
+                                    <tr>
+                                        <td>Operative Findings</td>
+                                        <td colspan="3"><span t-out="doc.operation_report_id.operative_findings or 'N/A'"/></td>
+                                    </tr>
+                                    <tr>
+                                        <td>Estimated Blood Loss</td>
+                                        <td><span t-field="doc.operation_report_id.estimated_blood_loss"/></td>
+                                        <td>Status</td>
+                                        <td><span t-field="doc.operation_report_id.state"/></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </t>
+                        <t t-if="not doc.operation_report_id">
+                            <p class="hospital-empty-note">No operation report recorded.</p>
+                        </t>
+
+                        <!-- Post-op Notes -->
+                        <div class="hospital-section-title">Post-op Notes</div>
+                        <t t-if="doc.postop_note_ids">
+                            <table class="hospital-report-table">
+                                <thead>
+                                    <tr>
+                                        <th>Reference</th>
+                                        <th>Date</th>
+                                        <th>Recovery Status</th>
+                                        <th>Pain Score</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <t t-foreach="doc.postop_note_ids" t-as="note">
+                                        <tr>
+                                            <td><span t-out="note.name or ''"/></td>
+                                            <td><span t-out="note.note_date or ''"/></td>
+                                            <td><span t-field="note.recovery_status"/></td>
+                                            <td><span t-field="note.pain_score"/></td>
+                                            <td><span t-field="note.state"/></td>
+                                        </tr>
+                                    </t>
+                                </tbody>
+                            </table>
+                        </t>
+                        <t t-if="not doc.postop_note_ids">
+                            <p class="hospital-empty-note">No post-op notes recorded.</p>
+                        </t>
+
+                        <!-- Inventory Consumption -->
+                        <div class="hospital-section-title">Inventory Consumption</div>
+                        <t t-if="doc.inventory_movement_ids">
+                            <table class="hospital-report-table">
+                                <thead>
+                                    <tr>
+                                        <th>Item</th>
+                                        <th>Batch</th>
+                                        <th>Quantity</th>
+                                        <th>Movement Value</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <t t-foreach="doc.inventory_movement_ids" t-as="move">
+                                        <tr>
+                                            <td><span t-out="move.item_id.display_name or ''"/></td>
+                                            <td><span t-out="move.batch_id.display_name or ''"/></td>
+                                            <td><span t-field="move.quantity"/></td>
+                                            <td><span t-field="move.movement_value"/></td>
+                                        </tr>
+                                    </t>
+                                </tbody>
+                            </table>
+                        </t>
+                        <t t-if="not doc.inventory_movement_ids">
+                            <p class="hospital-empty-note">No inventory movements recorded for this surgery.</p>
+                        </t>
+
+                        <!-- Cost Summary -->
+                        <div class="hospital-section-title">Cost Summary</div>
+                        <table class="hospital-report-table hospital-info-table">
+                            <tbody>
+                                <tr>
+                                    <td>Surgery Price</td>
+                                    <td><span t-field="doc.default_price"/></td>
+                                    <td>Estimated Material Cost</td>
+                                    <td><span t-field="doc.estimated_material_cost"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Actual Material Cost</td>
+                                    <td><span t-field="doc.actual_material_cost"/></td>
+                                    <td>Material Cost Difference</td>
+                                    <td><span t-field="doc.material_cost_difference"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Include Material in Bill</td>
+                                    <td><span t-field="doc.include_material_cost_in_bill"/></td>
+                                    <td>Total Estimated Cost</td>
+                                    <td><span t-field="doc.total_estimated_cost"/></td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <!-- Billing Summary -->
+                        <div class="hospital-section-title">Billing Summary</div>
+                        <table class="hospital-report-table hospital-info-table">
+                            <tbody>
+                                <tr>
+                                    <td>Billing State</td>
+                                    <td><span t-field="doc.billing_state"/></td>
+                                    <td>Bill Reference</td>
+                                    <td><span t-out="doc.bill_id.name or 'N/A'"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Billable Amount</td>
+                                    <td><span t-field="doc.billable_amount"/></td>
+                                    <td>Review Note</td>
+                                    <td><span t-out="doc.material_cost_review_note or 'N/A'"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Billing Note</td>
+                                    <td colspan="3"><span t-out="doc.billing_note or 'N/A'"/></td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <!-- Notes -->
+                        <div class="hospital-section-title">Notes</div>
+                        <p><span t-out="doc.notes or 'N/A'"/></p>
+
+                        <div class="hospital-footer-note">
+                            This report is generated from YOYA Hospital — Ethiopian Hospital ERP.
+                            Costs shown are references only and are not a billing document.
+                            Surgery records are confidential and for authorized clinical use only.
+                        </div>
+                    </div>
+                </t>
+            </t>
+        </t>
+    </template>
+</odoo>

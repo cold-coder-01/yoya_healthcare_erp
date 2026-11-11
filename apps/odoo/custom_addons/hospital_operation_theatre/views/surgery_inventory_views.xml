@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- Stock Consumption form: surface the Surgery link and hide unrelated
+         source-document fields when the consumption is a Surgery consumption. -->
+    <record id="view_hospital_stock_consumption_form_surgery" model="ir.ui.view">
+        <field name="name">hospital.stock.consumption.form.surgery</field>
+        <field name="model">hospital.stock.consumption</field>
+        <field name="inherit_id" ref="hospital_inventory.view_hospital_stock_consumption_form"/>
+        <field name="arch" type="xml">
+            <!-- Surface the Surgery primary source, patient-scoped and locked once
+                 set. The base per-type visibility already hides every other
+                 source field for a Surgery consumption, so no further overrides
+                 are needed here. -->
+            <field name="admission_id" position="after">
+                <field name="surgery_id"
+                    readonly="state in ('consumed', 'cancelled') or surgery_id != False or is_source_generated"
+                    invisible="consumption_type != 'surgery'"
+                    domain="[('patient_id', '=', patient_id)]"
+                    options="{'no_create': True}"/>
+            </field>
+            <!-- Surgery uses admission as its contextual source: show it (locked). -->
+            <field name="admission_id" position="attributes">
+                <attribute name="invisible">consumption_type not in ('admission', 'procedure', 'nursing', 'surgery')</attribute>
+            </field>
+        </field>
+    </record>
+
+    <!-- Add an Inventory / Materials tab to the surgery request form -->
+    <record id="view_hospital_surgery_request_form_inventory" model="ir.ui.view">
+        <field name="name">hospital.surgery.request.form.inventory</field>
+        <field name="model">hospital.surgery.request</field>
+        <field name="inherit_id" ref="view_hospital_surgery_request_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//page[@name='billing']" position="before">
+                <page string="Inventory / Materials" name="inventory">
+                    <div class="alert alert-info" role="alert">
+                        Use <b>Prepare Inventory Consumption</b> to create a draft theatre
+                        consumption from the surgery type materials. Select batches manually in
+                        Inventory, then approve and consume to deduct stock and record valued
+                        movements. Stock is never consumed automatically.
+                    </div>
+                    <group>
+                        <group string="Cost Summary">
+                            <field name="estimated_material_cost"/>
+                            <field name="actual_material_cost"/>
+                            <field name="total_estimated_cost"/>
+                        </group>
+                        <group string="Linked Records">
+                            <field name="inventory_consumption_count"/>
+                            <field name="inventory_movement_count"/>
+                        </group>
+                    </group>
+                    <separator string="Inventory Cost Review"/>
+                    <group>
+                        <group>
+                            <field name="estimated_material_cost"/>
+                            <field name="actual_material_cost"/>
+                            <field name="material_cost_difference"/>
+                        </group>
+                        <group>
+                            <field name="material_cost_reviewed"/>
+                            <field name="include_material_cost_in_bill"/>
+                            <field name="material_cost_review_note" placeholder="Material cost review note..."/>
+                        </group>
+                    </group>
+                    <separator string="Default Materials (from Surgery Type)"/>
+                    <field name="surgery_type_id" invisible="1"/>
+                    <field name="inventory_consumption_ids" readonly="1">
+                        <list string="Inventory Consumptions">
+                            <field name="name"/>
+                            <field name="consumption_date"/>
+                            <field name="source_location_id"/>
+                            <field name="state"/>
+                            <field name="total_consumption_value"/>
+                        </list>
+                    </field>
+                    <separator string="Stock Movements"/>
+                    <field name="inventory_movement_ids" readonly="1">
+                        <list string="Inventory Movements">
+                            <field name="name"/>
+                            <field name="movement_date"/>
+                            <field name="item_id"/>
+                            <field name="batch_id"/>
+                            <field name="quantity"/>
+                            <field name="movement_value"/>
+                        </list>
+                    </field>
+                </page>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_insurance_provider_list" model="ir.ui.view">
+        <field name="name">hospital.insurance.provider.list</field>
+        <field name="model">hospital.insurance.provider</field>
+        <field name="arch" type="xml">
+            <list string="Payers">
+                <field name="code" optional="show"/>
+                <field name="name"/>
+                <field name="payer_type"/>
+                <field name="default_coverage_percent" optional="show"/>
+                <field name="requires_guarantee_letter" optional="hide"/>
+                <field name="payment_terms_days" optional="hide"/>
+                <field name="credit_limit" optional="hide"/>
+                <field name="currency_id" column_invisible="1"/>
+                <field name="phone" optional="hide"/>
+                <field name="email" optional="hide"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_insurance_provider_form" model="ir.ui.view">
+        <field name="name">hospital.insurance.provider.form</field>
+        <field name="model">hospital.insurance.provider</field>
+        <field name="arch" type="xml">
+            <form string="Payer">
+                <sheet>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1>
+                            <field name="name" placeholder="e.g. Ethiopian Insurance Corporation"/>
+                        </h1>
+                    </div>
+                    <group>
+                        <group string="Payer Information">
+                            <field name="code"/>
+                            <field name="payer_type"/>
+                            <field name="partner_id"/>
+                            <field name="tin_number"/>
+                            <field name="license_number"/>
+                            <field name="active" widget="boolean_toggle"/>
+                        </group>
+                        <group string="Contact">
+                            <field name="contact_person"/>
+                            <field name="phone"/>
+                            <field name="email"/>
+                            <field name="address"/>
+                        </group>
+                    </group>
+                    <group>
+                        <group string="Coverage Rules">
+                            <field name="default_coverage_percent"/>
+                            <field name="requires_guarantee_letter"/>
+                            <field name="requires_pre_authorization"/>
+                        </group>
+                        <group string="Credit Terms">
+                            <field name="currency_id"/>
+                            <field name="payment_terms_days"/>
+                            <field name="credit_limit"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Notes" name="notes">
+                            <field name="notes" placeholder="Internal notes about this payer..."/>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_insurance_provider_search" model="ir.ui.view">
+        <field name="name">hospital.insurance.provider.search</field>
+        <field name="model">hospital.insurance.provider</field>
+        <field name="arch" type="xml">
+            <search string="Payers">
+                <field name="name"/>
+                <field name="code"/>
+                <field name="tin_number"/>
+                <filter name="filter_insurance" string="Insurance"
+                        domain="[('payer_type', '=', 'insurance')]"/>
+                <filter name="filter_corporate" string="Corporate"
+                        domain="[('payer_type', '=', 'corporate')]"/>
+                <filter name="filter_requires_guarantee" string="Requires Guarantee"
+                        domain="[('requires_guarantee_letter', '=', True)]"/>
+                <separator/>
+                <filter name="filter_archived" string="Archived"
+                        domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter name="group_payer_type" string="Payer Type"
+                            context="{'group_by': 'payer_type'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_insurance_provider" model="ir.actions.act_window">
+        <field name="name">Providers / Payers</field>
+        <field name="res_model">hospital.insurance.provider</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_insurance_provider_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Create a new payer</p>
+            <p>Insurance companies, corporate employers, NGOs, donors, government
+               programs, and credit-agreement sponsors are managed here.</p>
+        </field>
+    </record>
+</odoo>

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_insurance_rejection_resolution_wizard_form" model="ir.ui.view">
+        <field name="name">hospital.insurance.rejection.resolution.wizard.form</field>
+        <field name="model">hospital.insurance.rejection.resolution.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Resolve Rejected Amount">
+                <group>
+                    <group string="Claim">
+                        <field name="claim_id" readonly="1"/>
+                        <field name="provider_id" readonly="1"/>
+                        <field name="bill_id" readonly="1"/>
+                        <field name="currency_id" invisible="1"/>
+                    </group>
+                    <group string="Rejected Amounts">
+                        <field name="rejected_amount_total"/>
+                        <field name="already_transferred_amount"/>
+                        <field name="already_written_off_amount"/>
+                        <field name="unresolved_rejected_amount"/>
+                    </group>
+                </group>
+                <group string="Resolution">
+                    <group>
+                        <field name="resolution_type"/>
+                        <field name="resolution_amount"/>
+                    </group>
+                    <group>
+                        <field name="journal_id"/>
+                        <field name="writeoff_expense_account_id"
+                               required="resolution_type == 'writeoff'"
+                               invisible="resolution_type != 'writeoff'"/>
+                    </group>
+                </group>
+                <group string="Notes">
+                    <field name="notes" nolabel="1"
+                           placeholder="Reason / reference for this resolution (required)..."/>
+                </group>
+                <div class="alert alert-info" role="alert">
+                    Rejected claim amounts must be resolved either by transferring
+                    the balance to patient responsibility or by writing it off.
+                    This does not create additional revenue.
+                </div>
+                <footer>
+                    <button name="action_resolve_rejection" string="Resolve"
+                            type="object" class="btn-primary"/>
+                    <button string="Cancel" class="btn-secondary" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+</odoo>

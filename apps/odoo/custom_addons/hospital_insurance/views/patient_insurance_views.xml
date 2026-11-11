@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Patient form: smart buttons + Insurance / Coverage tab -->
+    <record id="view_hospital_patient_form_insurance" model="ir.ui.view">
+        <field name="name">hospital.patient.form.insurance</field>
+        <field name="model">hospital.patient</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_patient_form"/>
+        <field name="arch" type="xml">
+
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button name="action_view_coverages" type="object"
+                        class="oe_stat_button" icon="fa-shield" invisible="not id">
+                    <field name="coverage_count" widget="statinfo" string="Coverage"/>
+                </button>
+                <button name="action_view_guarantees" type="object"
+                        class="oe_stat_button" icon="fa-file-text-o" invisible="not id">
+                    <field name="guarantee_count" widget="statinfo" string="Guarantees"/>
+                </button>
+                <button name="action_view_claims" type="object"
+                        class="oe_stat_button" icon="fa-money" invisible="not id">
+                    <field name="claim_count" widget="statinfo" string="Claims"/>
+                </button>
+            </xpath>
+
+            <xpath expr="//notebook" position="inside">
+                <page string="Insurance / Coverage" name="insurance_coverage"
+                      invisible="not id">
+                    <field name="coverage_ids" readonly="1">
+                        <list>
+                            <field name="name"/>
+                            <field name="provider_id"/>
+                            <field name="coverage_type"/>
+                            <field name="coverage_percent"/>
+                            <field name="start_date"/>
+                            <field name="end_date"/>
+                            <field name="state" widget="badge"/>
+                        </list>
+                    </field>
+                </page>
+            </xpath>
+
+        </field>
+    </record>
+
+    <!-- Admission form: coverage / guarantee + claims smart button -->
+    <record id="view_hospital_admission_form_insurance" model="ir.ui.view">
+        <field name="name">hospital.admission.form.insurance</field>
+        <field name="model">hospital.admission</field>
+        <field name="inherit_id" ref="hospital_admission.view_hospital_admission_form"/>
+        <field name="arch" type="xml">
+
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button name="action_view_admission_claims" type="object"
+                        class="oe_stat_button" icon="fa-money" invisible="not id">
+                    <field name="claim_count" widget="statinfo" string="Claims"/>
+                </button>
+            </xpath>
+
+            <xpath expr="//notebook" position="inside">
+                <page string="Insurance" name="insurance">
+                    <group>
+                        <group string="Coverage / Guarantee">
+                            <field name="coverage_id"
+                                   domain="[('patient_id', '=', patient_id)]"/>
+                            <field name="guarantee_id"
+                                   domain="[('patient_id', '=', patient_id)]"/>
+                        </group>
+                    </group>
+                    <field name="insurance_claim_ids" readonly="1">
+                        <list>
+                            <field name="name"/>
+                            <field name="provider_id"/>
+                            <field name="claim_amount"/>
+                            <field name="approved_amount"/>
+                            <field name="currency_id" column_invisible="1"/>
+                            <field name="state" widget="badge"/>
+                        </list>
+                    </field>
+                </page>
+            </xpath>
+
+        </field>
+    </record>
+</odoo>

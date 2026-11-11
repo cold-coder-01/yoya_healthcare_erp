@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_insurance_accounting_config_list" model="ir.ui.view">
+        <field name="name">hospital.insurance.accounting.config.list</field>
+        <field name="model">hospital.insurance.accounting.config</field>
+        <field name="arch" type="xml">
+            <list string="Insurance Accounting Configurations">
+                <field name="company_id"/>
+                <field name="provider_type"/>
+                <field name="patient_receivable_account_id"/>
+                <field name="journal_id"/>
+                <field name="active" widget="boolean_toggle"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_insurance_accounting_config_form" model="ir.ui.view">
+        <field name="name">hospital.insurance.accounting.config.form</field>
+        <field name="model">hospital.insurance.accounting.config</field>
+        <field name="arch" type="xml">
+            <form string="Insurance Accounting Configuration">
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="name"/>
+                            <field name="provider_type"/>
+                            <field name="company_id"/>
+                            <field name="active"/>
+                        </group>
+                        <group>
+                            <field name="journal_id"/>
+                        </group>
+                    </group>
+                    <group string="Patient Receivable (credit side)">
+                        <field name="patient_receivable_account_id"/>
+                    </group>
+                    <group string="Payer Receivable Accounts (debit side)">
+                        <field name="insurance_receivable_account_id"/>
+                        <field name="corporate_receivable_account_id"/>
+                        <field name="government_receivable_account_id"/>
+                        <field name="ngo_receivable_account_id"/>
+                        <field name="donor_receivable_account_id"/>
+                        <field name="credit_receivable_account_id"/>
+                        <field name="other_receivable_account_id"/>
+                    </group>
+                    <group string="Write-off">
+                        <field name="writeoff_expense_account_id"/>
+                    </group>
+                    <group string="Notes">
+                        <field name="notes" nolabel="1"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_insurance_accounting_config_search" model="ir.ui.view">
+        <field name="name">hospital.insurance.accounting.config.search</field>
+        <field name="model">hospital.insurance.accounting.config</field>
+        <field name="arch" type="xml">
+            <search string="Insurance Accounting Configurations">
+                <field name="name"/>
+                <field name="provider_type"/>
+                <field name="company_id"/>
+                <filter name="active" string="Active" domain="[('active','=',True)]"/>
+                <filter name="archived" string="Archived" domain="[('active','=',False)]"/>
+                <group expand="0" string="Group By">
+                    <filter name="group_company" string="Company"
+                            context="{'group_by': 'company_id'}"/>
+                    <filter name="group_provider" string="Provider Type"
+                            context="{'group_by': 'provider_type'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_insurance_accounting_config" model="ir.actions.act_window">
+        <field name="name">Insurance Accounting Configurations</field>
+        <field name="res_model">hospital.insurance.accounting.config</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_insurance_accounting_config_search"/>
+    </record>
+</odoo>

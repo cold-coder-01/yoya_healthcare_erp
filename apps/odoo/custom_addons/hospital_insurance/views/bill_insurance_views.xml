@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_patient_bill_form_insurance" model="ir.ui.view">
+        <field name="name">hospital.patient.bill.form.insurance</field>
+        <field name="model">hospital.patient.bill</field>
+        <field name="inherit_id" ref="hospital_billing.view_hospital_patient_bill_form"/>
+        <field name="arch" type="xml">
+
+            <xpath expr="//header" position="inside">
+                <button name="action_create_insurance_claim"
+                        string="Create Insurance Claim" type="object"
+                        invisible="not payer_type or payer_type == 'cash' or insurance_claim_id"/>
+                <button name="action_view_insurance_claim"
+                        string="View Insurance Claim" type="object"
+                        invisible="not insurance_claim_id"/>
+                <button name="action_mark_patient_responsibility"
+                        string="Mark Patient Responsibility" type="object"
+                        invisible="not payer_type or payer_type == 'cash'"/>
+            </xpath>
+
+            <xpath expr="//notebook" position="inside">
+                <page string="Insurance / Payer" name="insurance">
+                    <group>
+                        <group string="Payer">
+                            <field name="payer_type"/>
+                            <field name="claim_settlement_mode"
+                                   invisible="not payer_type or payer_type == 'cash'"/>
+                            <field name="insurance_provider_id"
+                                   invisible="not payer_type or payer_type == 'cash'"
+                                   required="payer_type and payer_type != 'cash'"/>
+                            <field name="coverage_id"
+                                   invisible="not payer_type or payer_type == 'cash'"
+                                   domain="[('patient_id', '=', patient_id)]"/>
+                            <field name="guarantee_id"
+                                   invisible="not payer_type or payer_type == 'cash'"
+                                   domain="[('patient_id', '=', patient_id)]"/>
+                        </group>
+                        <group string="Coverage &amp; Status">
+                            <field name="coverage_percent"
+                                   invisible="not payer_type or payer_type == 'cash'"/>
+                            <field name="payer_responsibility_amount"
+                                   invisible="not payer_type or payer_type == 'cash'"/>
+                            <field name="patient_responsibility_amount"
+                                   invisible="not payer_type or payer_type == 'cash'"/>
+                            <field name="insurance_state"/>
+                            <field name="insurance_claim_id" readonly="1"
+                                   invisible="not insurance_claim_id"/>
+                        </group>
+                    </group>
+                    <group string="Insurance Note">
+                        <field name="insurance_note" nolabel="1"
+                               placeholder="Notes about payer coverage for this bill..."/>
+                    </group>
+                </page>
+            </xpath>
+
+        </field>
+    </record>
+
+    <record id="view_hospital_patient_bill_list_insurance" model="ir.ui.view">
+        <field name="name">hospital.patient.bill.list.insurance</field>
+        <field name="model">hospital.patient.bill</field>
+        <field name="inherit_id" ref="hospital_billing.view_hospital_patient_bill_list"/>
+        <field name="arch" type="xml">
+            <field name="state" position="before">
+                <field name="payer_type" optional="hide"/>
+                <field name="insurance_state" optional="hide"/>
+            </field>
+        </field>
+    </record>
+</odoo>

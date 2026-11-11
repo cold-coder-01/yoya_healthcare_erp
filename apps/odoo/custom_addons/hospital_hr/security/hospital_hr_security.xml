@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="group_hospital_hr_user" model="res.groups">
+        <field name="name">Hospital HR User</field>
+        <field name="category_id" ref="hospital_management.module_category_hospital_management"/>
+        <field name="comment">Read access to hospital HR configuration (roles). Operational duty access arrives in later tasks.</field>
+    </record>
+
+    <record id="group_hospital_hr_manager" model="res.groups">
+        <field name="name">Hospital HR Manager</field>
+        <field name="category_id" ref="hospital_management.module_category_hospital_management"/>
+        <field name="implied_ids" eval="[(4, ref('group_hospital_hr_user'))]"/>
+        <field name="comment">Manages hospital roles and hospital HR configuration.</field>
+    </record>
+
+    <!-- Internal users may only see their own credentials (self-service). -->
+    <record id="rule_hospital_hr_credential_own" model="ir.rule">
+        <field name="name">Hospital Credential: own records</field>
+        <field name="model_id" ref="model_hospital_hr_credential"/>
+        <field name="groups" eval="[(4, ref('base.group_user'))]"/>
+        <field name="domain_force">[('employee_id.user_id', '=', user.id)]</field>
+        <field name="perm_read" eval="True"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+
+    <!-- Hospital HR users/managers see all credentials. -->
+    <record id="rule_hospital_hr_credential_all" model="ir.rule">
+        <field name="name">Hospital Credential: hospital HR all records</field>
+        <field name="model_id" ref="model_hospital_hr_credential"/>
+        <field name="groups" eval="[(4, ref('group_hospital_hr_user'))]"/>
+        <field name="domain_force">[(1, '=', 1)]</field>
+    </record>
+
+    <!-- Internal users may only see their own duty lines (self-service roster). -->
+    <record id="rule_hospital_hr_duty_line_own" model="ir.rule">
+        <field name="name">Hospital Duty Line: own records</field>
+        <field name="model_id" ref="model_hospital_hr_duty_line"/>
+        <field name="groups" eval="[(4, ref('base.group_user'))]"/>
+        <field name="domain_force">[('employee_id.user_id', '=', user.id)]</field>
+        <field name="perm_read" eval="True"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+
+    <!-- Hospital HR users/managers see all duty lines. -->
+    <record id="rule_hospital_hr_duty_line_all" model="ir.rule">
+        <field name="name">Hospital Duty Line: hospital HR all records</field>
+        <field name="model_id" ref="model_hospital_hr_duty_line"/>
+        <field name="groups" eval="[(4, ref('group_hospital_hr_user'))]"/>
+        <field name="domain_force">[(1, '=', 1)]</field>
+    </record>
+
+    <!-- Internal users may only see their own duty logs. -->
+    <record id="rule_hospital_hr_attendance_log_own" model="ir.rule">
+        <field name="name">Hospital Duty Log: own records</field>
+        <field name="model_id" ref="model_hospital_hr_attendance_log"/>
+        <field name="groups" eval="[(4, ref('base.group_user'))]"/>
+        <field name="domain_force">[('employee_id.user_id', '=', user.id)]</field>
+        <field name="perm_read" eval="True"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+
+    <!-- Hospital HR users/managers see all duty logs. -->
+    <record id="rule_hospital_hr_attendance_log_all" model="ir.rule">
+        <field name="name">Hospital Duty Log: hospital HR all records</field>
+        <field name="model_id" ref="model_hospital_hr_attendance_log"/>
+        <field name="groups" eval="[(4, ref('group_hospital_hr_user'))]"/>
+        <field name="domain_force">[(1, '=', 1)]</field>
+    </record>
+
+</odoo>

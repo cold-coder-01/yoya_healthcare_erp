@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="1">
+
+        <record id="role_doctor" model="hospital.hr.role">
+            <field name="name">Doctor</field>
+            <field name="code">DOC</field>
+            <field name="role_type">medical</field>
+            <field name="clinical_role" eval="True"/>
+            <field name="requires_license" eval="True"/>
+            <field name="can_be_scheduled" eval="True"/>
+            <field name="can_be_on_call" eval="True"/>
+            <field name="sequence">10</field>
+        </record>
+
+        <record id="role_surgeon" model="hospital.hr.role">
+            <field name="name">Surgeon</field>
+            <field name="code">SURGEON</field>
+            <field name="role_type">medical</field>
+            <field name="clinical_role" eval="True"/>
+            <field name="requires_license" eval="True"/>
+            <field name="can_be_scheduled" eval="True"/>
+            <field name="can_be_on_call" eval="True"/>
+            <field name="sequence">20</field>
+        </record>
+
+        <record id="role_anesthetist" model="hospital.hr.role">
+            <field name="name">Anesthetist</field>
+            <field name="code">ANESTH</field>
+            <field name="role_type">medical</field>
+            <field name="clinical_role" eval="True"/>
+            <field name="requires_license" eval="True"/>
+            <field name="can_be_scheduled" eval="True"/>
+            <field name="can_be_on_call" eval="True"/>
+            <field name="sequence">30</field>
+        </record>
+
+        <record id="role_nurse" model="hospital.hr.role">
+            <field name="name">Nurse</field>
+            <field name="code">NURSE</field>
+            <field name="role_type">nursing</field>
+            <field name="clinical_role" eval="True"/>
+            <field name="requires_license" eval="True"/>
+            <field name="can_be_scheduled" eval="True"/>
+            <field name="can_be_on_call" eval="True"/>
+            <field name="sequence">40</field>
+        </record>
+
+        <record id="role_ot_nurse" model="hospital.hr.role">
+            <field name="name">OT Nurse</field>
+            <field name="code">OT_NURSE</field>
+            <field name="role_type">nursing</field>
+            <field name="clinical_role" eval="True"/>
+            <field name="requires_license" eval="True"/>
+            <field name="can_be_scheduled" eval="True"/>
+            <field name="can_be_on_call" eval="True"/>
+            <field name="sequence">50</field>
+        </record>
+
+        <record id="role_radiology_technician" model="hospital.hr.role">
+            <field name="name">Radiology Technician</field>
+            <field name="code">RAD_TECH</field>
+            <field name="role_type">allied_health</field>
+            <field name="clinical_role" eval="True"/>
+            <field name="requires_license" eval="True"/>
+            <field name="can_be_scheduled" eval="True"/>
+            <field name="can_be_on_call" eval="False"/>
+            <field name="sequence">60</field>
+        </record>
+
+        <record id="role_laboratory_technician" model="hospital.hr.role">
+            <field name="name">Laboratory Technician</field>
+            <field name="code">LAB_TECH</field>
+            <field name="role_type">allied_health</field>
+            <field name="clinical_role" eval="True"/>
+            <field name="requires_license" eval="True"/>
+            <field name="can_be_scheduled" eval="True"/>
+            <field name="can_be_on_call" eval="False"/>
+            <field name="sequence">70</field>
+        </record>
+
+        <record id="role_pharmacist" model="hospital.hr.role">
+            <field name="name">Pharmacist</field>
+            <field name="code">PHARM</field>
+            <field name="role_type">pharmacy</field>
+            <field name="clinical_role" eval="True"/>
+            <field name="requires_license" eval="True"/>
+            <field name="can_be_scheduled" eval="True"/>
+            <field name="can_be_on_call" eval="False"/>
+            <field name="sequence">80</field>
+        </record>
+
+        <record id="role_cashier" model="hospital.hr.role">
+            <field name="name">Cashier</field>
+            <field name="code">CASHIER</field>
+            <field name="role_type">administrative</field>
+            <field name="clinical_role" eval="False"/>
+            <field name="requires_license" eval="False"/>
+            <field name="can_be_scheduled" eval="True"/>
+            <field name="can_be_on_call" eval="False"/>
+            <field name="sequence">90</field>
+        </record>
+
+        <record id="role_receptionist" model="hospital.hr.role">
+            <field name="name">Receptionist</field>
+            <field name="code">RECEP</field>
+            <field name="role_type">administrative</field>
+            <field name="clinical_role" eval="False"/>
+            <field name="requires_license" eval="False"/>
+            <field name="can_be_scheduled" eval="True"/>
+            <field name="can_be_on_call" eval="False"/>
+            <field name="sequence">100</field>
+        </record>
+
+        <record id="role_inventory_officer" model="hospital.hr.role">
+            <field name="name">Inventory Officer</field>
+            <field name="code">INV_OFFICER</field>
+            <field name="role_type">administrative</field>
+            <field name="clinical_role" eval="False"/>
+            <field name="requires_license" eval="False"/>
+            <field name="can_be_scheduled" eval="True"/>
+            <field name="can_be_on_call" eval="False"/>
+            <field name="sequence">110</field>
+        </record>
+
+        <record id="role_administrator" model="hospital.hr.role">
+            <field name="name">Administrator</field>
+            <field name="code">ADMIN</field>
+            <field name="role_type">administrative</field>
+            <field name="clinical_role" eval="False"/>
+            <field name="requires_license" eval="False"/>
+            <field name="can_be_scheduled" eval="False"/>
+            <field name="can_be_on_call" eval="False"/>
+            <field name="sequence">120</field>
+        </record>
+
+        <record id="role_cleaner" model="hospital.hr.role">
+            <field name="name">Cleaner</field>
+            <field name="code">CLEANER</field>
+            <field name="role_type">support</field>
+            <field name="clinical_role" eval="False"/>
+            <field name="requires_license" eval="False"/>
+            <field name="can_be_scheduled" eval="True"/>
+            <field name="can_be_on_call" eval="False"/>
+            <field name="sequence">130</field>
+        </record>
+
+        <record id="role_security" model="hospital.hr.role">
+            <field name="name">Security</field>
+            <field name="code">SECURITY</field>
+            <field name="role_type">support</field>
+            <field name="clinical_role" eval="False"/>
+            <field name="requires_license" eval="False"/>
+            <field name="can_be_scheduled" eval="True"/>
+            <field name="can_be_on_call" eval="False"/>
+            <field name="sequence">140</field>
+        </record>
+
+    </data>
+</odoo>

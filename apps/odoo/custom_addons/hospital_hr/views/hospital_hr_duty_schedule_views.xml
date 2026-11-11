@@ -1,0 +1,331 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ============ Duty Schedule ============ -->
+
+    <record id="view_hospital_hr_duty_schedule_list" model="ir.ui.view">
+        <field name="name">hospital.hr.duty.schedule.list</field>
+        <field name="model">hospital.hr.duty.schedule</field>
+        <field name="arch" type="xml">
+            <list string="Duty Schedules"
+                  decoration-muted="state == 'cancelled'"
+                  decoration-info="state == 'draft'">
+                <field name="name"/>
+                <field name="date_from"/>
+                <field name="date_to"/>
+                <field name="department_id"/>
+                <field name="responsible_id"/>
+                <field name="line_count" string="Lines"/>
+                <field name="state" widget="badge"
+                       decoration-success="state == 'confirmed'"
+                       decoration-info="state == 'draft'"
+                       decoration-danger="state == 'cancelled'"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_hr_duty_schedule_form" model="ir.ui.view">
+        <field name="name">hospital.hr.duty.schedule.form</field>
+        <field name="model">hospital.hr.duty.schedule</field>
+        <field name="arch" type="xml">
+            <form string="Duty Schedule">
+                <header>
+                    <button name="action_confirm" type="object" string="Confirm"
+                            class="oe_highlight" invisible="state != 'draft'"/>
+                    <button name="action_done" type="object" string="Mark Done"
+                            invisible="state != 'confirmed'"/>
+                    <button name="action_cancel" type="object" string="Cancel"
+                            invisible="state not in ('draft', 'confirmed')"/>
+                    <button name="action_reset_to_draft" type="object" string="Reset to Draft"
+                            invisible="state == 'draft'"
+                            groups="hospital_hr.group_hospital_hr_manager"/>
+                    <field name="state" widget="statusbar"
+                           statusbar_visible="draft,confirmed,done"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <h1><field name="name" readonly="1"/></h1>
+                    </div>
+                    <group>
+                        <group name="period">
+                            <field name="date_from"/>
+                            <field name="date_to"/>
+                        </group>
+                        <group name="organisation">
+                            <field name="department_id"/>
+                            <field name="responsible_id"/>
+                            <field name="company_id" groups="base.group_multi_company"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page name="duty_lines" string="Duty Lines">
+                            <field name="line_ids"
+                                   context="{'default_date': date_from, 'default_department_id': department_id}"
+                                   readonly="state in ('done', 'cancelled')">
+                                <list editable="bottom"
+                                      decoration-muted="state == 'cancelled'"
+                                      decoration-warning="state == 'missed'">
+                                    <field name="date"/>
+                                    <field name="employee_id"/>
+                                    <field name="hospital_role_id"/>
+                                    <field name="department_id" optional="hide"/>
+                                    <field name="shift_template_id"/>
+                                    <field name="start_time" widget="float_time" optional="show"/>
+                                    <field name="end_time" widget="float_time" optional="show"/>
+                                    <field name="duration_hours" widget="float_time" optional="hide"/>
+                                    <field name="duty_area"/>
+                                    <field name="actual_check_in" optional="show"/>
+                                    <field name="actual_check_out" optional="show"/>
+                                    <field name="actual_worked_hours" widget="float_time" optional="show"/>
+                                    <field name="lateness_summary" optional="show"/>
+                                    <field name="state" widget="badge"
+                                           decoration-success="state in ('confirmed', 'completed')"
+                                           decoration-info="state in ('draft', 'scheduled')"
+                                           decoration-warning="state in ('on_duty', 'missed')"
+                                           decoration-danger="state == 'cancelled'"/>
+                                    <field name="remarks" optional="hide"/>
+                                    <button name="action_check_in" type="object" icon="fa-sign-in"
+                                            title="Check In"
+                                            invisible="state not in ('scheduled', 'confirmed')"/>
+                                    <button name="action_check_out" type="object" icon="fa-sign-out"
+                                            title="Check Out"
+                                            invisible="state != 'on_duty'"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page name="notes" string="Notes">
+                            <field name="notes"
+                                   placeholder="Roster instructions, coverage notes, ..."/>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_hr_duty_schedule_search" model="ir.ui.view">
+        <field name="name">hospital.hr.duty.schedule.search</field>
+        <field name="model">hospital.hr.duty.schedule</field>
+        <field name="arch" type="xml">
+            <search string="Duty Schedules">
+                <field name="name"/>
+                <field name="department_id"/>
+                <field name="responsible_id"/>
+                <filter name="filter_draft" string="Draft"
+                        domain="[('state', '=', 'draft')]"/>
+                <filter name="filter_confirmed" string="Confirmed"
+                        domain="[('state', '=', 'confirmed')]"/>
+                <filter name="filter_done" string="Done"
+                        domain="[('state', '=', 'done')]"/>
+                <filter name="filter_cancelled" string="Cancelled"
+                        domain="[('state', '=', 'cancelled')]"/>
+                <separator/>
+                <filter name="filter_period" string="Period" date="date_from"/>
+                <group expand="0" string="Group By">
+                    <filter name="group_department" string="Clinical Department"
+                            domain="[]" context="{'group_by': 'department_id'}"/>
+                    <filter name="group_state" string="Status"
+                            domain="[]" context="{'group_by': 'state'}"/>
+                    <filter name="group_responsible" string="Responsible"
+                            domain="[]" context="{'group_by': 'responsible_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="view_hospital_hr_duty_schedule_calendar" model="ir.ui.view">
+        <field name="name">hospital.hr.duty.schedule.calendar</field>
+        <field name="model">hospital.hr.duty.schedule</field>
+        <field name="arch" type="xml">
+            <calendar string="Duty Schedules" date_start="date_from" date_stop="date_to"
+                      color="department_id" mode="month" quick_create="0">
+                <field name="name"/>
+                <field name="department_id"/>
+            </calendar>
+        </field>
+    </record>
+
+    <!-- ============ Duty Lines ============ -->
+
+    <record id="view_hospital_hr_duty_line_list" model="ir.ui.view">
+        <field name="name">hospital.hr.duty.line.list</field>
+        <field name="model">hospital.hr.duty.line</field>
+        <field name="arch" type="xml">
+            <list string="Duty Lines"
+                  decoration-muted="state == 'cancelled'"
+                  decoration-warning="state == 'missed'">
+                <field name="date"/>
+                <field name="employee_id"/>
+                <field name="hospital_role_id" optional="show"/>
+                <field name="department_id" optional="show"/>
+                <field name="shift_template_id"/>
+                <field name="start_time" widget="float_time"/>
+                <field name="end_time" widget="float_time"/>
+                <field name="duration_hours" widget="float_time" optional="hide"/>
+                <field name="duty_area" optional="show"/>
+                <field name="schedule_id" optional="hide"/>
+                <field name="actual_check_in" optional="show"/>
+                <field name="actual_check_out" optional="show"/>
+                <field name="actual_worked_hours" widget="float_time" optional="show"/>
+                <field name="lateness_summary" optional="show"/>
+                <field name="state" widget="badge"
+                       decoration-success="state in ('confirmed', 'completed')"
+                       decoration-info="state in ('draft', 'scheduled')"
+                       decoration-warning="state in ('on_duty', 'missed')"
+                       decoration-danger="state == 'cancelled'"/>
+                <button name="action_check_in" type="object" icon="fa-sign-in"
+                        title="Check In"
+                        invisible="state not in ('scheduled', 'confirmed')"/>
+                <button name="action_check_out" type="object" icon="fa-sign-out"
+                        title="Check Out"
+                        invisible="state != 'on_duty'"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_hr_duty_line_form" model="ir.ui.view">
+        <field name="name">hospital.hr.duty.line.form</field>
+        <field name="model">hospital.hr.duty.line</field>
+        <field name="arch" type="xml">
+            <form string="Duty Line">
+                <header>
+                    <button name="action_check_in" type="object" string="Check In"
+                            class="oe_highlight"
+                            invisible="state not in ('scheduled', 'confirmed')"/>
+                    <button name="action_check_out" type="object" string="Check Out"
+                            class="oe_highlight"
+                            invisible="state != 'on_duty'"/>
+                    <button name="action_mark_missed" type="object" string="Mark Missed"
+                            invisible="state not in ('scheduled', 'confirmed')"/>
+                    <button name="action_cancel_line" type="object" string="Cancel"
+                            invisible="state == 'cancelled'"/>
+                    <button name="action_reset_to_scheduled" type="object" string="Reset to Scheduled"
+                            groups="hospital_hr.group_hospital_hr_manager"
+                            invisible="state not in ('missed', 'cancelled', 'on_duty', 'completed')"/>
+                    <field name="state" widget="statusbar"
+                           statusbar_visible="draft,scheduled,confirmed,on_duty,completed"/>
+                </header>
+                <sheet>
+                    <div name="button_box" class="oe_button_box">
+                        <button name="action_view_attendance_logs"
+                                type="object"
+                                class="oe_stat_button"
+                                icon="fa-clock-o"
+                                invisible="attendance_log_count == 0">
+                            <field name="attendance_log_count" widget="statinfo" string="Duty Logs"/>
+                        </button>
+                    </div>
+                    <div class="oe_title">
+                        <h1><field name="name" readonly="1"/></h1>
+                    </div>
+                    <group>
+                        <group name="assignment">
+                            <field name="schedule_id"/>
+                            <field name="date"/>
+                            <field name="employee_id"/>
+                            <field name="hospital_role_id"/>
+                            <field name="department_id"/>
+                        </group>
+                        <group name="shift">
+                            <field name="shift_template_id"/>
+                            <field name="shift_type"/>
+                            <field name="start_time" widget="float_time"/>
+                            <field name="end_time" widget="float_time"/>
+                            <field name="duration_hours" widget="float_time"/>
+                            <field name="duty_area"/>
+                        </group>
+                        <group string="Actual Duty" name="actual_duty">
+                            <field name="actual_check_in"/>
+                            <field name="actual_check_out"/>
+                            <field name="actual_worked_hours" widget="float_time"/>
+                            <field name="lateness_summary"/>
+                        </group>
+                    </group>
+                    <group string="Remarks" name="remarks">
+                        <field name="remarks" nolabel="1"/>
+                    </group>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_hr_duty_line_calendar" model="ir.ui.view">
+        <field name="name">hospital.hr.duty.line.calendar</field>
+        <field name="model">hospital.hr.duty.line</field>
+        <field name="arch" type="xml">
+            <calendar string="Duty Roster" date_start="start_datetime" date_stop="end_datetime"
+                      color="employee_id" mode="week" quick_create="0">
+                <field name="employee_id"/>
+                <field name="shift_template_id"/>
+                <field name="duty_area"/>
+            </calendar>
+        </field>
+    </record>
+
+    <record id="view_hospital_hr_duty_line_pivot" model="ir.ui.view">
+        <field name="name">hospital.hr.duty.line.pivot</field>
+        <field name="model">hospital.hr.duty.line</field>
+        <field name="arch" type="xml">
+            <pivot string="Duty Workload">
+                <field name="department_id" type="row"/>
+                <field name="employee_id" type="row"/>
+                <field name="shift_template_id" type="col"/>
+                <field name="duration_hours" type="measure"/>
+            </pivot>
+        </field>
+    </record>
+
+    <record id="view_hospital_hr_duty_line_search" model="ir.ui.view">
+        <field name="name">hospital.hr.duty.line.search</field>
+        <field name="model">hospital.hr.duty.line</field>
+        <field name="arch" type="xml">
+            <search string="Duty Lines">
+                <field name="employee_id"/>
+                <field name="department_id"/>
+                <field name="hospital_role_id"/>
+                <field name="shift_template_id"/>
+                <field name="duty_area"/>
+                <filter name="filter_today" string="Today"
+                        domain="[('date', '=', context_today().strftime('%Y-%m-%d'))]"/>
+                <filter name="filter_this_week" string="This Week"
+                        domain="[('date', '&gt;=', (context_today() - datetime.timedelta(days=context_today().weekday())).strftime('%Y-%m-%d')),
+                                 ('date', '&lt;=', (context_today() + datetime.timedelta(days=6 - context_today().weekday())).strftime('%Y-%m-%d'))]"/>
+                <filter name="filter_this_month" string="This Month"
+                        domain="[('date', '&gt;=', context_today().strftime('%Y-%m-01')),
+                                 ('date', '&lt;=', (context_today() + relativedelta(day=31)).strftime('%Y-%m-%d'))]"/>
+                <separator/>
+                <filter name="filter_scheduled" string="Scheduled"
+                        domain="[('state', '=', 'scheduled')]"/>
+                <filter name="filter_confirmed" string="Confirmed"
+                        domain="[('state', '=', 'confirmed')]"/>
+                <filter name="filter_on_duty" string="On Duty"
+                        domain="[('state', '=', 'on_duty')]"/>
+                <filter name="filter_completed" string="Completed"
+                        domain="[('state', '=', 'completed')]"/>
+                <filter name="filter_missed" string="Missed"
+                        domain="[('state', '=', 'missed')]"/>
+                <filter name="filter_cancelled" string="Cancelled"
+                        domain="[('state', '=', 'cancelled')]"/>
+                <group expand="0" string="Group By">
+                    <filter name="group_department" string="Clinical Department"
+                            domain="[]" context="{'group_by': 'department_id'}"/>
+                    <filter name="group_employee" string="Employee"
+                            domain="[]" context="{'group_by': 'employee_id'}"/>
+                    <filter name="group_role" string="Hospital Role"
+                            domain="[]" context="{'group_by': 'hospital_role_id'}"/>
+                    <filter name="group_shift" string="Shift"
+                            domain="[]" context="{'group_by': 'shift_template_id'}"/>
+                    <filter name="group_shift_type" string="Shift Type"
+                            domain="[]" context="{'group_by': 'shift_type'}"/>
+                    <filter name="group_state" string="Status"
+                            domain="[]" context="{'group_by': 'state'}"/>
+                    <filter name="group_date" string="Date"
+                            domain="[]" context="{'group_by': 'date'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+</odoo>

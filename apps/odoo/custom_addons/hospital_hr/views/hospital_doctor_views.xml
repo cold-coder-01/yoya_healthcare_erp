@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- Bridge to the HR master record + license source-of-truth cleanup:
+         the manually maintained license_number is replaced in the UI by the
+         readonly credential-backed display (Task 38E.1). The legacy field and
+         its stored values remain in the database for old reports/code. -->
+    <record id="view_hospital_doctor_form_hospital_hr" model="ir.ui.view">
+        <field name="name">hospital.doctor.form.hospital.hr</field>
+        <field name="model">hospital.doctor</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_doctor_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='user_id']" position="after">
+                <field name="employee_id"/>
+            </xpath>
+            <xpath expr="//field[@name='license_number']" position="replace">
+                <field name="credential_license_number"/>
+                <field name="credential_license_status"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_hospital_doctor_list_hospital_hr" model="ir.ui.view">
+        <field name="name">hospital.doctor.list.hospital.hr</field>
+        <field name="model">hospital.doctor</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_doctor_list"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='license_number']" position="replace">
+                <field name="credential_license_number"/>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

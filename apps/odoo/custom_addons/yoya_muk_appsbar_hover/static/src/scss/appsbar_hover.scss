@@ -1,0 +1,155 @@
+@media (hover: hover) and (pointer: fine) {
+    .mk_sidebar_type_small,
+    .mk_sidebar_type_large {
+        .mk_apps_sidebar_panel.yoya_appsbar_hover {
+            --yoya-appsbar-collapsed-width: 46px;
+            --yoya-appsbar-expanded-width: 220px;
+
+            clip-path: inset(0 calc(100% - var(--yoya-appsbar-collapsed-width)) 0 0);
+            margin-inline-end: calc(
+                var(--yoya-appsbar-collapsed-width) - var(--yoya-appsbar-expanded-width)
+            );
+            position: relative;
+            transition: clip-path 220ms ease;
+            width: var(--yoya-appsbar-expanded-width);
+            z-index: 10;
+
+            > .mk_apps_sidebar {
+                justify-content: flex-start;
+                min-height: 0;
+
+                > .mk_apps_sidebar_menu {
+                    flex: 1 1 auto;
+                    margin: 0;
+                    min-height: 0;
+                    overflow-x: hidden;
+                    overflow-y: auto;
+                    overscroll-behavior-y: contain;
+                    scrollbar-color: rgba(255, 255, 255, 0.4) transparent;
+                    scrollbar-width: thin;
+
+                    &::-webkit-scrollbar {
+                        width: 6px;
+                    }
+
+                    &::-webkit-scrollbar-track {
+                        background: transparent;
+                    }
+
+                    &::-webkit-scrollbar-thumb {
+                        background-color: rgba(255, 255, 255, 0.4);
+                        border-radius: 3px;
+                    }
+                }
+
+                > .mk_apps_sidebar_logo {
+                    align-items: center;
+                    background-color: rgba(0, 62, 47, 0.92);
+                    border: 1px solid rgba(209, 250, 229, 0.28);
+                    border-radius: 6px;
+                    box-shadow: 0 6px 16px rgba(0, 34, 26, 0.24);
+                    display: flex;
+                    flex: 0 0 auto;
+                    flex-direction: column;
+                    justify-content: center;
+                    margin: 0 10px;
+                    max-height: 0;
+                    opacity: 0;
+                    overflow: hidden;
+                    padding: 0 8px !important;
+                    transform: translateY(10px);
+                    transition:
+                        max-height 180ms ease,
+                        margin 180ms ease,
+                        opacity 140ms ease,
+                        padding 180ms ease,
+                        transform 180ms ease,
+                        visibility 0s linear 180ms;
+                    visibility: hidden;
+
+                    > img {
+                        background-color: #ffffff;
+                        border: 2px solid rgba(209, 250, 229, 0.96);
+                        border-radius: 50%;
+                        box-shadow:
+                            0 0 0 3px rgba(110, 231, 183, 0.18),
+                            0 5px 12px rgba(0, 25, 19, 0.24);
+                        display: block;
+                        height: 76px;
+                        margin: 0 auto 7px !important;
+                        max-height: 76px;
+                        max-width: 76px;
+                        object-fit: cover;
+                        width: 76px;
+                    }
+
+                    .yoya_appsbar_brand_copy {
+                        align-items: center;
+                        display: flex;
+                        flex-direction: column;
+                        line-height: 1.25;
+                        text-align: center;
+                    }
+
+                    .yoya_appsbar_brand_name {
+                        color: #ffffff;
+                        font-size: 10px;
+                        font-weight: 700;
+                        letter-spacing: 0;
+                    }
+
+                    .yoya_appsbar_brand_subtitle {
+                        color: rgba(209, 250, 229, 0.82);
+                        font-size: 9px;
+                        font-weight: 400;
+                        letter-spacing: 0;
+                        margin-top: 2px;
+                    }
+                }
+            }
+
+            .mk_apps_sidebar_name {
+                display: inline;
+                opacity: 0;
+                visibility: hidden;
+                white-space: nowrap;
+            }
+
+            &:hover,
+            &:focus-within {
+                clip-path: inset(0);
+
+                > .mk_apps_sidebar > .mk_apps_sidebar_logo {
+                    margin: 8px 10px 10px;
+                    max-height: 126px;
+                    opacity: 1;
+                    padding: 10px 8px 9px !important;
+                    transform: translateY(0);
+                    transition:
+                        max-height 180ms ease,
+                        margin 180ms ease,
+                        opacity 170ms ease 40ms,
+                        padding 180ms ease,
+                        transform 180ms ease,
+                        visibility 0s;
+                    visibility: visible;
+
+                    &:hover {
+                        box-shadow: 0 9px 20px rgba(0, 34, 26, 0.3);
+                        transform: translateY(-2px);
+                    }
+                }
+
+                .mk_apps_sidebar_icon {
+                    margin-right: 5px !important;
+                }
+
+                .mk_apps_sidebar_name {
+                    opacity: 1;
+                    transition: opacity 160ms ease 40ms;
+                    visibility: visible;
+                }
+            }
+        }
+    }
+}

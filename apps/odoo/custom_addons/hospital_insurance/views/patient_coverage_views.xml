@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_patient_coverage_list" model="ir.ui.view">
+        <field name="name">hospital.patient.coverage.list</field>
+        <field name="model">hospital.patient.coverage</field>
+        <field name="arch" type="xml">
+            <list string="Patient Coverages">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="provider_id"/>
+                <field name="coverage_type"/>
+                <field name="coverage_percent"/>
+                <field name="start_date" optional="show"/>
+                <field name="end_date" optional="show"/>
+                <field name="is_active_coverage" optional="hide"/>
+                <field name="currency_id" column_invisible="1"/>
+                <field name="state" widget="badge"
+                    decoration-info="state == 'draft'"
+                    decoration-success="state == 'active'"
+                    decoration-warning="state == 'suspended'"
+                    decoration-muted="state == 'expired'"
+                    decoration-danger="state == 'cancelled'"
+                />
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_patient_coverage_form" model="ir.ui.view">
+        <field name="name">hospital.patient.coverage.form</field>
+        <field name="model">hospital.patient.coverage</field>
+        <field name="arch" type="xml">
+            <form string="Patient Coverage">
+                <header>
+                    <button name="action_activate" string="Activate" type="object"
+                            class="btn-primary" invisible="state != 'draft'"/>
+                    <button name="action_suspend" string="Suspend" type="object"
+                            invisible="state != 'active'"/>
+                    <button name="action_expire" string="Expire" type="object"
+                            invisible="state not in ('active', 'suspended')"/>
+                    <button name="action_cancel" string="Cancel" type="object"
+                            invisible="state not in ('draft', 'active', 'suspended')"/>
+                    <button name="action_reset_to_draft" string="Reset to Draft" type="object"
+                            invisible="state not in ('suspended', 'cancelled')"/>
+                    <field name="state" widget="statusbar"
+                           statusbar_visible="draft,active,expired"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1><field name="name" readonly="1"/></h1>
+                    </div>
+                    <group>
+                        <group string="Patient &amp; Provider">
+                            <field name="patient_id"/>
+                            <field name="provider_id"/>
+                            <field name="coverage_type"/>
+                            <field name="is_active_coverage"/>
+                        </group>
+                        <group string="Policy / Membership">
+                            <field name="policy_number"/>
+                            <field name="membership_number"/>
+                            <field name="employee_id_number"/>
+                            <field name="principal_member_name"/>
+                            <field name="relationship_to_principal"/>
+                        </group>
+                    </group>
+                    <group>
+                        <group string="Coverage Limits">
+                            <field name="currency_id"/>
+                            <field name="coverage_percent"/>
+                            <field name="annual_limit"/>
+                            <field name="remaining_limit"/>
+                        </group>
+                        <group string="Validity">
+                            <field name="start_date"/>
+                            <field name="end_date"/>
+                            <field name="active" widget="boolean_toggle"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Notes" name="notes">
+                            <field name="notes"/>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_patient_coverage_search" model="ir.ui.view">
+        <field name="name">hospital.patient.coverage.search</field>
+        <field name="model">hospital.patient.coverage</field>
+        <field name="arch" type="xml">
+            <search string="Patient Coverages">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="provider_id"/>
+                <field name="policy_number"/>
+                <field name="membership_number"/>
+                <filter name="filter_active_coverage" string="Active"
+                        domain="[('state', '=', 'active')]"/>
+                <filter name="filter_draft" string="Draft"
+                        domain="[('state', '=', 'draft')]"/>
+                <separator/>
+                <filter name="filter_archived" string="Archived"
+                        domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter name="group_provider" string="Payer"
+                            context="{'group_by': 'provider_id'}"/>
+                    <filter name="group_coverage_type" string="Coverage Type"
+                            context="{'group_by': 'coverage_type'}"/>
+                    <filter name="group_state" string="Status"
+                            context="{'group_by': 'state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_patient_coverage" model="ir.actions.act_window">
+        <field name="name">Patient Coverages</field>
+        <field name="res_model">hospital.patient.coverage</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_patient_coverage_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Register a patient coverage</p>
+            <p>Link a patient to an insurance policy, employee benefit, corporate
+               credit, or sponsored support programme.</p>
+        </field>
+    </record>
+</odoo>

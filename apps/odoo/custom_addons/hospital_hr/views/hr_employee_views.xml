@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_employee_form_hospital_hr" model="ir.ui.view">
+        <field name="name">hr.employee.form.hospital.hr</field>
+        <field name="model">hr.employee</field>
+        <field name="inherit_id" ref="hr.view_employee_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button name="action_view_hospital_credentials"
+                        type="object"
+                        class="oe_stat_button"
+                        icon="fa-id-card-o"
+                        groups="hospital_hr.group_hospital_hr_user">
+                    <field name="credential_count" widget="statinfo" string="Credentials"/>
+                </button>
+                <button name="action_view_hospital_duty_lines"
+                        type="object"
+                        class="oe_stat_button"
+                        icon="fa-calendar"
+                        groups="hospital_hr.group_hospital_hr_user">
+                    <field name="duty_line_count" widget="statinfo" string="Duty Lines"/>
+                </button>
+                <button name="action_view_hospital_attendance_logs"
+                        type="object"
+                        class="oe_stat_button"
+                        icon="fa-clock-o"
+                        groups="hospital_hr.group_hospital_hr_user">
+                    <field name="attendance_log_count" widget="statinfo" string="Duty Logs"/>
+                </button>
+            </xpath>
+            <xpath expr="//notebook" position="inside">
+                <page name="hospital_profile" string="Hospital Profile">
+                    <group>
+                        <group string="Hospital Classification" name="hospital_classification">
+                            <field name="hospital_role_id"/>
+                            <field name="hospital_staff_type"/>
+                            <field name="hospital_department_id"/>
+                            <field name="is_clinical_staff"/>
+                        </group>
+                        <group string="Clinical Permissions" name="hospital_clinical_permissions">
+                            <field name="can_perform_clinical_services"/>
+                            <field name="can_approve_clinical_work"/>
+                        </group>
+                        <group string="Duty Eligibility" name="hospital_duty_eligibility">
+                            <field name="can_be_assigned_to_duty"/>
+                            <field name="on_call_eligible"/>
+                        </group>
+                        <group string="Specialty" name="hospital_specialty">
+                            <field name="primary_specialty"/>
+                            <field name="secondary_specialty"/>
+                        </group>
+                        <group string="Credential / License Summary" name="hospital_credential_summary">
+                            <field name="license_number" readonly="1"/>
+                            <field name="license_expiry_date" readonly="1"/>
+                            <field name="license_status" readonly="1"/>
+                            <field name="credential_warning" readonly="1"
+                                   invisible="not credential_warning"/>
+                        </group>
+                    </group>
+                    <group string="Hospital Notes" name="hospital_notes" groups="hr.group_hr_user">
+                        <field name="hospital_notes" nolabel="1"
+                               placeholder="Internal hospital HR notes (visible to HR users only)."/>
+                    </group>
+                </page>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_employee_filter_hospital_hr" model="ir.ui.view">
+        <field name="name">hr.employee.search.hospital.hr</field>
+        <field name="model">hr.employee</field>
+        <field name="inherit_id" ref="hr.view_employee_filter"/>
+        <field name="arch" type="xml">
+            <xpath expr="//filter[@name='newly_hired']" position="after">
+                <separator/>
+                <filter name="filter_clinical_staff" string="Clinical Staff"
+                        domain="[('is_clinical_staff', '=', True)]"/>
+                <filter name="filter_duty_eligible" string="Duty Eligible"
+                        domain="[('can_be_assigned_to_duty', '=', True)]"/>
+                <filter name="filter_on_call_eligible" string="On-Call Eligible"
+                        domain="[('on_call_eligible', '=', True)]"/>
+            </xpath>
+            <xpath expr="//filter[@name='group_job']" position="after">
+                <filter name="group_hospital_role" string="Hospital Role"
+                        domain="[]" context="{'group_by': 'hospital_role_id'}"/>
+                <filter name="group_hospital_department" string="Clinical Department"
+                        domain="[]" context="{'group_by': 'hospital_department_id'}"/>
+            </xpath>
+            <xpath expr="//filter[@name='my_team']" position="before">
+                <field name="hospital_role_id"/>
+                <field name="hospital_department_id"/>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_hospital_surgery_team_member_list" model="ir.ui.view">
+        <field name="name">hospital.surgery.team.member.list</field>
+        <field name="model">hospital.surgery.team.member</field>
+        <field name="arch" type="xml">
+            <list string="Surgical Team Members">
+                <field name="surgery_id"/>
+                <field name="role"/>
+                <field name="physician_id"/>
+                <field name="user_id"/>
+                <field name="name"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_surgery_team_member_form" model="ir.ui.view">
+        <field name="name">hospital.surgery.team.member.form</field>
+        <field name="model">hospital.surgery.team.member</field>
+        <field name="arch" type="xml">
+            <form string="Surgical Team Member">
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="surgery_id"/>
+                            <field name="role"/>
+                            <field name="physician_id"/>
+                            <field name="user_id"/>
+                        </group>
+                        <group>
+                            <field name="name"/>
+                        </group>
+                    </group>
+                    <group string="Notes">
+                        <field name="notes" nolabel="1"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+</odoo>

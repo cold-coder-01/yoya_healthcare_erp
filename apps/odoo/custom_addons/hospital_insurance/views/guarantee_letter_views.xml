@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_guarantee_letter_list" model="ir.ui.view">
+        <field name="name">hospital.guarantee.letter.list</field>
+        <field name="model">hospital.guarantee.letter</field>
+        <field name="arch" type="xml">
+            <list string="Guarantee Letters">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="provider_id"/>
+                <field name="guarantee_reference" optional="show"/>
+                <field name="issue_date" optional="show"/>
+                <field name="expiry_date" optional="show"/>
+                <field name="authorized_amount"/>
+                <field name="remaining_amount" optional="hide"/>
+                <field name="currency_id" column_invisible="1"/>
+                <field name="state" widget="badge"
+                    decoration-info="state == 'draft'"
+                    decoration-primary="state == 'submitted'"
+                    decoration-success="state == 'approved'"
+                    decoration-danger="state == 'rejected'"
+                    decoration-muted="state in ('expired', 'cancelled')"
+                />
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_guarantee_letter_form" model="ir.ui.view">
+        <field name="name">hospital.guarantee.letter.form</field>
+        <field name="model">hospital.guarantee.letter</field>
+        <field name="arch" type="xml">
+            <form string="Guarantee Letter">
+                <header>
+                    <button name="action_submit" string="Submit" type="object"
+                            class="btn-primary" invisible="state != 'draft'"/>
+                    <button name="action_approve" string="Approve" type="object"
+                            class="btn-primary" invisible="state != 'submitted'"/>
+                    <button name="action_reject" string="Reject" type="object"
+                            invisible="state != 'submitted'"/>
+                    <button name="action_expire" string="Mark Expired" type="object"
+                            invisible="state not in ('submitted', 'approved')"/>
+                    <button name="action_cancel" string="Cancel" type="object"
+                            invisible="state not in ('draft', 'submitted', 'approved')"/>
+                    <button name="action_reset_to_draft" string="Reset to Draft" type="object"
+                            invisible="state not in ('rejected', 'cancelled')"/>
+                    <field name="state" widget="statusbar"
+                           statusbar_visible="draft,submitted,approved"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1><field name="name" readonly="1"/></h1>
+                    </div>
+                    <group>
+                        <group string="Patient / Admission">
+                            <field name="patient_id"/>
+                            <field name="admission_id"/>
+                            <field name="active" widget="boolean_toggle"/>
+                        </group>
+                        <group string="Provider / Coverage">
+                            <field name="coverage_id"/>
+                            <field name="provider_id"/>
+                            <field name="guarantee_reference"/>
+                        </group>
+                    </group>
+                    <group>
+                        <group string="Authorization">
+                            <field name="currency_id"/>
+                            <field name="issue_date"/>
+                            <field name="expiry_date"/>
+                            <field name="coverage_percent"/>
+                            <field name="authorized_amount"/>
+                            <field name="used_amount"/>
+                            <field name="remaining_amount"/>
+                        </group>
+                        <group string="Approval">
+                            <field name="approved_by"/>
+                            <field name="approved_date"/>
+                            <field name="rejection_reason"
+                                   invisible="state != 'rejected'"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Services &amp; Exclusions" name="services">
+                            <group>
+                                <field name="authorized_services"
+                                       placeholder="Authorized services..."/>
+                                <field name="exclusions"
+                                       placeholder="Exclusions..."/>
+                            </group>
+                        </page>
+                        <page string="Claims" name="claims">
+                            <field name="claim_ids" readonly="1">
+                                <list>
+                                    <field name="name"/>
+                                    <field name="bill_id"/>
+                                    <field name="claim_amount"/>
+                                    <field name="approved_amount"/>
+                                    <field name="currency_id" column_invisible="1"/>
+                                    <field name="state" widget="badge"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Notes" name="notes">
+                            <field name="notes"/>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_guarantee_letter_search" model="ir.ui.view">
+        <field name="name">hospital.guarantee.letter.search</field>
+        <field name="model">hospital.guarantee.letter</field>
+        <field name="arch" type="xml">
+            <search string="Guarantee Letters">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="provider_id"/>
+                <field name="guarantee_reference"/>
+                <filter name="filter_approved" string="Approved"
+                        domain="[('state', '=', 'approved')]"/>
+                <filter name="filter_submitted" string="Submitted"
+                        domain="[('state', '=', 'submitted')]"/>
+                <separator/>
+                <filter name="filter_archived" string="Archived"
+                        domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter name="group_provider" string="Payer"
+                            context="{'group_by': 'provider_id'}"/>
+                    <filter name="group_state" string="Status"
+                            context="{'group_by': 'state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_guarantee_letter" model="ir.actions.act_window">
+        <field name="name">Guarantee Letters</field>
+        <field name="res_model">hospital.guarantee.letter</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_guarantee_letter_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Register a guarantee letter</p>
+            <p>Track payer guarantee / pre-authorization letters for patient
+               visits, admissions, and bills.</p>
+        </field>
+    </record>
+</odoo>

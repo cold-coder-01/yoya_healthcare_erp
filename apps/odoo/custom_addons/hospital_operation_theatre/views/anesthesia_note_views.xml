@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_hospital_anesthesia_note_list" model="ir.ui.view">
+        <field name="name">hospital.anesthesia.note.list</field>
+        <field name="model">hospital.anesthesia.note</field>
+        <field name="arch" type="xml">
+            <list string="Anesthesia Notes"
+                decoration-muted="state == 'cancelled'"
+                decoration-success="state == 'documented'">
+                <field name="name"/>
+                <field name="surgery_id"/>
+                <field name="patient_id"/>
+                <field name="anesthesia_type"/>
+                <field name="anesthetist_id"/>
+                <field name="state"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_anesthesia_note_form" model="ir.ui.view">
+        <field name="name">hospital.anesthesia.note.form</field>
+        <field name="model">hospital.anesthesia.note</field>
+        <field name="arch" type="xml">
+            <form string="Anesthesia Note">
+                <header>
+                    <button name="action_document" string="Document" type="object"
+                        class="btn-primary" invisible="state != 'draft'"/>
+                    <button name="action_cancel" string="Cancel" type="object"
+                        invisible="state == 'cancelled'"/>
+                    <button name="action_reset_to_draft" string="Reset to Draft" type="object"
+                        invisible="state != 'cancelled'"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,documented"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1>
+                            <field name="name" readonly="1"/>
+                        </h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="surgery_id" readonly="state != 'draft'" options="{'no_create': True}"/>
+                            <field name="patient_id" readonly="1"/>
+                            <field name="anesthesia_type"/>
+                            <field name="anesthetist_id"/>
+                        </group>
+                        <group>
+                            <field name="start_time"/>
+                            <field name="end_time"/>
+                        </group>
+                    </group>
+                    <group string="Assessment">
+                        <field name="pre_anesthesia_assessment"/>
+                        <field name="airway_assessment"/>
+                    </group>
+                    <group string="Intraoperative">
+                        <field name="medications_given"/>
+                        <field name="intraoperative_monitoring"/>
+                        <field name="complications"/>
+                        <field name="recovery_condition"/>
+                    </group>
+                    <group string="Notes">
+                        <field name="notes" nolabel="1"/>
+                    </group>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_anesthesia_note_search" model="ir.ui.view">
+        <field name="name">hospital.anesthesia.note.search</field>
+        <field name="model">hospital.anesthesia.note</field>
+        <field name="arch" type="xml">
+            <search string="Anesthesia Notes">
+                <field name="name"/>
+                <field name="surgery_id"/>
+                <field name="patient_id"/>
+                <field name="anesthetist_id"/>
+                <filter string="Documented" name="documented" domain="[('state', '=', 'documented')]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Anesthesia Type" name="group_type" context="{'group_by': 'anesthesia_type'}"/>
+                    <filter string="State" name="group_state" context="{'group_by': 'state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_anesthesia_note" model="ir.actions.act_window">
+        <field name="name">Anesthesia Notes</field>
+        <field name="res_model">hospital.anesthesia.note</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_anesthesia_note_search"/>
+    </record>
+
+</odoo>

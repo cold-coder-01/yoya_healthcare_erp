@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- PATIENT FORM — Surgeries smart button + tab -->
+    <record id="view_hospital_patient_surgery_inherit" model="ir.ui.view">
+        <field name="name">hospital.patient.surgery.inherit</field>
+        <field name="model">hospital.patient</field>
+        <field name="inherit_id" ref="hospital_management.view_hospital_patient_form"/>
+        <field name="arch" type="xml">
+
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button name="action_view_surgeries" type="object"
+                    class="oe_stat_button" icon="fa-scissors" invisible="not id">
+                    <field name="surgery_count" widget="statinfo" string="Surgeries"/>
+                </button>
+            </xpath>
+
+            <xpath expr="//notebook" position="inside">
+                <page string="Surgeries" name="surgeries">
+                    <field name="surgery_ids" nolabel="1" readonly="1">
+                        <list string="Surgeries" limit="10">
+                            <field name="name"/>
+                            <field name="surgery_type_id"/>
+                            <field name="theatre_id"/>
+                            <field name="planned_start"/>
+                            <field name="urgency"/>
+                            <field name="state"/>
+                        </list>
+                    </field>
+                </page>
+            </xpath>
+
+        </field>
+    </record>
+
+    <!-- ADMISSION FORM — Surgeries smart button -->
+    <record id="view_hospital_admission_surgery_inherit" model="ir.ui.view">
+        <field name="name">hospital.admission.surgery.inherit</field>
+        <field name="model">hospital.admission</field>
+        <field name="inherit_id" ref="hospital_admission.view_hospital_admission_form"/>
+        <field name="arch" type="xml">
+
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button name="action_view_surgeries" type="object"
+                    class="oe_stat_button" icon="fa-scissors" invisible="not id">
+                    <field name="surgery_count" widget="statinfo" string="Surgeries"/>
+                </button>
+            </xpath>
+
+        </field>
+    </record>
+
+</odoo>

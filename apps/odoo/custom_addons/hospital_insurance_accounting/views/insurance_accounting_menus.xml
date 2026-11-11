@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Nest under the existing Insurance app root menu -->
+    <record id="menu_insurance_accounting_bridge" model="ir.ui.menu">
+        <field name="name">Accounting Bridge</field>
+        <field name="parent_id" ref="hospital_insurance.menu_hospital_insurance_root"/>
+        <field name="sequence">80</field>
+        <field name="groups_id" eval="[(6, 0, [
+            ref('hospital_management.group_hospital_system_administrator'),
+            ref('hospital_management.group_hospital_manager'),
+            ref('hospital_management.group_hospital_accountant'),
+            ref('base.group_system')
+        ])]"/>
+    </record>
+
+    <record id="menu_insurance_accounting_config" model="ir.ui.menu">
+        <field name="name">Insurance Accounting Configurations</field>
+        <field name="parent_id" ref="menu_insurance_accounting_bridge"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_insurance_accounting_config')"/>
+        <field name="sequence">10</field>
+    </record>
+
+    <record id="menu_insurance_accounting_logs" model="ir.ui.menu">
+        <field name="name">Insurance Accounting Logs</field>
+        <field name="parent_id" ref="menu_insurance_accounting_bridge"/>
+        <field name="action" eval="'ir.actions.act_window,%d' % ref('action_insurance_accounting_log')"/>
+        <field name="sequence">20</field>
+    </record>
+</odoo>

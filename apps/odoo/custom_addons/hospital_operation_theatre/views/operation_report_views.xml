@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_hospital_operation_report_list" model="ir.ui.view">
+        <field name="name">hospital.operation.report.list</field>
+        <field name="model">hospital.operation.report</field>
+        <field name="arch" type="xml">
+            <list string="Operation Reports"
+                decoration-muted="state == 'cancelled'"
+                decoration-success="state == 'finalized'">
+                <field name="name"/>
+                <field name="surgery_id"/>
+                <field name="patient_id"/>
+                <field name="surgeon_id"/>
+                <field name="operation_date"/>
+                <field name="state"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_operation_report_form" model="ir.ui.view">
+        <field name="name">hospital.operation.report.form</field>
+        <field name="model">hospital.operation.report</field>
+        <field name="arch" type="xml">
+            <form string="Operation Report">
+                <header>
+                    <button name="action_finalize" string="Finalize" type="object"
+                        class="btn-primary" invisible="state != 'draft'"/>
+                    <button name="action_cancel" string="Cancel" type="object"
+                        invisible="state == 'cancelled'"/>
+                    <button name="action_reset_to_draft" string="Reset to Draft" type="object"
+                        invisible="state not in ('finalized', 'cancelled')"
+                        groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,finalized"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1>
+                            <field name="name" readonly="1"/>
+                        </h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="surgery_id" readonly="state != 'draft'" options="{'no_create': True}"/>
+                            <field name="patient_id" readonly="1"/>
+                            <field name="surgeon_id" readonly="state in ('finalized', 'cancelled')"/>
+                        </group>
+                        <group>
+                            <field name="operation_date" readonly="state in ('finalized', 'cancelled')"/>
+                            <field name="estimated_blood_loss" readonly="state in ('finalized', 'cancelled')"/>
+                        </group>
+                    </group>
+                    <group string="Diagnosis">
+                        <field name="preoperative_diagnosis" readonly="state in ('finalized', 'cancelled')"/>
+                        <field name="postoperative_diagnosis" readonly="state in ('finalized', 'cancelled')"/>
+                    </group>
+                    <group string="Operative Detail">
+                        <field name="procedure_performed" readonly="state in ('finalized', 'cancelled')"/>
+                        <field name="incision" readonly="state in ('finalized', 'cancelled')"/>
+                        <field name="operative_findings" readonly="state in ('finalized', 'cancelled')"/>
+                        <field name="surgical_steps" readonly="state in ('finalized', 'cancelled')"/>
+                        <field name="specimens_removed" readonly="state in ('finalized', 'cancelled')"/>
+                        <field name="implants_used" readonly="state in ('finalized', 'cancelled')"/>
+                        <field name="drains" readonly="state in ('finalized', 'cancelled')"/>
+                        <field name="closure_method" readonly="state in ('finalized', 'cancelled')"/>
+                    </group>
+                    <group string="Outcome">
+                        <field name="complications" readonly="state in ('finalized', 'cancelled')"/>
+                        <field name="immediate_postop_condition" readonly="state in ('finalized', 'cancelled')"/>
+                        <field name="recommendations" readonly="state in ('finalized', 'cancelled')"/>
+                    </group>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_operation_report_search" model="ir.ui.view">
+        <field name="name">hospital.operation.report.search</field>
+        <field name="model">hospital.operation.report</field>
+        <field name="arch" type="xml">
+            <search string="Operation Reports">
+                <field name="name"/>
+                <field name="surgery_id"/>
+                <field name="patient_id"/>
+                <field name="surgeon_id"/>
+                <filter string="Finalized" name="finalized" domain="[('state', '=', 'finalized')]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Surgeon" name="group_surgeon" context="{'group_by': 'surgeon_id'}"/>
+                    <filter string="State" name="group_state" context="{'group_by': 'state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_operation_report" model="ir.actions.act_window">
+        <field name="name">Operation Reports</field>
+        <field name="res_model">hospital.operation.report</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_operation_report_search"/>
+    </record>
+
+</odoo>

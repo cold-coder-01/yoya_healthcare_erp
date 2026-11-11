@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="action_hospital_hr_staff" model="ir.actions.act_window">
+        <field name="name">Hospital Staff</field>
+        <field name="res_model">hr.employee</field>
+        <field name="view_mode">kanban,list,form</field>
+        <field name="domain">[]</field>
+        <field name="context">{"search_default_group_hospital_role": 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                No employees yet
+            </p>
+            <p>
+                Hospital staff are regular Odoo employees. Assign a Hospital Role
+                on the employee's Hospital Profile tab to categorize them.
+            </p>
+        </field>
+    </record>
+
+    <record id="action_hospital_hr_role" model="ir.actions.act_window">
+        <field name="name">Hospital Roles</field>
+        <field name="res_model">hospital.hr.role</field>
+        <field name="view_mode">list,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Create a hospital role
+            </p>
+            <p>
+                Roles categorize hospital staff (Doctor, Nurse, Pharmacist, ...)
+                and drive duty eligibility and license requirements.
+            </p>
+        </field>
+    </record>
+
+    <record id="action_hospital_hr_credential" model="ir.actions.act_window">
+        <field name="name">Credentials / Licenses</field>
+        <field name="res_model">hospital.hr.credential</field>
+        <field name="view_mode">list,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Register a staff credential
+            </p>
+            <p>
+                Track professional licenses and certifications, their expiry
+                dates and verification status.
+            </p>
+        </field>
+    </record>
+
+    <record id="action_hospital_hr_credential_expiring" model="ir.actions.act_window">
+        <field name="name">Expiring Credentials</field>
+        <field name="res_model">hospital.hr.credential</field>
+        <field name="view_mode">list,form</field>
+        <field name="domain">[("status", "in", ["expiring_soon", "expired", "pending_verification", "suspended"])]</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Nothing needs attention
+            </p>
+            <p>
+                Credentials that are expiring, expired, suspended or pending
+                verification appear here.
+            </p>
+        </field>
+    </record>
+
+    <record id="action_hospital_hr_shift_template" model="ir.actions.act_window">
+        <field name="name">Shift Templates</field>
+        <field name="res_model">hospital.hr.shift.template</field>
+        <field name="view_mode">list,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Define a shift template
+            </p>
+            <p>
+                Shift templates (Morning, Night, On Call, ...) are the building
+                blocks of duty schedules.
+            </p>
+        </field>
+    </record>
+
+    <record id="action_hospital_hr_duty_schedule" model="ir.actions.act_window">
+        <field name="name">Duty Schedules</field>
+        <field name="res_model">hospital.hr.duty.schedule</field>
+        <field name="view_mode">list,calendar,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Create a duty schedule
+            </p>
+            <p>
+                Plan a roster for a clinical department and period, then add a
+                duty line per employee, date and shift.
+            </p>
+        </field>
+    </record>
+
+    <record id="action_hospital_hr_duty_line" model="ir.actions.act_window">
+        <field name="name">Duty Lines</field>
+        <field name="res_model">hospital.hr.duty.line</field>
+        <field name="view_mode">list,calendar,pivot,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                No duty lines yet
+            </p>
+            <p>
+                Duty lines are individual roster assignments — one employee,
+                one date, one shift.
+            </p>
+        </field>
+    </record>
+
+    <record id="action_hospital_hr_attendance_log" model="ir.actions.act_window">
+        <field name="name">Duty Logs</field>
+        <field name="res_model">hospital.hr.attendance.log</field>
+        <field name="view_mode">list,calendar,pivot,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                No duty logs yet
+            </p>
+            <p>
+                Duty logs record actual check-in / check-out and worked hours,
+                either from the duty roster or entered manually.
+            </p>
+        </field>
+    </record>
+
+    <!-- Under the existing Employees app — no new app icon. -->
+    <menuitem id="menu_hospital_hr_root"
+              name="Hospital HR"
+              parent="hr.menu_hr_root"
+              sequence="15"
+              groups="hr.group_hr_user,group_hospital_hr_user"/>
+
+    <menuitem id="menu_hospital_hr_staff"
+              name="Hospital Staff"
+              parent="menu_hospital_hr_root"
+              action="action_hospital_hr_staff"
+              sequence="10"/>
+
+    <menuitem id="menu_hospital_hr_credentials"
+              name="Credentials / Licenses"
+              parent="menu_hospital_hr_root"
+              action="action_hospital_hr_credential"
+              sequence="20"
+              groups="group_hospital_hr_user"/>
+
+    <menuitem id="menu_hospital_hr_credentials_expiring"
+              name="Expiring Credentials"
+              parent="menu_hospital_hr_root"
+              action="action_hospital_hr_credential_expiring"
+              sequence="30"
+              groups="group_hospital_hr_user"/>
+
+    <menuitem id="menu_hospital_hr_duty_schedules"
+              name="Duty Schedules"
+              parent="menu_hospital_hr_root"
+              action="action_hospital_hr_duty_schedule"
+              sequence="40"
+              groups="group_hospital_hr_user"/>
+
+    <menuitem id="menu_hospital_hr_duty_lines"
+              name="Duty Lines"
+              parent="menu_hospital_hr_root"
+              action="action_hospital_hr_duty_line"
+              sequence="50"
+              groups="group_hospital_hr_user"/>
+
+    <menuitem id="menu_hospital_hr_attendance_logs"
+              name="Duty Logs"
+              parent="menu_hospital_hr_root"
+              action="action_hospital_hr_attendance_log"
+              sequence="55"
+              groups="group_hospital_hr_user"/>
+
+    <menuitem id="menu_hospital_hr_roles"
+              name="Hospital Roles"
+              parent="menu_hospital_hr_root"
+              action="action_hospital_hr_role"
+              sequence="60"/>
+
+    <menuitem id="menu_hospital_hr_shift_templates"
+              name="Shift Templates"
+              parent="menu_hospital_hr_root"
+              action="action_hospital_hr_shift_template"
+              sequence="70"/>
+
+</odoo>

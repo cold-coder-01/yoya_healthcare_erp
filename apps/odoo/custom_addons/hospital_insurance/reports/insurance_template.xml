@@ -1,0 +1,215 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <template id="report_insurance_claim">
+        <t t-call="web.html_container">
+            <t t-foreach="docs" t-as="doc">
+                <t t-call="web.external_layout">
+                    <div class="page">
+                        <style>
+                            .claim-report-table {
+                                width: 100%;
+                                border-collapse: collapse;
+                                margin-bottom: 12px;
+                            }
+                            .claim-report-table th {
+                                background: #F3F8F6;
+                                color: #333333;
+                                font-weight: 700;
+                                text-align: left;
+                            }
+                            .claim-report-table th,
+                            .claim-report-table td {
+                                border: 1px solid #DDDDDD;
+                                padding: 5px 7px;
+                                font-size: 11px;
+                                vertical-align: top;
+                            }
+                            .claim-info-table td:first-child,
+                            .claim-info-table td:nth-child(3) {
+                                width: 18%;
+                                color: #555555;
+                                font-weight: 700;
+                            }
+                            .claim-section-title {
+                                color: #006A4F;
+                                font-size: 13px;
+                                font-weight: 700;
+                                margin: 14px 0 6px;
+                            }
+                            .claim-summary-table {
+                                width: 340px;
+                                float: right;
+                                border-collapse: collapse;
+                                margin-top: 6px;
+                            }
+                            .claim-summary-table td {
+                                border: 1px solid #DDDDDD;
+                                padding: 4px 7px;
+                                font-size: 11px;
+                            }
+                            .claim-summary-table td:first-child {
+                                color: #555555;
+                                font-weight: 700;
+                                width: 60%;
+                            }
+                            .claim-summary-table td:last-child {
+                                text-align: right;
+                            }
+                            .claim-total-row td {
+                                background: #006A4F;
+                                color: #ffffff;
+                                font-weight: 700;
+                            }
+                            .claim-footer-note {
+                                color: #555555;
+                                font-size: 10px;
+                                margin-top: 24px;
+                                border-top: 1px solid #DDDDDD;
+                                padding-top: 6px;
+                                clear: both;
+                            }
+                            .claim-state-badge {
+                                display: inline-block;
+                                padding: 2px 10px;
+                                border-radius: 10px;
+                                font-size: 10px;
+                                font-weight: 700;
+                                color: #ffffff;
+                                background: #006A4F;
+                            }
+                        </style>
+
+                        <t t-set="report_title" t-value="'Insurance Claim Summary'"/>
+                        <t t-set="report_ref_label" t-value="'Claim Ref'"/>
+                        <t t-set="report_ref" t-value="doc.name"/>
+                        <t t-set="report_date_label" t-value="'Claim Date'"/>
+                        <t t-set="report_date" t-value="doc.claim_date"/>
+                        <t t-call="hospital_management.hospital_report_header"/>
+
+                        <p class="claim-section-title">Claim Information</p>
+                        <table class="claim-report-table claim-info-table">
+                            <tbody>
+                                <tr>
+                                    <td>Patient</td>
+                                    <td><span t-field="doc.patient_id.name"/></td>
+                                    <td>Payer</td>
+                                    <td><span t-field="doc.provider_id.name"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Admission</td>
+                                    <td>
+                                        <t t-if="doc.admission_id">
+                                            <span t-field="doc.admission_id.name"/>
+                                        </t>
+                                        <t t-if="not doc.admission_id">-</t>
+                                    </td>
+                                    <td>Bill Reference</td>
+                                    <td><span t-field="doc.bill_id.name"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Coverage</td>
+                                    <td>
+                                        <t t-if="doc.coverage_id">
+                                            <span t-field="doc.coverage_id.name"/>
+                                        </t>
+                                        <t t-if="not doc.coverage_id">-</t>
+                                    </td>
+                                    <td>Guarantee</td>
+                                    <td>
+                                        <t t-if="doc.guarantee_id">
+                                            <span t-field="doc.guarantee_id.name"/>
+                                        </t>
+                                        <t t-if="not doc.guarantee_id">-</t>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>Claim Date</td>
+                                    <td><span t-field="doc.claim_date"/></td>
+                                    <td>Status</td>
+                                    <td>
+                                        <span class="claim-state-badge">
+                                            <span t-field="doc.state"/>
+                                        </span>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <p class="claim-section-title">Claim Lines</p>
+                        <table class="claim-report-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 4%;">#</th>
+                                    <th style="width: 30%;">Description</th>
+                                    <th style="width: 12%;">Type</th>
+                                    <th style="width: 9%; text-align: right;">Qty</th>
+                                    <th style="width: 12%; text-align: right;">Subtotal</th>
+                                    <th style="width: 9%; text-align: right;">Cov %</th>
+                                    <th style="width: 12%; text-align: right;">Claimed</th>
+                                    <th style="width: 12%; text-align: right;">Approved</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <t t-foreach="doc.line_ids" t-as="line">
+                                    <tr>
+                                        <td><span t-out="line_index + 1"/></td>
+                                        <td><span t-field="line.description"/></td>
+                                        <td><span t-field="line.source_type"/></td>
+                                        <td style="text-align: right;"><span t-field="line.quantity"/></td>
+                                        <td style="text-align: right;"><span t-field="line.subtotal"/></td>
+                                        <td style="text-align: right;"><span t-field="line.coverage_percent"/></td>
+                                        <td style="text-align: right;"><span t-field="line.claimed_amount"/></td>
+                                        <td style="text-align: right;"><span t-field="line.approved_amount"/></td>
+                                    </tr>
+                                </t>
+                                <t t-if="not doc.line_ids">
+                                    <tr>
+                                        <td colspan="8" style="text-align: center; color: #666666; font-style: italic;">No claim lines.</td>
+                                    </tr>
+                                </t>
+                            </tbody>
+                        </table>
+
+                        <table class="claim-summary-table">
+                            <tbody>
+                                <tr>
+                                    <td>Claim Amount</td>
+                                    <td><span t-field="doc.claim_amount"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Approved Amount</td>
+                                    <td><span t-field="doc.approved_amount"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Payer Responsibility</td>
+                                    <td><span t-field="doc.payer_responsibility_amount"/></td>
+                                </tr>
+                                <tr>
+                                    <td>Patient Responsibility</td>
+                                    <td><span t-field="doc.patient_responsibility_amount"/></td>
+                                </tr>
+                                <tr class="claim-total-row">
+                                    <td>Amount Due From Payer</td>
+                                    <td><span t-field="doc.amount_due_from_payer"/></td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <div class="claim-footer-note">
+                            <t t-if="doc.rejection_reason">
+                                <strong>Rejection Reason:</strong>
+                                <span t-field="doc.rejection_reason"/>
+                                <br/>
+                            </t>
+                            <t t-if="doc.notes">
+                                <strong>Notes:</strong> <span t-field="doc.notes"/>
+                                <br/>
+                            </t>
+                            <span>Thank you for choosing YOYA Hospital. Care. Compassion. Excellence.</span>
+                        </div>
+                    </div>
+                </t>
+            </t>
+        </t>
+    </template>
+</odoo>

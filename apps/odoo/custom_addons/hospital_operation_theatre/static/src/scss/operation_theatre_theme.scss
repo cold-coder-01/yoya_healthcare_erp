@@ -1,0 +1,340 @@
+/* ================================================================
+   Hospital Operation Theatre — Surgery Request Form UI Pattern V1
+   Scoped under .hospital_surgery_profile (the form <sheet>).
+   Control-panel elements (smart buttons) are reached with :has()
+   because Odoo 18 renders the ButtonBox outside the form sheet.
+   ================================================================ */
+
+.hospital_surgery_profile {
+    --surgery-primary:      #006A4F;
+    --surgery-primary-dark: #005A43;
+    --surgery-primary-soft: rgba(0, 106, 79, 0.08);
+    --surgery-border:       rgba(0, 106, 79, 0.18);
+    --surgery-border-plain: #dfe7e3;
+    --surgery-card:         #ffffff;
+    --surgery-page:         #f7faf9;
+    --surgery-text:         #1f2933;
+    --surgery-muted:        #6b7280;
+    --surgery-shadow:       0 6px 18px rgba(0, 0, 0, 0.06);
+    --surgery-shadow-sm:    0 2px 6px rgba(31, 41, 51, 0.04);
+    --surgery-radius:       8px;
+}
+
+/* ── Sheet ───────────────────────────────────── */
+
+.hospital_surgery_profile.o_form_sheet,
+.hospital_surgery_profile .o_form_sheet {
+    background-color: var(--surgery-page) !important;
+    border: 1px solid var(--surgery-border-plain) !important;
+    border-radius: 10px !important;
+    box-shadow: var(--surgery-shadow) !important;
+    color: var(--surgery-text);
+    margin-top: 10px !important;
+    max-width: none !important;
+    padding: 18px 22px 24px !important;
+}
+
+/* ── Statusbar (header is prepended INTO the sheet in Odoo 18) ── */
+
+.hospital_surgery_profile .o_form_statusbar,
+.hospital_surgery_profile .o_statusbar_status {
+    background-color: #ffffff !important;
+}
+
+.hospital_surgery_profile .o_statusbar_status .o_arrow_button_current,
+.hospital_surgery_profile .o_statusbar_status .o_arrow_button_current.disabled,
+.hospital_surgery_profile .o_statusbar_status .o_arrow_button_current:disabled {
+    background-color: var(--surgery-primary) !important;
+    border-color: var(--surgery-primary) !important;
+    color: #ffffff !important;
+}
+
+.hospital_surgery_profile .o_statusbar_status .o_arrow_button:not(.o_arrow_button_current) {
+    background-color: #f4f7f6 !important;
+    color: #52616b !important;
+}
+
+/* ── Workflow Buttons (Submit Request, etc.) ───
+   These live in .o_statusbar_buttons inside the in-sheet statusbar. */
+
+.hospital_surgery_profile .o_form_statusbar .btn-primary,
+.hospital_surgery_profile .o_statusbar_buttons .btn-primary {
+    background-color: var(--surgery-primary) !important;
+    border-color: var(--surgery-primary) !important;
+    color: #ffffff !important;
+    font-weight: 600 !important;
+}
+
+.hospital_surgery_profile .o_form_statusbar .btn-primary:hover,
+.hospital_surgery_profile .o_form_statusbar .btn-primary:focus,
+.hospital_surgery_profile .o_statusbar_buttons .btn-primary:hover,
+.hospital_surgery_profile .o_statusbar_buttons .btn-primary:focus {
+    background-color: var(--surgery-primary-dark) !important;
+    border-color: var(--surgery-primary-dark) !important;
+}
+
+/* Secondary workflow buttons (Cancel / Reset) get an emerald outline */
+.hospital_surgery_profile .o_statusbar_buttons .btn-secondary {
+    background-color: #ffffff !important;
+    border-color: var(--surgery-border) !important;
+    color: var(--surgery-primary) !important;
+    font-weight: 600 !important;
+}
+
+.hospital_surgery_profile .o_statusbar_buttons .btn-secondary:hover,
+.hospital_surgery_profile .o_statusbar_buttons .btn-secondary:focus {
+    background-color: var(--surgery-primary-soft) !important;
+    border-color: var(--surgery-primary) !important;
+    color: var(--surgery-primary-dark) !important;
+}
+
+/* ── Smart / Stat Buttons ────────────────────────
+   Odoo 18 hoists the ButtonBox to the control panel, outside the
+   sheet. We reach it by matching the form container that CONTAINS
+   our profiled sheet, then styling the button box inside it.
+   Outline emerald by default; light-emerald fill on hover only. */
+
+.o_form_view_container:has(.hospital_surgery_profile) {
+
+    .o-form-buttonbox .oe_stat_button,
+    .o-form-buttonbox .o_button_more {
+        background-color: #ffffff !important;
+        border: 1px solid var(--surgery-border, rgba(0, 106, 79, 0.18)) !important;
+        border-radius: 8px !important;
+        box-shadow: 0 2px 6px rgba(31, 41, 51, 0.04) !important;
+        color: #006A4F !important;
+        transition: background-color 0.15s ease, border-color 0.15s ease,
+            box-shadow 0.15s ease !important;
+    }
+
+    .o-form-buttonbox .oe_stat_button:hover,
+    .o-form-buttonbox .oe_stat_button:focus,
+    .o-form-buttonbox .o_button_more:hover,
+    .o-form-buttonbox .o_button_more:focus {
+        background-color: rgba(0, 106, 79, 0.08) !important;
+        border-color: #006A4F !important;
+        box-shadow: 0 3px 10px rgba(0, 106, 79, 0.12) !important;
+    }
+
+    .o-form-buttonbox .oe_stat_button .o_button_icon,
+    .o-form-buttonbox .oe_stat_button .fa,
+    .o-form-buttonbox .oe_stat_button .o_stat_text,
+    .o-form-buttonbox .oe_stat_button .o_stat_value,
+    .o-form-buttonbox .oe_stat_button .o_stat_info,
+    .o-form-buttonbox .o_button_more {
+        color: #006A4F !important;
+    }
+
+    .o-form-buttonbox .oe_stat_button .o_stat_text {
+        font-weight: 600 !important;
+    }
+}
+
+/* ── Title ───────────────────────────────────── */
+
+.hospital_surgery_profile .oe_title h1 .o_field_widget,
+.hospital_surgery_profile .oe_title h1 span {
+    color: var(--surgery-text) !important;
+    font-weight: 700 !important;
+}
+
+/* ── 2x2 Info Card Grid ──────────────────────── */
+
+.hospital_surgery_profile .surgery_info_grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    margin: 6px 0 14px;
+}
+
+.hospital_surgery_profile .surgery_info_card {
+    background-color: var(--surgery-card);
+    border: 1px solid var(--surgery-border-plain);
+    border-radius: var(--surgery-radius);
+    box-shadow: var(--surgery-shadow-sm);
+    min-width: 0;
+    padding: 12px 16px 14px;
+}
+
+.hospital_surgery_profile .surgery_card_title {
+    align-items: center;
+    border-bottom: 1px solid var(--surgery-border-plain);
+    color: var(--surgery-primary);
+    display: flex;
+    font-size: 11.5px;
+    font-weight: 700;
+    gap: 8px;
+    letter-spacing: 0.05em;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    text-transform: uppercase;
+}
+
+/* Circular emerald icon chip (replaces the old number badge) */
+.hospital_surgery_profile .surgery_card_icon {
+    align-items: center;
+    background-color: var(--surgery-primary-soft);
+    border-radius: 50%;
+    color: var(--surgery-primary);
+    display: inline-flex;
+    flex: 0 0 26px;
+    height: 26px;
+    justify-content: center;
+    width: 26px;
+}
+
+.hospital_surgery_profile .surgery_card_icon .fa {
+    color: var(--surgery-primary);
+    font-size: 13px;
+}
+
+/* ── Section blocks (Surgery Information tab) ──── */
+
+.hospital_surgery_profile .surgery_section_grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    margin-bottom: 12px;
+}
+
+.hospital_surgery_profile .surgery_section_block {
+    background-color: var(--surgery-card);
+    border: 1px solid var(--surgery-border-plain);
+    border-radius: var(--surgery-radius);
+    box-shadow: var(--surgery-shadow-sm);
+    min-width: 0;
+    padding: 12px 16px 14px;
+}
+
+.hospital_surgery_profile .surgery_clinical_block {
+    margin-bottom: 4px;
+}
+
+.hospital_surgery_profile .surgery_section_title {
+    align-items: center;
+    border-bottom: 1px solid var(--surgery-border-plain);
+    color: var(--surgery-primary);
+    display: flex;
+    font-size: 11.5px;
+    font-weight: 700;
+    gap: 8px;
+    letter-spacing: 0.05em;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    text-transform: uppercase;
+}
+
+.hospital_surgery_profile .surgery_section_title .fa {
+    color: var(--surgery-primary);
+    font-size: 13px;
+}
+
+/* ── Compact groups inside cards ─────────────── */
+
+.hospital_surgery_profile .surgery_compact_group .o_inner_group,
+.hospital_surgery_profile .surgery_compact_group {
+    margin-bottom: 0 !important;
+}
+
+.hospital_surgery_profile .surgery_compact_group .o_inner_group > tbody > tr > td {
+    padding-bottom: 5px !important;
+    padding-top: 5px !important;
+}
+
+.hospital_surgery_profile .surgery_compact_group .o_td_label label {
+    color: var(--surgery-text) !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    white-space: nowrap;
+}
+
+.hospital_surgery_profile .surgery_compact_group .o_field_widget {
+    font-size: 13px;
+}
+
+.hospital_surgery_profile .surgery_compact_group .badge {
+    font-size: 12px !important;
+    padding: 3px 10px !important;
+}
+
+/* Emphasised total cost */
+.hospital_surgery_profile .surgery_total_cost .o_field_widget {
+    color: var(--surgery-primary) !important;
+    font-weight: 700 !important;
+}
+
+/* ── Notebook / Tabs ─────────────────────────── */
+
+.hospital_surgery_profile .o_notebook .nav-tabs .nav-link {
+    color: var(--surgery-muted) !important;
+    font-weight: 500 !important;
+}
+
+.hospital_surgery_profile .o_notebook .nav-tabs .nav-link:hover,
+.hospital_surgery_profile .o_notebook .nav-tabs .nav-link:focus {
+    background-color: #e6f2ef !important;
+    border-color: #b8d8cf #b8d8cf #dee2e6 !important;
+    color: var(--surgery-primary) !important;
+}
+
+.hospital_surgery_profile .o_notebook .nav-tabs .nav-link.active {
+    border-top: 2px solid var(--surgery-primary) !important;
+    color: var(--surgery-primary) !important;
+    font-weight: 700 !important;
+}
+
+.hospital_surgery_profile .o_notebook .tab-content {
+    background-color: var(--surgery-card);
+    border: 1px solid var(--surgery-border-plain);
+    border-radius: 0 0 var(--surgery-radius) var(--surgery-radius);
+    border-top: 0;
+    padding: 14px 16px;
+}
+
+/* Tab icons — Odoo renders the page `name` onto the nav-link, so we
+   prepend a FontAwesome glyph per tab via ::before. */
+.hospital_surgery_profile .o_notebook .nav-tabs .nav-link::before {
+    font-family: "FontAwesome";
+    font-weight: normal;
+    margin-right: 7px;
+    opacity: 0.95;
+}
+
+.hospital_surgery_profile .o_notebook .nav-tabs .nav-link[name="info"]::before            { content: "\f0f1"; } /* stethoscope */
+.hospital_surgery_profile .o_notebook .nav-tabs .nav-link[name="team"]::before            { content: "\f0c0"; } /* users */
+.hospital_surgery_profile .o_notebook .nav-tabs .nav-link[name="preop"]::before           { content: "\f046"; } /* check-square-o */
+.hospital_surgery_profile .o_notebook .nav-tabs .nav-link[name="anesthesia"]::before       { content: "\f0fa"; } /* medkit */
+.hospital_surgery_profile .o_notebook .nav-tabs .nav-link[name="operation_report"]::before { content: "\f0f6"; } /* file-text-o */
+.hospital_surgery_profile .o_notebook .nav-tabs .nav-link[name="postop"]::before          { content: "\f24a"; } /* sticky-note-o */
+.hospital_surgery_profile .o_notebook .nav-tabs .nav-link[name="inventory"]::before        { content: "\f1b3"; } /* cubes */
+.hospital_surgery_profile .o_notebook .nav-tabs .nav-link[name="billing"]::before          { content: "\f0d6"; } /* money */
+.hospital_surgery_profile .o_notebook .nav-tabs .nav-link[name="notes"]::before            { content: "\f044"; } /* pencil-square-o */
+
+/* ── List headers inside tabs ────────────────── */
+
+.hospital_surgery_profile .o_list_renderer thead th {
+    background-color: #f3f8f6 !important;
+    color: var(--surgery-text) !important;
+    font-size: 12px !important;
+    font-weight: 700 !important;
+}
+
+.hospital_surgery_profile .o_list_renderer tbody td {
+    font-size: 12.5px;
+}
+
+/* ── Responsive ──────────────────────────────── */
+
+@media (max-width: 991.98px) {
+    .hospital_surgery_profile .surgery_info_grid,
+    .hospital_surgery_profile .surgery_section_grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+@media (max-width: 575.98px) {
+    .hospital_surgery_profile.o_form_sheet,
+    .hospital_surgery_profile .o_form_sheet {
+        padding: 12px !important;
+    }
+}

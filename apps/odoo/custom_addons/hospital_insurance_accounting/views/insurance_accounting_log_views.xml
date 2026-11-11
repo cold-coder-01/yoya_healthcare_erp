@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_insurance_accounting_log_list" model="ir.ui.view">
+        <field name="name">hospital.insurance.accounting.log.list</field>
+        <field name="model">hospital.insurance.accounting.log</field>
+        <field name="arch" type="xml">
+            <list string="Insurance Accounting Logs" create="false">
+                <field name="name"/>
+                <field name="performed_date"/>
+                <field name="action_type"/>
+                <field name="state"
+                       decoration-success="state == 'success'"
+                       decoration-danger="state == 'error'"
+                       widget="badge"/>
+                <field name="claim_id"/>
+                <field name="bill_id"/>
+                <field name="move_id"/>
+                <field name="performed_by"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_insurance_accounting_log_form" model="ir.ui.view">
+        <field name="name">hospital.insurance.accounting.log.form</field>
+        <field name="model">hospital.insurance.accounting.log</field>
+        <field name="arch" type="xml">
+            <form string="Insurance Accounting Log" create="false">
+                <sheet>
+                    <div class="oe_title">
+                        <h1><field name="name" readonly="1"/></h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="action_type"/>
+                            <field name="state"/>
+                            <field name="performed_date"/>
+                            <field name="performed_by"/>
+                        </group>
+                        <group>
+                            <field name="claim_id"/>
+                            <field name="bill_id"/>
+                            <field name="move_id"/>
+                            <field name="company_id"/>
+                        </group>
+                    </group>
+                    <group string="Message">
+                        <field name="message" nolabel="1" readonly="1"/>
+                    </group>
+                    <group string="Raw Payload">
+                        <field name="raw_payload" nolabel="1" readonly="1"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_insurance_accounting_log_search" model="ir.ui.view">
+        <field name="name">hospital.insurance.accounting.log.search</field>
+        <field name="model">hospital.insurance.accounting.log</field>
+        <field name="arch" type="xml">
+            <search string="Insurance Accounting Logs">
+                <field name="name"/>
+                <field name="claim_id"/>
+                <field name="bill_id"/>
+                <field name="move_id"/>
+                <filter name="success" string="Success" domain="[('state','=','success')]"/>
+                <filter name="error" string="Error" domain="[('state','=','error')]"/>
+                <group expand="0" string="Group By">
+                    <filter name="group_action" string="Action Type"
+                            context="{'group_by': 'action_type'}"/>
+                    <filter name="group_state" string="State"
+                            context="{'group_by': 'state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_insurance_accounting_log" model="ir.actions.act_window">
+        <field name="name">Insurance Accounting Logs</field>
+        <field name="res_model">hospital.insurance.accounting.log</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_insurance_accounting_log_search"/>
+    </record>
+</odoo>
