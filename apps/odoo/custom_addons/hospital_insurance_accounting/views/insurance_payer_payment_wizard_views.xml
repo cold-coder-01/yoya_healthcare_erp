@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_insurance_payer_payment_wizard_form" model="ir.ui.view">
+        <field name="name">hospital.insurance.payer.payment.wizard.form</field>
+        <field name="model">hospital.insurance.payer.payment.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Post Payer Payment">
+                <group>
+                    <group string="Claim">
+                        <field name="claim_id" readonly="1"/>
+                        <field name="provider_id" readonly="1"/>
+                        <field name="bill_id" readonly="1"/>
+                        <field name="currency_id" invisible="1"/>
+                    </group>
+                    <group string="Payer Balance">
+                        <field name="approved_amount"/>
+                        <field name="amount_paid_by_payer"/>
+                        <field name="amount_due_from_payer"/>
+                    </group>
+                </group>
+                <group string="Payment">
+                    <group>
+                        <field name="payment_amount"/>
+                        <field name="payment_date"/>
+                        <field name="payment_reference"/>
+                    </group>
+                    <group>
+                        <field name="payment_journal_id"/>
+                        <field name="bank_account_id"/>
+                    </group>
+                </group>
+                <group string="Notes">
+                    <field name="notes" nolabel="1"/>
+                </group>
+                <footer>
+                    <button name="action_post_payer_payment" string="Post Payment"
+                            type="object" class="btn-primary"/>
+                    <button string="Cancel" class="btn-secondary" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+</odoo>

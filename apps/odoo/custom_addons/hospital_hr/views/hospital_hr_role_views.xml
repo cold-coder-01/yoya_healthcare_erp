@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_hospital_hr_role_list" model="ir.ui.view">
+        <field name="name">hospital.hr.role.list</field>
+        <field name="model">hospital.hr.role</field>
+        <field name="arch" type="xml">
+            <list string="Hospital Roles">
+                <field name="sequence" widget="handle"/>
+                <field name="name"/>
+                <field name="code"/>
+                <field name="role_type"/>
+                <field name="clinical_role"/>
+                <field name="requires_license"/>
+                <field name="can_be_scheduled"/>
+                <field name="can_be_on_call"/>
+                <field name="active" column_invisible="1"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_hr_role_form" model="ir.ui.view">
+        <field name="name">hospital.hr.role.form</field>
+        <field name="model">hospital.hr.role</field>
+        <field name="arch" type="xml">
+            <form string="Hospital Role">
+                <sheet>
+                    <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active"/>
+                    <group>
+                        <group string="Basic Information" name="basic_information">
+                            <field name="name"/>
+                            <field name="code"/>
+                            <field name="role_type"/>
+                            <field name="sequence"/>
+                            <field name="active" invisible="1"/>
+                        </group>
+                        <group string="Scheduling / Clinical Rules" name="scheduling_rules">
+                            <field name="clinical_role"/>
+                            <field name="requires_license"/>
+                            <field name="can_be_scheduled"/>
+                            <field name="can_be_on_call"/>
+                        </group>
+                    </group>
+                    <group string="Allowed Departments" name="allowed_departments">
+                        <field name="allowed_department_ids" nolabel="1" widget="many2many_tags"/>
+                    </group>
+                    <group string="Notes" name="notes">
+                        <field name="notes" nolabel="1"
+                               placeholder="Internal notes about this role."/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_hr_role_search" model="ir.ui.view">
+        <field name="name">hospital.hr.role.search</field>
+        <field name="model">hospital.hr.role</field>
+        <field name="arch" type="xml">
+            <search string="Hospital Roles">
+                <field name="name"/>
+                <field name="code"/>
+                <filter name="filter_clinical" string="Clinical Roles"
+                        domain="[('clinical_role', '=', True)]"/>
+                <filter name="filter_requires_license" string="Requires License"
+                        domain="[('requires_license', '=', True)]"/>
+                <filter name="filter_schedulable" string="Can Be Scheduled"
+                        domain="[('can_be_scheduled', '=', True)]"/>
+                <separator/>
+                <filter name="filter_archived" string="Archived"
+                        domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter name="group_role_type" string="Role Type"
+                            domain="[]" context="{'group_by': 'role_type'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+</odoo>

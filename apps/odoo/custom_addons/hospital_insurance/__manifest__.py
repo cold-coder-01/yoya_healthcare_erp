@@ -1,0 +1,30 @@
+{
+    "name": "Hospital Insurance",
+    "summary": "Insurance, corporate credit, and sponsored patient billing foundation "
+    "for Ethiopian Hospital ERP",
+    "version": "18.0.1.0.0",
+    "category": "Healthcare",
+    "author": "Synergy Tech soln",
+    "license": "LGPL-3",
+    "depends": [
+        "hospital_management",
+        "hospital_billing",
+        "hospital_admission",
+        "mail",
+    ],
+    "data": [
+        "security/ir.model.access.csv",
+        "data/insurance_sequence.xml",
+        "views/insurance_provider_views.xml",
+        "views/patient_coverage_views.xml",
+        "views/guarantee_letter_views.xml",
+        "views/insurance_claim_views.xml",
+        "views/bill_insurance_views.xml",
+        "views/patient_insurance_views.xml",
+        "views/insurance_menus.xml",
+        "reports/insurance_template.xml",
+        "reports/insurance_report.xml",
+    ],
+    "application": True,
+    "installable": True,
+}

@@ -1,0 +1,389 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- SURGERY REQUEST — LIST -->
+    <record id="view_hospital_surgery_request_list" model="ir.ui.view">
+        <field name="name">hospital.surgery.request.list</field>
+        <field name="model">hospital.surgery.request</field>
+        <field name="arch" type="xml">
+            <list string="Surgery Requests"
+                decoration-muted="state in ('draft', 'cancelled')"
+                decoration-info="state in ('requested', 'scheduled', 'preop_ready')"
+                decoration-warning="state == 'in_theatre'"
+                decoration-success="state in ('operation_done', 'postop_done', 'completed')">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="surgery_type_id"/>
+                <field name="theatre_id"/>
+                <field name="urgency"/>
+                <field name="surgical_risk"/>
+                <field name="planned_start"/>
+                <field name="state"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- SURGERY REQUEST — CALENDAR (Theatre Schedule) -->
+    <record id="view_hospital_surgery_request_calendar" model="ir.ui.view">
+        <field name="name">hospital.surgery.request.calendar</field>
+        <field name="model">hospital.surgery.request</field>
+        <field name="arch" type="xml">
+            <calendar string="Theatre Schedule" date_start="planned_start" date_stop="planned_end"
+                color="theatre_id" mode="week">
+                <field name="patient_id"/>
+                <field name="surgery_type_id"/>
+                <field name="theatre_id"/>
+                <field name="state"/>
+            </calendar>
+        </field>
+    </record>
+
+    <!-- SURGERY REQUEST — FORM -->
+    <record id="view_hospital_surgery_request_form" model="ir.ui.view">
+        <field name="name">hospital.surgery.request.form</field>
+        <field name="model">hospital.surgery.request</field>
+        <field name="arch" type="xml">
+            <form string="Surgery Request" class="hospital_surgery_profile">
+                <header>
+                    <button name="action_submit_request" string="Submit Request" type="object"
+                        class="btn-primary" invisible="state != 'draft'"/>
+                    <button name="action_schedule" string="Schedule" type="object"
+                        class="btn-primary" invisible="state != 'requested'"/>
+                    <button name="action_mark_preop_ready" string="Mark Pre-op Ready" type="object"
+                        class="btn-primary" invisible="state != 'scheduled'"/>
+                    <button name="action_start_operation" string="Start Operation" type="object"
+                        class="btn-primary" invisible="state != 'preop_ready'"/>
+                    <button name="action_complete_operation" string="Complete Operation" type="object"
+                        class="btn-primary" invisible="state != 'in_theatre'"/>
+                    <button name="action_mark_postop_done" string="Mark Post-op Done" type="object"
+                        class="btn-primary" invisible="state != 'operation_done'"/>
+                    <button name="action_complete_case" string="Complete Case" type="object"
+                        class="btn-primary" invisible="state != 'postop_done'"/>
+                    <button name="action_prepare_inventory_consumption" string="Prepare Inventory Consumption"
+                        type="object"
+                        invisible="state in ('draft', 'cancelled') or inventory_consumption_count &gt; 0"
+                        groups="hospital_management.group_hospital_nurse,hospital_management.group_hospital_pharmacist,hospital_management.group_hospital_doctor,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <button name="action_view_inventory_consumptions" string="View Inventory Consumption"
+                        type="object"
+                        invisible="inventory_consumption_count == 0"
+                        groups="hospital_management.group_hospital_nurse,hospital_management.group_hospital_pharmacist,hospital_management.group_hospital_doctor,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <button name="action_generate_surgery_bill" string="Generate Surgery Bill" type="object"
+                        class="btn-primary"
+                        invisible="bill_id != False or billing_state != 'not_billed' or state not in ('operation_done', 'postop_done', 'completed')"
+                        groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <button name="action_view_patient_bill" string="View Patient Bill" type="object"
+                        invisible="bill_id == False"
+                        groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <button name="action_cancel" string="Cancel" type="object"
+                        invisible="state not in ('draft', 'requested', 'scheduled', 'preop_ready')"/>
+                    <button name="action_reset_to_draft" string="Reset to Draft" type="object"
+                        invisible="state != 'cancelled'"
+                        groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <field name="state" widget="statusbar"
+                        statusbar_visible="draft,requested,scheduled,preop_ready,in_theatre,operation_done,postop_done,completed"/>
+                </header>
+                <sheet class="hospital_surgery_profile">
+                    <field name="active" invisible="1"/>
+                    <field name="bill_id" invisible="1"/>
+                    <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active"/>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_open_preop_checklist" type="object"
+                            class="oe_stat_button" icon="fa-check-square-o">
+                            <div class="o_stat_info">
+                                <span class="o_stat_text">Pre-op</span>
+                                <span class="o_stat_text">Checklist</span>
+                            </div>
+                        </button>
+                        <button name="action_open_anesthesia_note" type="object"
+                            class="oe_stat_button" icon="fa-medkit">
+                            <div class="o_stat_info">
+                                <span class="o_stat_text">Anesthesia</span>
+                                <span class="o_stat_text">Note</span>
+                            </div>
+                        </button>
+                        <button name="action_open_operation_report" type="object"
+                            class="oe_stat_button" icon="fa-file-text-o">
+                            <div class="o_stat_info">
+                                <span class="o_stat_text">Operation</span>
+                                <span class="o_stat_text">Report</span>
+                            </div>
+                        </button>
+                        <button name="action_view_postop_notes" type="object"
+                            class="oe_stat_button" icon="fa-sticky-note-o">
+                            <field name="postop_note_count" widget="statinfo" string="Post-op Notes"/>
+                        </button>
+                        <button name="action_view_inventory_consumptions" type="object"
+                            class="oe_stat_button" icon="fa-cubes">
+                            <field name="inventory_consumption_count" widget="statinfo" string="Consumptions"/>
+                        </button>
+                        <button name="action_view_inventory_movements" type="object"
+                            class="oe_stat_button" icon="fa-exchange">
+                            <field name="inventory_movement_count" widget="statinfo" string="Movements"/>
+                        </button>
+                        <button name="action_view_bill" type="object"
+                            class="oe_stat_button" icon="fa-money"
+                            invisible="bill_id == False">
+                            <field name="bill_count" widget="statinfo" string="Patient Bill"/>
+                        </button>
+                    </div>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1>
+                            <field name="name" readonly="1"/>
+                        </h1>
+                    </div>
+                    <div class="surgery_info_grid">
+                        <div class="surgery_info_card">
+                            <div class="surgery_card_title">
+                                <span class="surgery_card_icon"><i class="fa fa-user-md"/></span>
+                                <span>Patient and Case</span>
+                            </div>
+                            <group class="surgery_compact_group">
+                                <field name="patient_id" readonly="state in ('completed', 'cancelled')" options="{'no_create': True}"/>
+                                <field name="admission_id" domain="[('patient_id', '=', patient_id)]"
+                                    readonly="state in ('completed', 'cancelled')" options="{'no_create': True}"/>
+                                <field name="surgery_type_id" readonly="state in ('completed', 'cancelled')" options="{'no_create': True}"/>
+                                <field name="theatre_id" readonly="state in ('completed', 'cancelled')"/>
+                                <field name="department_id" readonly="state in ('completed', 'cancelled')"/>
+                            </group>
+                        </div>
+                        <div class="surgery_info_card">
+                            <div class="surgery_card_title">
+                                <span class="surgery_card_icon"><i class="fa fa-bolt"/></span>
+                                <span>Request and Urgency</span>
+                            </div>
+                            <group class="surgery_compact_group">
+                                <field name="requested_by" readonly="1"/>
+                                <field name="request_date" readonly="state in ('completed', 'cancelled')"/>
+                                <field name="urgency" readonly="state in ('completed', 'cancelled')"/>
+                                <field name="surgical_risk" readonly="state in ('completed', 'cancelled')"/>
+                            </group>
+                        </div>
+                        <div class="surgery_info_card">
+                            <div class="surgery_card_title">
+                                <span class="surgery_card_icon"><i class="fa fa-tasks"/></span>
+                                <span>Status Summary</span>
+                            </div>
+                            <group class="surgery_compact_group">
+                                <field name="preop_status"/>
+                                <field name="anesthesia_status"/>
+                                <field name="operation_status"/>
+                                <field name="postop_status"/>
+                            </group>
+                        </div>
+                        <div class="surgery_info_card surgery_pricing_card">
+                            <div class="surgery_card_title">
+                                <span class="surgery_card_icon"><i class="fa fa-money"/></span>
+                                <span>Pricing</span>
+                            </div>
+                            <group class="surgery_compact_group">
+                                <field name="default_price"/>
+                                <field name="estimated_material_cost"/>
+                                <field name="actual_material_cost"/>
+                                <field name="total_estimated_cost" class="surgery_total_cost"/>
+                                <field name="currency_id" groups="base.group_multi_currency"/>
+                            </group>
+                        </div>
+                    </div>
+                    <notebook>
+                        <page string="Surgery Information" name="info">
+                            <div class="surgery_section_grid">
+                                <div class="surgery_section_block">
+                                    <div class="surgery_section_title">
+                                        <i class="fa fa-clock-o"/>
+                                        <span>Planned Times</span>
+                                    </div>
+                                    <group class="surgery_compact_group">
+                                        <field name="planned_start" readonly="state in ('completed', 'cancelled')"/>
+                                        <field name="planned_end" readonly="state in ('completed', 'cancelled')"/>
+                                    </group>
+                                </div>
+                                <div class="surgery_section_block">
+                                    <div class="surgery_section_title">
+                                        <i class="fa fa-hourglass-half"/>
+                                        <span>Actual Times</span>
+                                    </div>
+                                    <group class="surgery_compact_group">
+                                        <field name="actual_start" readonly="state in ('completed', 'cancelled')"/>
+                                        <field name="actual_end" readonly="state in ('completed', 'cancelled')"/>
+                                    </group>
+                                </div>
+                            </div>
+                            <div class="surgery_section_block surgery_clinical_block">
+                                <div class="surgery_section_title">
+                                    <i class="fa fa-plus-square-o"/>
+                                    <span>Clinical</span>
+                                </div>
+                                <group class="surgery_compact_group">
+                                    <field name="diagnosis_summary" readonly="state in ('completed', 'cancelled')"
+                                        placeholder="Diagnosis summary..."/>
+                                    <field name="indication_for_surgery" readonly="state in ('completed', 'cancelled')"
+                                        placeholder="Indication for surgery..."/>
+                                </group>
+                            </div>
+                        </page>
+                        <page string="Team" name="team">
+                            <field name="team_member_ids">
+                                <list string="Surgical Team" editable="bottom">
+                                    <field name="role"/>
+                                    <field name="physician_id"/>
+                                    <field name="user_id"/>
+                                    <field name="name"/>
+                                    <field name="notes"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Pre-op" name="preop">
+                            <group>
+                                <field name="preop_checklist_id" readonly="1"/>
+                                <field name="preop_status"/>
+                            </group>
+                            <p class="text-muted">
+                                Use the Pre-op Checklist smart button above to create and complete the checklist.
+                            </p>
+                        </page>
+                        <page string="Anesthesia" name="anesthesia">
+                            <group>
+                                <field name="anesthesia_note_id" readonly="1"/>
+                                <field name="anesthesia_status"/>
+                            </group>
+                            <p class="text-muted">
+                                Use the Anesthesia Note smart button above to document anesthesia.
+                            </p>
+                        </page>
+                        <page string="Operation Report" name="operation_report">
+                            <group>
+                                <field name="operation_report_id" readonly="1"/>
+                                <field name="operation_status"/>
+                            </group>
+                            <p class="text-muted">
+                                Use the Operation Report smart button above to record and finalize the report.
+                            </p>
+                        </page>
+                        <page string="Post-op Notes" name="postop">
+                            <field name="postop_note_ids" readonly="1">
+                                <list string="Post-op Notes">
+                                    <field name="name"/>
+                                    <field name="note_date"/>
+                                    <field name="recorded_by"/>
+                                    <field name="recovery_status"/>
+                                    <field name="pain_score"/>
+                                    <field name="state"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Billing" name="billing">
+                            <div class="alert alert-info" role="alert"
+                                invisible="state in ('operation_done', 'postop_done', 'completed') or bill_id != False">
+                                A surgery bill can be generated once the operation is completed
+                                (Operation Done, Post-op Done or Completed). No bill is created automatically.
+                            </div>
+                            <div class="mb-3 d-flex gap-2">
+                                <button name="action_generate_surgery_bill" string="Generate Surgery Bill"
+                                    type="object" class="btn-primary"
+                                    invisible="bill_id != False or billing_state != 'not_billed' or state not in ('operation_done', 'postop_done', 'completed')"
+                                    groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                                <button name="action_view_patient_bill" string="View Patient Bill"
+                                    type="object" class="btn-secondary" invisible="bill_id == False"/>
+                            </div>
+                            <group>
+                                <group string="Billing Status">
+                                    <field name="billing_state"/>
+                                    <field name="bill_id" readonly="1"/>
+                                    <field name="billable_amount"/>
+                                </group>
+                                <group string="Service &amp; Cost Summary">
+                                    <field name="default_price"/>
+                                    <field name="estimated_material_cost"/>
+                                    <field name="actual_material_cost"/>
+                                    <field name="total_estimated_cost"/>
+                                </group>
+                            </group>
+                            <group string="Inventory Cost Review">
+                                <group>
+                                    <field name="estimated_material_cost"/>
+                                    <field name="actual_material_cost"/>
+                                    <field name="material_cost_difference"/>
+                                </group>
+                                <group>
+                                    <field name="material_cost_reviewed"/>
+                                    <field name="include_material_cost_in_bill"/>
+                                </group>
+                            </group>
+                            <group string="Notes">
+                                <field name="material_cost_review_note" placeholder="Material cost review note..."/>
+                                <field name="billing_note" placeholder="Billing note (added to the generated bill)..."/>
+                            </group>
+                        </page>
+                        <page string="Notes" name="notes">
+                            <field name="notes" nolabel="1" readonly="state in ('completed', 'cancelled')"/>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <!-- SURGERY REQUEST — SEARCH -->
+    <record id="view_hospital_surgery_request_search" model="ir.ui.view">
+        <field name="name">hospital.surgery.request.search</field>
+        <field name="model">hospital.surgery.request</field>
+        <field name="arch" type="xml">
+            <search string="Surgery Requests">
+                <field name="name"/>
+                <field name="patient_id"/>
+                <field name="admission_id"/>
+                <field name="surgery_type_id"/>
+                <field name="theatre_id"/>
+                <filter string="Elective" name="elective" domain="[('urgency', '=', 'elective')]"/>
+                <filter string="Urgent" name="urgent" domain="[('urgency', '=', 'urgent')]"/>
+                <filter string="Emergency" name="emergency" domain="[('urgency', '=', 'emergency')]"/>
+                <separator/>
+                <filter string="Scheduled" name="scheduled" domain="[('state', '=', 'scheduled')]"/>
+                <filter string="In Theatre" name="in_theatre" domain="[('state', '=', 'in_theatre')]"/>
+                <filter string="Completed" name="completed" domain="[('state', '=', 'completed')]"/>
+                <filter string="Cancelled" name="cancelled" domain="[('state', '=', 'cancelled')]"/>
+                <separator/>
+                <filter string="Archived" name="archived" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Patient" name="group_patient" context="{'group_by': 'patient_id'}"/>
+                    <filter string="Theatre" name="group_theatre" context="{'group_by': 'theatre_id'}"/>
+                    <filter string="Surgery Type" name="group_surgery_type" context="{'group_by': 'surgery_type_id'}"/>
+                    <filter string="Planned Date" name="group_planned" context="{'group_by': 'planned_start:day'}"/>
+                    <filter string="State" name="group_state" context="{'group_by': 'state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- ACTIONS -->
+    <record id="action_hospital_surgery_request" model="ir.actions.act_window">
+        <field name="name">Surgery Requests</field>
+        <field name="res_model">hospital.surgery.request</field>
+        <field name="view_mode">list,form,calendar</field>
+        <field name="search_view_id" ref="view_hospital_surgery_request_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                No surgery requests yet.
+            </p>
+            <p>Create a surgery request to open a new operation case.</p>
+        </field>
+    </record>
+
+    <record id="action_hospital_theatre_schedule" model="ir.actions.act_window">
+        <field name="name">Theatre Schedule</field>
+        <field name="res_model">hospital.surgery.request</field>
+        <field name="view_mode">calendar,list,form</field>
+        <field name="search_view_id" ref="view_hospital_surgery_request_search"/>
+        <field name="context">{'search_default_group_theatre': 1}</field>
+        <field name="domain">[('state', 'not in', ('draft', 'cancelled'))]</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Nothing scheduled yet.
+            </p>
+            <p>Scheduled surgeries with a planned start/end appear on this calendar.</p>
+        </field>
+    </record>
+
+</odoo>

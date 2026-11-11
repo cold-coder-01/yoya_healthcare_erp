@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_hospital_hr_attendance_log_list" model="ir.ui.view">
+        <field name="name">hospital.hr.attendance.log.list</field>
+        <field name="model">hospital.hr.attendance.log</field>
+        <field name="arch" type="xml">
+            <list string="Duty Logs"
+                  decoration-info="status == 'open'"
+                  decoration-success="status == 'closed' and not is_late and not early_checkout"
+                  decoration-warning="is_late or early_checkout"
+                  decoration-muted="status == 'cancelled'">
+                <field name="employee_id"/>
+                <field name="check_in"/>
+                <field name="check_out"/>
+                <field name="worked_hours" widget="float_time" optional="show"/>
+                <field name="department_id" optional="show"/>
+                <field name="hospital_role_id" optional="hide"/>
+                <field name="shift_template_id" optional="show"/>
+                <field name="duty_line_id" optional="hide"/>
+                <field name="source" optional="show"/>
+                <field name="is_late" optional="show"/>
+                <field name="late_minutes" optional="hide"/>
+                <field name="early_checkout" optional="show"/>
+                <field name="early_checkout_minutes" optional="hide"/>
+                <field name="status" widget="badge"
+                       decoration-info="status == 'open'"
+                       decoration-success="status == 'closed'"
+                       decoration-warning="status == 'corrected'"
+                       decoration-danger="status == 'cancelled'"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_hr_attendance_log_form" model="ir.ui.view">
+        <field name="name">hospital.hr.attendance.log.form</field>
+        <field name="model">hospital.hr.attendance.log</field>
+        <field name="arch" type="xml">
+            <form string="Duty Log">
+                <sheet>
+                    <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active"/>
+                    <div class="oe_title">
+                        <h1><field name="name" readonly="1" placeholder="Duty Log"/></h1>
+                    </div>
+                    <group>
+                        <group string="Employee / Duty" name="employee_duty">
+                            <field name="employee_id"/>
+                            <field name="duty_line_id"/>
+                            <field name="schedule_id"/>
+                            <field name="department_id"/>
+                            <field name="hospital_role_id"/>
+                            <field name="shift_template_id"/>
+                            <field name="company_id" groups="base.group_multi_company"/>
+                            <field name="active" invisible="1"/>
+                        </group>
+                        <group string="Timing" name="timing">
+                            <field name="check_in"/>
+                            <field name="check_out"/>
+                            <field name="worked_hours" widget="float_time"/>
+                            <field name="source"/>
+                            <field name="status"/>
+                        </group>
+                        <group string="Late / Early Summary" name="late_early">
+                            <field name="is_late"/>
+                            <field name="late_minutes" invisible="not is_late"/>
+                            <field name="early_checkout"/>
+                            <field name="early_checkout_minutes" invisible="not early_checkout"/>
+                        </group>
+                    </group>
+                    <group string="Notes" name="notes">
+                        <field name="notes" nolabel="1"
+                               placeholder="Correction reasons, duty remarks, ..."/>
+                    </group>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_hr_attendance_log_search" model="ir.ui.view">
+        <field name="name">hospital.hr.attendance.log.search</field>
+        <field name="model">hospital.hr.attendance.log</field>
+        <field name="arch" type="xml">
+            <search string="Duty Logs">
+                <field name="employee_id"/>
+                <field name="department_id"/>
+                <field name="hospital_role_id"/>
+                <field name="shift_template_id"/>
+                <filter name="filter_open" string="Open"
+                        domain="[('status', '=', 'open')]"/>
+                <filter name="filter_closed" string="Closed"
+                        domain="[('status', '=', 'closed')]"/>
+                <filter name="filter_cancelled" string="Cancelled"
+                        domain="[('status', '=', 'cancelled')]"/>
+                <separator/>
+                <filter name="filter_late" string="Late"
+                        domain="[('is_late', '=', True)]"/>
+                <filter name="filter_early" string="Early Checkout"
+                        domain="[('early_checkout', '=', True)]"/>
+                <separator/>
+                <filter name="filter_manual" string="Manual"
+                        domain="[('source', '=', 'manual')]"/>
+                <filter name="filter_duty_schedule" string="Duty Schedule"
+                        domain="[('source', '=', 'duty_schedule')]"/>
+                <separator/>
+                <filter name="filter_today" string="Today"
+                        domain="[('check_in', '&gt;=', context_today().strftime('%Y-%m-%d 00:00:00')),
+                                 ('check_in', '&lt;=', context_today().strftime('%Y-%m-%d 23:59:59'))]"/>
+                <filter name="filter_check_in" string="Check-in Date" date="check_in"/>
+                <group expand="0" string="Group By">
+                    <filter name="group_employee" string="Employee"
+                            domain="[]" context="{'group_by': 'employee_id'}"/>
+                    <filter name="group_department" string="Clinical Department"
+                            domain="[]" context="{'group_by': 'department_id'}"/>
+                    <filter name="group_role" string="Hospital Role"
+                            domain="[]" context="{'group_by': 'hospital_role_id'}"/>
+                    <filter name="group_shift" string="Shift"
+                            domain="[]" context="{'group_by': 'shift_template_id'}"/>
+                    <filter name="group_status" string="Status"
+                            domain="[]" context="{'group_by': 'status'}"/>
+                    <filter name="group_source" string="Source"
+                            domain="[]" context="{'group_by': 'source'}"/>
+                    <filter name="group_check_in" string="Check-in Date"
+                            domain="[]" context="{'group_by': 'check_in:day'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="view_hospital_hr_attendance_log_pivot" model="ir.ui.view">
+        <field name="name">hospital.hr.attendance.log.pivot</field>
+        <field name="model">hospital.hr.attendance.log</field>
+        <field name="arch" type="xml">
+            <pivot string="Worked Hours">
+                <field name="employee_id" type="row"/>
+                <field name="check_in" interval="week" type="col"/>
+                <field name="worked_hours" type="measure"/>
+            </pivot>
+        </field>
+    </record>
+
+    <record id="view_hospital_hr_attendance_log_calendar" model="ir.ui.view">
+        <field name="name">hospital.hr.attendance.log.calendar</field>
+        <field name="model">hospital.hr.attendance.log</field>
+        <field name="arch" type="xml">
+            <calendar string="Duty Logs" date_start="check_in" date_stop="check_out"
+                      color="employee_id" mode="week" quick_create="0">
+                <field name="employee_id"/>
+                <field name="shift_template_id"/>
+                <field name="status"/>
+            </calendar>
+        </field>
+    </record>
+
+</odoo>

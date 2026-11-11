@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+
+<templates xml:space="preserve">
+
+    <t
+        t-name="yoya_muk_appsbar_hover.AppsBar"
+        t-inherit="muk_web_appsbar.AppsBar"
+        t-inherit-mode="extension"
+    >
+        <xpath expr="//div[hasclass('mk_apps_sidebar_panel')]" position="attributes">
+            <attribute name="class" add="yoya_appsbar_hover" separator=" "/>
+        </xpath>
+        <xpath expr="//div[hasclass('mk_apps_sidebar_logo')]/img" position="after">
+            <div class="yoya_appsbar_brand_copy">
+                <span class="yoya_appsbar_brand_name">YOYA GENERAL HOSPITAL</span>
+                <span class="yoya_appsbar_brand_subtitle">Healthcare ERP</span>
+            </div>
+        </xpath>
+    </t>
+
+</templates>

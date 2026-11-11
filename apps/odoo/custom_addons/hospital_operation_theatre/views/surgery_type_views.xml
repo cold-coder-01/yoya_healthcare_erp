@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_hospital_surgery_type_list" model="ir.ui.view">
+        <field name="name">hospital.surgery.type.list</field>
+        <field name="model">hospital.surgery.type</field>
+        <field name="arch" type="xml">
+            <list string="Surgery Types">
+                <field name="code"/>
+                <field name="name"/>
+                <field name="surgery_category"/>
+                <field name="expected_duration_hours"/>
+                <field name="default_price"/>
+                <field name="requires_anesthesia"/>
+                <field name="requires_consent"/>
+                <field name="active" column_invisible="1"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_surgery_type_form" model="ir.ui.view">
+        <field name="name">hospital.surgery.type.form</field>
+        <field name="model">hospital.surgery.type</field>
+        <field name="arch" type="xml">
+            <form string="Surgery Type">
+                <sheet>
+                    <field name="active" invisible="1"/>
+                    <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active"/>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1>
+                            <field name="name" placeholder="e.g. Wound Debridement"/>
+                        </h1>
+                    </div>
+                    <group>
+                        <group string="Classification">
+                            <field name="code"/>
+                            <field name="surgery_category"/>
+                            <field name="expected_duration_hours"/>
+                        </group>
+                        <group string="Pricing">
+                            <field name="default_price"/>
+                            <field name="currency_id" groups="base.group_multi_currency"/>
+                        </group>
+                    </group>
+                    <group string="Requirements">
+                        <group>
+                            <field name="requires_anesthesia"/>
+                            <field name="requires_blood_preparation"/>
+                            <field name="requires_consent"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Default Materials" name="materials">
+                            <field name="material_line_ids">
+                                <list string="Default Materials" editable="bottom">
+                                    <field name="item_id"/>
+                                    <field name="default_quantity"/>
+                                    <field name="notes"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Notes" name="notes">
+                            <field name="notes" nolabel="1"/>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_surgery_type_search" model="ir.ui.view">
+        <field name="name">hospital.surgery.type.search</field>
+        <field name="model">hospital.surgery.type</field>
+        <field name="arch" type="xml">
+            <search string="Surgery Types">
+                <field name="name"/>
+                <field name="code"/>
+                <filter string="Requires Anesthesia" name="anesthesia" domain="[('requires_anesthesia', '=', True)]"/>
+                <filter string="Archived" name="archived" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Category" name="group_category" context="{'group_by': 'surgery_category'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_surgery_type" model="ir.actions.act_window">
+        <field name="name">Surgery Types</field>
+        <field name="res_model">hospital.surgery.type</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_surgery_type_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                No surgery types yet.
+            </p>
+            <p>Build a catalog of surgeries with their default material requirements.</p>
+        </field>
+    </record>
+
+</odoo>

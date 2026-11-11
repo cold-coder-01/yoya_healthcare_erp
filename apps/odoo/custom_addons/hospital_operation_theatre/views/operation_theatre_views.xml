@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_hospital_operation_theatre_list" model="ir.ui.view">
+        <field name="name">hospital.operation.theatre.list</field>
+        <field name="model">hospital.operation.theatre</field>
+        <field name="arch" type="xml">
+            <list string="Operation Theatres">
+                <field name="code"/>
+                <field name="name"/>
+                <field name="theatre_type"/>
+                <field name="department_id"/>
+                <field name="location_id"/>
+                <field name="responsible_user_id"/>
+                <field name="active" column_invisible="1"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_operation_theatre_form" model="ir.ui.view">
+        <field name="name">hospital.operation.theatre.form</field>
+        <field name="model">hospital.operation.theatre</field>
+        <field name="arch" type="xml">
+            <form string="Operation Theatre">
+                <sheet>
+                    <field name="active" invisible="1"/>
+                    <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active"/>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1>
+                            <field name="name" placeholder="e.g. Main Operating Room"/>
+                        </h1>
+                    </div>
+                    <group>
+                        <group string="Identification">
+                            <field name="code" placeholder="e.g. OR-01"/>
+                            <field name="theatre_type"/>
+                            <field name="department_id"/>
+                        </group>
+                        <group string="Inventory &amp; Responsibility">
+                            <field name="location_id"/>
+                            <field name="responsible_user_id"/>
+                        </group>
+                    </group>
+                    <group string="Capacity / Setup">
+                        <field name="capacity_note" nolabel="1" placeholder="Capacity, equipment and setup notes..."/>
+                    </group>
+                    <group string="Notes">
+                        <field name="notes" nolabel="1"/>
+                    </group>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_operation_theatre_search" model="ir.ui.view">
+        <field name="name">hospital.operation.theatre.search</field>
+        <field name="model">hospital.operation.theatre</field>
+        <field name="arch" type="xml">
+            <search string="Operation Theatres">
+                <field name="name"/>
+                <field name="code"/>
+                <field name="department_id"/>
+                <field name="location_id"/>
+                <filter string="Archived" name="archived" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Theatre Type" name="group_type" context="{'group_by': 'theatre_type'}"/>
+                    <filter string="Department" name="group_department" context="{'group_by': 'department_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_operation_theatre" model="ir.actions.act_window">
+        <field name="name">Operation Theatres</field>
+        <field name="res_model">hospital.operation.theatre</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_operation_theatre_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                No operation theatres yet.
+            </p>
+            <p>Define your operating rooms and link each to its theatre store location.</p>
+        </field>
+    </record>
+
+</odoo>

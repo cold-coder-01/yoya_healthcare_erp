@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="action_hospital_dashboard" model="ir.actions.client">
+        <field name="name">Hospital Dashboard</field>
+        <field name="tag">hospital_dashboard.dashboard</field>
+    </record>
+
+    <menuitem id="menu_hospital_dashboard_root"
+              name="Dashboards"
+              sequence="1"
+              web_icon="hospital_dashboard,static/description/icon.png"
+              groups="hospital_management.group_hospital_receptionist,hospital_management.group_hospital_doctor,hospital_management.group_hospital_nurse,hospital_management.group_hospital_pharmacist,hospital_management.group_hospital_lab_technician,hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+
+    <menuitem id="menu_hospital_dashboard"
+              name="Hospital Dashboard"
+              parent="menu_hospital_dashboard_root"
+              action="action_hospital_dashboard"
+              sequence="10"/>
+
+</odoo>

@@ -1,0 +1,513 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+
+<t t-name="hospital_dashboard.Dashboard">
+    <div class="o_hospital_dashboard">
+        <div class="o_hd_scroll">
+
+            <div t-if="state.loading" class="o_hd_loading">
+                <i class="fa fa-circle-o-notch fa-spin me-2"/> Loading hospital dashboard…
+            </div>
+
+            <div t-elif="state.failed" class="o_hd_loading">
+                <i class="fa fa-exclamation-triangle me-2 text-danger"/>
+                The dashboard could not be loaded.
+                <button class="btn btn-sm btn-primary ms-2" t-on-click="loadData">Retry</button>
+            </div>
+
+            <t t-elif="state.data">
+                <t t-set="d" t-value="state.data"/>
+
+                <!-- ════════════ 1. Hero header ════════════ -->
+                <div class="o_hd_hero">
+                    <div class="o_hd_hero_left">
+                        <div class="o_hd_hero_icon"><i class="fa fa-th-large"/></div>
+                        <div>
+                            <h1 class="o_hd_title">Hospital Dashboard</h1>
+                            <div class="o_hd_subtitle">Operational overview and real-time hospital activity.</div>
+                            <div class="o_hd_hero_meta" t-if="d.meta">
+                                <span class="o_hd_live_chip"><span class="o_hd_live_dot"/> Live</span>
+                                <span class="o_hd_hero_date" t-esc="d.meta.date_label"/>
+                                <span class="o_hd_hero_sep">|</span>
+                                <span class="o_hd_hero_date" t-esc="d.meta.time_label"/>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="o_hd_hero_right" t-if="d.meta">
+                        <div class="o_hd_filter">
+                            <label>Date Range</label>
+                            <select class="o_hd_select" t-on-change="onRangeChange">
+                                <option value="today" t-att-selected="state.range === 'today' ? 'selected' : undefined">Today</option>
+                                <option value="7d" t-att-selected="state.range === '7d' ? 'selected' : undefined">Last 7 Days</option>
+                                <option value="30d" t-att-selected="state.range === '30d' ? 'selected' : undefined">Last 30 Days</option>
+                                <option value="month" t-att-selected="state.range === 'month' ? 'selected' : undefined">This Month</option>
+                            </select>
+                        </div>
+                        <div class="o_hd_filter">
+                            <label>Department</label>
+                            <select class="o_hd_select" t-on-change="onDepartmentChange">
+                                <option value="">All Departments</option>
+                                <t t-foreach="d.meta.departments" t-as="dept" t-key="dept.id">
+                                    <option t-att-value="dept.id"
+                                            t-att-selected="state.departmentId === dept.id ? 'selected' : undefined"
+                                            t-esc="dept.name"/>
+                                </t>
+                            </select>
+                        </div>
+                        <div class="o_hd_filter">
+                            <label>Branch</label>
+                            <select class="o_hd_select">
+                                <t t-foreach="d.meta.branches" t-as="branch" t-key="branch_index">
+                                    <option t-esc="branch"/>
+                                </t>
+                            </select>
+                        </div>
+                        <button class="o_hd_refresh" t-on-click="loadData">
+                            <i class="fa fa-refresh me-1"/> Refresh
+                        </button>
+                    </div>
+                </div>
+
+                <!-- ════════════ 2. KPI row ════════════ -->
+                <div class="o_hd_kpis" t-if="d.kpis">
+                    <t t-foreach="d.kpis" t-as="kpi" t-key="kpi.key">
+                        <div class="o_hd_kpi" t-att-class="kpi.action ? 'o_hd_clickable' : ''"
+                             t-on-click="() => this.openAction(kpi.action)">
+                            <div t-attf-class="o_hd_kpi_icon o_hd_tint_{{ kpi.color }}">
+                                <i t-attf-class="fa {{ kpi.icon }}"/>
+                            </div>
+                            <div class="o_hd_kpi_body">
+                                <div class="o_hd_kpi_label" t-esc="kpi.label"/>
+                                <div class="o_hd_kpi_value" t-esc="kpi.value_fmt"/>
+                                <div t-attf-class="o_hd_trend {{ trendClass(kpi.trend) }}">
+                                    <i t-attf-class="fa {{ trendIcon(kpi.trend) }}"/>
+                                    <span t-esc="trendText(kpi.trend)"/>
+                                    <span class="o_hd_trend_vs">vs previous</span>
+                                </div>
+                            </div>
+                        </div>
+                    </t>
+                </div>
+
+                <!-- ════════════ 3-6. Analytics panels ════════════ -->
+                <div class="o_hd_panels">
+
+                    <!-- Patient Flow Trend -->
+                    <div class="o_hd_card o_hd_panel_flow" t-if="flow">
+                        <div class="o_hd_card_head">
+                            <h3>Patient Flow Trend</h3>
+                            <div class="o_hd_legend">
+                                <span class="o_hd_legend_item"><span class="o_hd_dot" style="background:#047857"/>Outpatients</span>
+                                <span class="o_hd_legend_item"><span class="o_hd_dot" style="background:#1D4ED8"/>Inpatients</span>
+                            </div>
+                        </div>
+                        <svg class="o_hd_flow_svg" t-attf-viewBox="0 0 {{ flowGeom.w }} {{ flowGeom.h }}" preserveAspectRatio="none">
+                            <defs>
+                                <linearGradient id="hdFlowFill" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="0%" stop-color="#047857" stop-opacity="0.18"/>
+                                    <stop offset="100%" stop-color="#047857" stop-opacity="0.02"/>
+                                </linearGradient>
+                            </defs>
+                            <t t-foreach="flowGrid" t-as="g" t-key="g_index">
+                                <line t-att-x1="flowGeom.padL" t-att-x2="flowGeom.w - flowGeom.padR"
+                                      t-att-y1="g.y" t-att-y2="g.y" class="o_hd_gridline"/>
+                                <text t-att-x="flowGeom.padL - 6" t-att-y="g.y + 3" class="o_hd_axis_label"
+                                      text-anchor="end" t-esc="g.label"/>
+                            </t>
+                            <path t-att-d="flowAreaPath(flow.outpatients)" fill="url(#hdFlowFill)" stroke="none"/>
+                            <polyline t-att-points="flowPoints(flow.outpatients)" fill="none"
+                                      stroke="#047857" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+                            <polyline t-att-points="flowPoints(flow.inpatients)" fill="none"
+                                      stroke="#1D4ED8" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+                            <t t-foreach="flowDots(flow.outpatients, 'Outpatients')" t-as="dot" t-key="dot_index">
+                                <circle t-att-cx="dot.x" t-att-cy="dot.y" r="3.2" fill="#047857" stroke="#ffffff" stroke-width="1.5">
+                                    <title t-esc="dot.label"/>
+                                </circle>
+                            </t>
+                            <t t-foreach="flowDots(flow.inpatients, 'Inpatients')" t-as="dot" t-key="dot_index">
+                                <circle t-att-cx="dot.x" t-att-cy="dot.y" r="3.2" fill="#1D4ED8" stroke="#ffffff" stroke-width="1.5">
+                                    <title t-esc="dot.label"/>
+                                </circle>
+                            </t>
+                            <t t-foreach="flowXLabels" t-as="xl" t-key="xl_index">
+                                <text t-att-x="xl.x" t-att-y="flowGeom.h - 8" class="o_hd_axis_label"
+                                      text-anchor="middle" t-esc="xl.label"/>
+                            </t>
+                        </svg>
+                        <div class="o_hd_panel_stats">
+                            <div class="o_hd_stat">
+                                <span class="o_hd_stat_label"><span class="o_hd_dot" style="background:#047857"/>Outpatients</span>
+                                <span class="o_hd_stat_value" t-esc="flow.totals.outpatients"/>
+                            </div>
+                            <div class="o_hd_stat">
+                                <span class="o_hd_stat_label"><span class="o_hd_dot" style="background:#1D4ED8"/>Inpatients</span>
+                                <span class="o_hd_stat_value" t-esc="flow.totals.inpatients"/>
+                            </div>
+                            <div class="o_hd_stat">
+                                <span class="o_hd_stat_label">Total</span>
+                                <span class="o_hd_stat_value" t-esc="flow.totals.total"/>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Billing & Collection Summary -->
+                    <div class="o_hd_card" t-if="d.billing and d.billing.available">
+                        <div class="o_hd_card_head"><h3>Billing &amp; Collection Summary</h3></div>
+                        <div class="o_hd_donut_wrap o_hd_clickable" t-on-click="() => this.openAction(d.billing.action)">
+                            <svg viewBox="0 0 200 200" class="o_hd_donut">
+                                <circle cx="100" cy="100" r="70" fill="none" stroke="#EEF2F1" stroke-width="26"/>
+                                <g transform="rotate(-90 100 100)">
+                                    <t t-foreach="donutArcs(d.billing.segments)" t-as="arc" t-key="arc_index">
+                                        <circle cx="100" cy="100" r="70" fill="none"
+                                                t-att-stroke="arc.color" stroke-width="26"
+                                                t-att-stroke-dasharray="arc.dasharray"
+                                                t-att-stroke-dashoffset="arc.dashoffset">
+                                            <title t-esc="arc.tooltip"/>
+                                        </circle>
+                                    </t>
+                                </g>
+                                <text x="100" y="95" text-anchor="middle" class="o_hd_donut_big" t-esc="d.billing.billed_fmt"/>
+                                <text x="100" y="114" text-anchor="middle" class="o_hd_donut_small">Total Billed</text>
+                            </svg>
+                            <div class="o_hd_donut_legend">
+                                <t t-foreach="d.billing.segments" t-as="seg" t-key="seg_index">
+                                    <div class="o_hd_legend_row">
+                                        <span class="o_hd_dot" t-attf-style="background:{{ seg.color }}"/>
+                                        <div>
+                                            <div class="o_hd_legend_label" t-esc="seg.label"/>
+                                            <div class="o_hd_legend_value">
+                                                <t t-esc="seg.value_fmt"/> (<t t-esc="seg.pct"/>%)
+                                            </div>
+                                        </div>
+                                    </div>
+                                </t>
+                            </div>
+                        </div>
+                        <div class="o_hd_panel_stats">
+                            <div class="o_hd_stat">
+                                <span class="o_hd_stat_label">Collection Rate</span>
+                                <span class="o_hd_stat_value"><t t-esc="d.billing.collection_rate"/>%</span>
+                            </div>
+                            <div class="o_hd_stat">
+                                <span class="o_hd_stat_label">vs previous</span>
+                                <span t-attf-class="o_hd_stat_value o_hd_trend {{ trendClass(d.billing.rate_delta) }}">
+                                    <i t-attf-class="fa {{ trendIcon(d.billing.rate_delta) }} me-1"/>
+                                    <t t-esc="trendText(d.billing.rate_delta)"/>
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="o_hd_card o_hd_card_empty" t-else="">
+                        <div class="o_hd_card_head"><h3>Billing &amp; Collection Summary</h3></div>
+                        <div class="o_hd_empty">Billing module not available.</div>
+                    </div>
+
+                    <!-- Department Load -->
+                    <div class="o_hd_card" t-if="d.department_load">
+                        <div class="o_hd_card_head"><h3>Department Load</h3></div>
+                        <div class="o_hd_load_rows" t-if="d.department_load.rows.length">
+                            <t t-foreach="d.department_load.rows" t-as="row" t-key="row_index">
+                                <div t-attf-class="o_hd_load_row {{ row.highlight ? 'o_hd_load_highlight' : '' }}">
+                                    <span class="o_hd_load_name" t-esc="row.name"/>
+                                    <div class="o_hd_load_bar">
+                                        <div class="o_hd_load_fill"
+                                             t-attf-style="width:{{ row.pct }}%; background:{{ row.color }}"/>
+                                    </div>
+                                    <span class="o_hd_load_pct"><t t-esc="row.pct"/>%</span>
+                                </div>
+                            </t>
+                        </div>
+                        <div class="o_hd_empty" t-else="">No activity recorded in this period.</div>
+                        <div class="o_hd_panel_note" t-esc="d.department_load.note"/>
+                    </div>
+
+                    <!-- Bed Occupancy -->
+                    <div class="o_hd_card" t-if="d.beds and d.beds.available">
+                        <div class="o_hd_card_head"><h3>Bed Occupancy / Admission Status</h3></div>
+                        <div class="o_hd_donut_wrap o_hd_clickable" t-on-click="() => this.openAction(d.beds.action)">
+                            <svg viewBox="0 0 200 200" class="o_hd_donut">
+                                <circle cx="100" cy="100" r="70" fill="none" stroke="#EEF2F1" stroke-width="26"/>
+                                <g transform="rotate(-90 100 100)">
+                                    <t t-foreach="donutArcs(d.beds.segments)" t-as="arc" t-key="arc_index">
+                                        <circle cx="100" cy="100" r="70" fill="none"
+                                                t-att-stroke="arc.color" stroke-width="26"
+                                                t-att-stroke-dasharray="arc.dasharray"
+                                                t-att-stroke-dashoffset="arc.dashoffset">
+                                            <title t-esc="arc.tooltip"/>
+                                        </circle>
+                                    </t>
+                                </g>
+                                <text x="100" y="95" text-anchor="middle" class="o_hd_donut_big"><t t-esc="d.beds.rate"/>%</text>
+                                <text x="100" y="114" text-anchor="middle" class="o_hd_donut_small">Occupied</text>
+                            </svg>
+                            <div class="o_hd_donut_legend">
+                                <t t-foreach="d.beds.segments" t-as="seg" t-key="seg_index">
+                                    <div class="o_hd_legend_row">
+                                        <span class="o_hd_dot" t-attf-style="background:{{ seg.color }}"/>
+                                        <div>
+                                            <div class="o_hd_legend_label" t-esc="seg.label"/>
+                                            <div class="o_hd_legend_value" t-esc="seg.value"/>
+                                        </div>
+                                    </div>
+                                </t>
+                            </div>
+                        </div>
+                        <div class="o_hd_panel_stats">
+                            <div class="o_hd_stat">
+                                <span class="o_hd_stat_label">Total Beds</span>
+                                <span class="o_hd_stat_value" t-esc="d.beds.total"/>
+                            </div>
+                            <div class="o_hd_stat">
+                                <span class="o_hd_stat_label">Occupancy Rate</span>
+                                <span class="o_hd_stat_value"><t t-esc="d.beds.rate"/>%</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="o_hd_card o_hd_card_empty" t-else="">
+                        <div class="o_hd_card_head"><h3>Bed Occupancy / Admission Status</h3></div>
+                        <div class="o_hd_empty">Admission / bed data not available.</div>
+                    </div>
+                </div>
+
+                <!-- ════════════ Body: main column + alerts sidebar ════════════ -->
+                <div class="o_hd_body">
+                    <div class="o_hd_main">
+
+                        <!-- 7. Clinical Operations -->
+                        <div class="o_hd_section_head">
+                            <h2><i class="fa fa-stethoscope me-2"/>Clinical Operations</h2>
+                        </div>
+                        <div class="o_hd_clinical" t-if="d.clinical and d.clinical.length">
+                            <t t-foreach="d.clinical" t-as="card" t-key="card.key">
+                                <div class="o_hd_card o_hd_clinical_card o_hd_clickable"
+                                     t-on-click="() => this.openAction(card.action)">
+                                    <div class="o_hd_clinical_top">
+                                        <div class="o_hd_clinical_icon"
+                                             t-attf-style="background:{{ card.color }}18; color:{{ card.color }}">
+                                            <i t-attf-class="fa {{ card.icon }}"/>
+                                        </div>
+                                        <div>
+                                            <div class="o_hd_clinical_label" t-esc="card.label"/>
+                                            <div class="o_hd_clinical_value">
+                                                <span t-esc="card.count"/>
+                                                <span class="o_hd_clinical_unit" t-esc="card.unit"/>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="o_hd_clinical_bottom">
+                                        <svg viewBox="0 0 110 30" class="o_hd_spark">
+                                            <polyline t-att-points="sparkPoints(card.spark)" fill="none"
+                                                      t-att-stroke="card.color" stroke-width="2"
+                                                      stroke-linejoin="round" stroke-linecap="round"/>
+                                        </svg>
+                                        <span t-attf-class="o_hd_trend o_hd_trend_badge {{ trendClass(card.trend) }}">
+                                            <i t-attf-class="fa {{ trendIcon(card.trend) }}"/>
+                                            <t t-esc="trendText(card.trend)"/>
+                                        </span>
+                                    </div>
+                                </div>
+                            </t>
+                        </div>
+                        <div class="o_hd_card o_hd_empty" t-else="">No clinical modules installed.</div>
+
+                        <!-- 9. Financial & Administrative Overview -->
+                        <div class="o_hd_section_head">
+                            <h2><i class="fa fa-briefcase me-2"/>Financial &amp; Administrative Overview</h2>
+                        </div>
+                        <div class="o_hd_finance" t-if="d.finance">
+
+                            <div class="o_hd_card o_hd_fin_card" t-if="d.finance.insurance.available">
+                                <div class="o_hd_fin_head">
+                                    <span class="o_hd_fin_icon o_hd_tint_green"><i class="fa fa-shield"/></span>
+                                    <h4>Insurance Claims</h4>
+                                </div>
+                                <div class="o_hd_fin_rows">
+                                    <div class="o_hd_fin_row"><span>Submitted</span><b t-esc="d.finance.insurance.submitted"/></div>
+                                    <div class="o_hd_fin_row"><span>Approved</span><b class="o_hd_pos" t-esc="d.finance.insurance.approved"/></div>
+                                    <div class="o_hd_fin_row"><span>Rejected</span><b class="o_hd_neg" t-esc="d.finance.insurance.rejected"/></div>
+                                    <div class="o_hd_fin_row"><span>Pending</span><b class="o_hd_warn" t-esc="d.finance.insurance.pending"/></div>
+                                </div>
+                                <button class="o_hd_fin_btn" t-on-click="() => this.openAction(d.finance.insurance.action)">
+                                    View All Claims <i class="fa fa-arrow-right ms-1"/>
+                                </button>
+                            </div>
+
+                            <div class="o_hd_card o_hd_fin_card" t-if="d.finance.unpaid.available">
+                                <div class="o_hd_fin_head">
+                                    <span class="o_hd_fin_icon o_hd_tint_amber"><i class="fa fa-file-text-o"/></span>
+                                    <h4>Unpaid Bills</h4>
+                                </div>
+                                <div class="o_hd_fin_rows">
+                                    <div class="o_hd_fin_row"><span>Total Amount</span><b t-esc="d.finance.unpaid.total_fmt"/></div>
+                                    <div class="o_hd_fin_row"><span>Patients</span><b t-esc="d.finance.unpaid.patients"/></div>
+                                    <div class="o_hd_fin_row"><span>Overdue &gt; 30 days</span><b class="o_hd_neg" t-esc="d.finance.unpaid.overdue_fmt"/></div>
+                                </div>
+                                <button class="o_hd_fin_btn" t-on-click="() => this.openAction(d.finance.unpaid.action)">
+                                    View Unpaid Bills <i class="fa fa-arrow-right ms-1"/>
+                                </button>
+                            </div>
+
+                            <div class="o_hd_card o_hd_fin_card" t-if="d.finance.fiscal.available">
+                                <div class="o_hd_fin_head">
+                                    <span class="o_hd_fin_icon o_hd_tint_teal"><i class="fa fa-calculator"/></span>
+                                    <h4>Fiscal POS Transactions</h4>
+                                </div>
+                                <div class="o_hd_fin_rows">
+                                    <div class="o_hd_fin_row"><span>In Period</span><b t-esc="d.finance.fiscal.total"/></div>
+                                    <div class="o_hd_fin_row"><span>Successful</span><b class="o_hd_pos" t-esc="d.finance.fiscal.success"/></div>
+                                    <div class="o_hd_fin_row"><span>Failed</span><b class="o_hd_neg" t-esc="d.finance.fiscal.failed"/></div>
+                                    <div class="o_hd_fin_row"><span>Success Rate</span><b><t t-esc="d.finance.fiscal.rate"/>%</b></div>
+                                </div>
+                                <button class="o_hd_fin_btn" t-on-click="() => this.openAction(d.finance.fiscal.action)">
+                                    View Transactions <i class="fa fa-arrow-right ms-1"/>
+                                </button>
+                            </div>
+
+                            <div class="o_hd_card o_hd_fin_card" t-if="d.finance.inventory.available">
+                                <div class="o_hd_fin_head">
+                                    <span class="o_hd_fin_icon o_hd_tint_purple"><i class="fa fa-cubes"/></span>
+                                    <h4>Inventory Alerts</h4>
+                                </div>
+                                <div class="o_hd_fin_rows">
+                                    <div class="o_hd_fin_row"><span>Out of Stock</span><b class="o_hd_neg" t-esc="d.finance.inventory.out_of_stock"/></div>
+                                    <div class="o_hd_fin_row"><span>Low Stock</span><b class="o_hd_warn" t-esc="d.finance.inventory.low_stock"/></div>
+                                    <div class="o_hd_fin_row"><span>Expiring Soon</span><b class="o_hd_warn" t-esc="d.finance.inventory.expiring"/></div>
+                                </div>
+                                <button class="o_hd_fin_btn" t-on-click="() => this.openAction(d.finance.inventory.action)">
+                                    View Inventory <i class="fa fa-arrow-right ms-1"/>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 10. Recent Activity -->
+                        <div class="o_hd_section_head">
+                            <h2><i class="fa fa-history me-2"/>Recent Activity</h2>
+                        </div>
+                        <div class="o_hd_card o_hd_activity_card">
+                            <div class="o_hd_table_wrap">
+                                <table class="o_hd_table" t-if="d.activity and d.activity.length">
+                                    <thead>
+                                        <tr>
+                                            <th>Time</th>
+                                            <th>Activity</th>
+                                            <th>Patient / Reference</th>
+                                            <th>Department</th>
+                                            <th>User</th>
+                                            <th>Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <t t-foreach="d.activity" t-as="row" t-key="row_index">
+                                            <tr>
+                                                <td class="o_hd_td_time" t-esc="row.time"/>
+                                                <td t-esc="row.activity"/>
+                                                <td class="o_hd_td_ref" t-esc="row.reference"/>
+                                                <td t-esc="row.department"/>
+                                                <td t-esc="row.user"/>
+                                                <td>
+                                                    <span t-attf-class="o_hd_pill o_hd_pill_{{ row.status_type }}" t-esc="row.status"/>
+                                                </td>
+                                            </tr>
+                                        </t>
+                                    </tbody>
+                                </table>
+                                <div class="o_hd_empty" t-else="">No recent activity.</div>
+                            </div>
+                            <div class="o_hd_table_footer" t-if="d.activity and d.activity.length">
+                                Showing <t t-esc="d.activity.length"/> most recent records
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ════════════ 8. Alerts & Tasks sidebar ════════════ -->
+                    <aside class="o_hd_side">
+                        <div class="o_hd_card o_hd_alerts" t-if="d.alerts">
+                            <div class="o_hd_card_head">
+                                <h3><i class="fa fa-bell me-2"/>Alerts &amp; Tasks</h3>
+                            </div>
+
+                            <div class="o_hd_alert_group_title o_hd_neg">
+                                <i class="fa fa-exclamation-circle me-1"/>Critical Alerts
+                                <span class="o_hd_count_chip o_hd_chip_red" t-esc="d.alerts.critical.length"/>
+                            </div>
+                            <t t-if="d.alerts.critical.length">
+                                <t t-foreach="d.alerts.critical" t-as="alert" t-key="alert_index">
+                                    <div class="o_hd_alert_item o_hd_clickable" t-on-click="() => this.openAction(alert.action)">
+                                        <span class="o_hd_alert_icon o_hd_alert_red"><i t-attf-class="fa {{ alert.icon }}"/></span>
+                                        <div>
+                                            <div class="o_hd_alert_label" t-esc="alert.label"/>
+                                            <div class="o_hd_alert_detail" t-esc="alert.detail"/>
+                                        </div>
+                                    </div>
+                                </t>
+                            </t>
+                            <div class="o_hd_alert_ok" t-else="">
+                                <i class="fa fa-check-circle me-1"/>No critical alerts right now.
+                            </div>
+
+                            <div class="o_hd_alert_group_title o_hd_warn">
+                                <i class="fa fa-hourglass-half me-1"/>Pending Approvals
+                                <span class="o_hd_count_chip o_hd_chip_amber" t-esc="d.alerts.approvals.length"/>
+                            </div>
+                            <t t-if="d.alerts.approvals.length">
+                                <t t-foreach="d.alerts.approvals" t-as="task" t-key="task_index">
+                                    <div class="o_hd_alert_item o_hd_clickable" t-on-click="() => this.openAction(task.action)">
+                                        <span class="o_hd_alert_icon o_hd_alert_amber"><i t-attf-class="fa {{ task.icon }}"/></span>
+                                        <div class="o_hd_alert_task">
+                                            <span class="o_hd_alert_label" t-esc="task.label"/>
+                                            <span class="o_hd_count_chip o_hd_chip_gray" t-esc="task.count"/>
+                                        </div>
+                                    </div>
+                                </t>
+                            </t>
+                            <div class="o_hd_alert_ok" t-else="">
+                                <i class="fa fa-check-circle me-1"/>Nothing awaiting approval.
+                            </div>
+
+                            <div class="o_hd_alert_group_title o_hd_warn">
+                                <i class="fa fa-battery-quarter me-1"/>Low Stock Notifications
+                                <span class="o_hd_count_chip o_hd_chip_amber" t-esc="d.alerts.low_stock_count"/>
+                            </div>
+                            <t t-if="d.alerts.low_stock.length">
+                                <t t-foreach="d.alerts.low_stock" t-as="item" t-key="item_index">
+                                    <div class="o_hd_alert_item">
+                                        <span class="o_hd_alert_icon o_hd_alert_gray"><i class="fa fa-cube"/></span>
+                                        <div class="o_hd_alert_task">
+                                            <span class="o_hd_alert_label" t-esc="item.name"/>
+                                            <span class="o_hd_alert_detail">Stock left: <t t-esc="item.qty"/></span>
+                                        </div>
+                                    </div>
+                                </t>
+                            </t>
+                            <div class="o_hd_alert_ok" t-else="">
+                                <i class="fa fa-check-circle me-1"/>No low stock items.
+                            </div>
+
+                            <button class="o_hd_alerts_footer" t-if="d.alerts.low_stock_action"
+                                    t-on-click="() => this.openAction(d.alerts.low_stock_action)">
+                                View All Stock Alerts
+                            </button>
+                        </div>
+
+                        <!-- 11. Quick Actions -->
+                        <div class="o_hd_card o_hd_quick" t-if="d.quick_actions and d.quick_actions.length">
+                            <div class="o_hd_card_head">
+                                <h3><i class="fa fa-bolt me-2"/>Quick Actions</h3>
+                            </div>
+                            <div class="o_hd_quick_grid">
+                                <t t-foreach="d.quick_actions" t-as="qa" t-key="qa_index">
+                                    <button class="o_hd_quick_btn" t-on-click="() => this.openAction(qa.action)">
+                                        <i t-attf-class="fa {{ qa.icon }}"/>
+                                        <span t-esc="qa.label"/>
+                                    </button>
+                                </t>
+                            </div>
+                        </div>
+                    </aside>
+                </div>
+            </t>
+        </div>
+    </div>
+</t>
+
+</templates>

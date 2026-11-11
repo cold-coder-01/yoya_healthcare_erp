@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_patient_bill_form_split" model="ir.ui.view">
+        <field name="name">hospital.patient.bill.form.split</field>
+        <field name="model">hospital.patient.bill</field>
+        <field name="inherit_id" ref="hospital_insurance.view_hospital_patient_bill_form_insurance"/>
+        <field name="arch" type="xml">
+            <!-- Header badge when a direct-payer bill is fully settled -->
+            <xpath expr="//sheet" position="before">
+                <div class="alert alert-success" role="alert"
+                     invisible="not direct_payer_settled">
+                    <field name="direct_payer_settled" invisible="1"/>
+                    <b>Direct-Payer Settled</b> — patient and payer
+                    responsibilities are fully collected.
+                </div>
+            </xpath>
+
+            <xpath expr="//page[@name='insurance']" position="inside">
+                <group invisible="not payer_type or payer_type == 'cash'">
+                    <group string="Patient Collection">
+                        <field name="patient_responsibility_amount" readonly="1"/>
+                        <field name="patient_amount_paid" readonly="1"/>
+                        <field name="patient_amount_due" readonly="1"/>
+                    </group>
+                    <group string="Payer Collection">
+                        <field name="payer_responsibility_amount" readonly="1"/>
+                        <field name="payer_amount_paid" readonly="1"/>
+                        <field name="payer_amount_due" readonly="1"/>
+                    </group>
+                </group>
+                <group invisible="not payer_type or payer_type == 'cash'">
+                    <group string="Rejection Resolution"
+                           invisible="rejected_to_patient_amount == 0 and rejected_written_off_amount == 0 and rejected_unresolved_amount == 0">
+                        <field name="rejected_to_patient_amount"
+                               string="Transferred to Patient" readonly="1"/>
+                        <field name="rejected_written_off_amount"
+                               string="Written Off" readonly="1"/>
+                        <field name="rejected_unresolved_amount"
+                               string="Unresolved Rejected" readonly="1"/>
+                        <field name="adjusted_patient_responsibility_amount" readonly="1"/>
+                        <field name="adjusted_payer_collectible" readonly="1"/>
+                    </group>
+                </group>
+                <group invisible="not payer_type or payer_type == 'cash'">
+                    <group string="Overall Settlement">
+                        <field name="amount_total" string="Bill Total" readonly="1"/>
+                        <field name="total_collected"
+                               string="Total Collected (Cash)" readonly="1"/>
+                        <field name="total_resolved"
+                               string="Total Resolved" readonly="1"/>
+                        <field name="total_responsibility_due"
+                               string="Overall Due" readonly="1"/>
+                        <field name="overall_settlement_state" readonly="1"
+                               widget="badge"
+                               decoration-success="overall_settlement_state == 'paid'"
+                               decoration-warning="overall_settlement_state == 'partially_paid'"/>
+                    </group>
+                </group>
+                <group invisible="not payer_type or payer_type == 'cash'">
+                    <group string="Linked Claim" colspan="2">
+                        <field name="insurance_claim_id" readonly="1"/>
+                        <field name="claim_state" readonly="1"
+                               invisible="not insurance_claim_id"/>
+                        <field name="claim_accounting_state" readonly="1"
+                               invisible="not insurance_claim_id"/>
+                    </group>
+                </group>
+                <div class="text-muted" colspan="2"
+                     invisible="not payer_type or payer_type == 'cash'">
+                    Patient payments clear Patient Receivable only. Payer payments
+                    must be posted from the insurance claim after payer receivable
+                    reclassification.
+                </div>
+            </xpath>
+
+            <!-- Tag payment source in the payment history list, if present -->
+            <xpath expr="//field[@name='payment_ids']/list" position="inside">
+                <field name="payment_source" optional="show"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>

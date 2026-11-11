@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ROOT APP MENU -->
+    <menuitem
+        id="menu_hospital_operation_theatre_root"
+        name="Operation Theatre"
+        sequence="48"
+        web_icon="hospital_operation_theatre,static/src/img/operation_theatre_icon.png"
+        groups="hospital_management.group_hospital_doctor,hospital_management.group_hospital_nurse,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+
+    <menuitem
+        id="menu_hospital_surgery_requests"
+        parent="menu_hospital_operation_theatre_root"
+        name="Surgery Requests"
+        action="action_hospital_surgery_request"
+        sequence="10"/>
+
+    <menuitem
+        id="menu_hospital_theatre_schedule"
+        parent="menu_hospital_operation_theatre_root"
+        name="Theatre Schedule"
+        action="action_hospital_theatre_schedule"
+        sequence="20"/>
+
+    <menuitem
+        id="menu_hospital_preop_checklists"
+        parent="menu_hospital_operation_theatre_root"
+        name="Pre-op Checklists"
+        action="action_hospital_preop_checklist"
+        sequence="50"/>
+
+    <menuitem
+        id="menu_hospital_anesthesia_notes"
+        parent="menu_hospital_operation_theatre_root"
+        name="Anesthesia Notes"
+        action="action_hospital_anesthesia_note"
+        sequence="60"/>
+
+    <menuitem
+        id="menu_hospital_operation_reports"
+        parent="menu_hospital_operation_theatre_root"
+        name="Operation Reports"
+        action="action_hospital_operation_report"
+        sequence="70"/>
+
+    <menuitem
+        id="menu_hospital_postop_notes"
+        parent="menu_hospital_operation_theatre_root"
+        name="Post-op Notes"
+        action="action_hospital_postop_note"
+        sequence="80"/>
+
+    <!-- CONFIGURATION -->
+    <menuitem
+        id="menu_hospital_operation_theatre_configuration"
+        parent="menu_hospital_operation_theatre_root"
+        name="Configuration"
+        sequence="100"
+        groups="hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+
+    <menuitem
+        id="menu_hospital_operation_theatres_config"
+        parent="menu_hospital_operation_theatre_configuration"
+        name="Operation Theatres"
+        action="action_hospital_operation_theatre"
+        sequence="10"/>
+
+    <menuitem
+        id="menu_hospital_surgery_types_config"
+        parent="menu_hospital_operation_theatre_configuration"
+        name="Surgery Types"
+        action="action_hospital_surgery_type"
+        sequence="20"/>
+
+</odoo>

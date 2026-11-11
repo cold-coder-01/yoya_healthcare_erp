@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="sequence_insurance_accounting_log" model="ir.sequence">
+        <field name="name">Hospital Insurance Accounting Log Sequence</field>
+        <field name="code">hospital.insurance.accounting.log</field>
+        <field name="prefix">IACC</field>
+        <field name="padding">5</field>
+        <field name="number_next">1</field>
+    </record>
+</odoo>

@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_hospital_hr_shift_template_list" model="ir.ui.view">
+        <field name="name">hospital.hr.shift.template.list</field>
+        <field name="model">hospital.hr.shift.template</field>
+        <field name="arch" type="xml">
+            <list string="Shift Templates">
+                <field name="sequence" widget="handle"/>
+                <field name="name"/>
+                <field name="code"/>
+                <field name="shift_type"/>
+                <field name="start_time" widget="float_time"/>
+                <field name="end_time" widget="float_time"/>
+                <field name="duration_hours" widget="float_time"/>
+                <field name="is_night_shift"/>
+                <field name="active" column_invisible="1"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_hr_shift_template_form" model="ir.ui.view">
+        <field name="name">hospital.hr.shift.template.form</field>
+        <field name="model">hospital.hr.shift.template</field>
+        <field name="arch" type="xml">
+            <form string="Shift Template">
+                <sheet>
+                    <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active"/>
+                    <group>
+                        <group string="Basic Information" name="basic_information">
+                            <field name="name"/>
+                            <field name="code"/>
+                            <field name="sequence"/>
+                            <field name="active" invisible="1"/>
+                        </group>
+                        <group string="Timing" name="timing">
+                            <field name="start_time" widget="float_time"/>
+                            <field name="end_time" widget="float_time"/>
+                            <field name="duration_hours" widget="float_time"/>
+                        </group>
+                        <group string="Classification" name="classification">
+                            <field name="shift_type"/>
+                            <field name="is_night_shift"/>
+                            <field name="color" widget="color_picker"/>
+                        </group>
+                    </group>
+                    <group string="Notes" name="notes">
+                        <field name="notes" nolabel="1"
+                               placeholder="Internal notes about this shift."/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_hr_shift_template_search" model="ir.ui.view">
+        <field name="name">hospital.hr.shift.template.search</field>
+        <field name="model">hospital.hr.shift.template</field>
+        <field name="arch" type="xml">
+            <search string="Shift Templates">
+                <field name="name"/>
+                <field name="code"/>
+                <filter name="filter_night" string="Night Shifts"
+                        domain="[('is_night_shift', '=', True)]"/>
+                <filter name="filter_on_call" string="On Call"
+                        domain="[('shift_type', '=', 'on_call')]"/>
+                <filter name="filter_emergency" string="Emergency"
+                        domain="[('shift_type', '=', 'emergency')]"/>
+                <filter name="filter_ot" string="Operation Theatre"
+                        domain="[('shift_type', '=', 'ot')]"/>
+                <filter name="filter_ward" string="Ward"
+                        domain="[('shift_type', '=', 'ward')]"/>
+                <separator/>
+                <filter name="filter_archived" string="Archived"
+                        domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter name="group_shift_type" string="Shift Type"
+                            domain="[]" context="{'group_by': 'shift_type'}"/>
+                    <filter name="group_night" string="Night Shift"
+                            domain="[]" context="{'group_by': 'is_night_shift'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+</odoo>

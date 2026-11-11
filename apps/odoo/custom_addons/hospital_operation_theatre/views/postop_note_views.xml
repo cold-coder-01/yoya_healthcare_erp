@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_hospital_postop_note_list" model="ir.ui.view">
+        <field name="name">hospital.postop.note.list</field>
+        <field name="model">hospital.postop.note</field>
+        <field name="arch" type="xml">
+            <list string="Post-op Notes"
+                decoration-muted="state == 'cancelled'"
+                decoration-info="state == 'submitted'"
+                decoration-success="state == 'reviewed'">
+                <field name="name"/>
+                <field name="surgery_id"/>
+                <field name="patient_id"/>
+                <field name="note_date"/>
+                <field name="recovery_status"/>
+                <field name="pain_score"/>
+                <field name="state"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_hospital_postop_note_form" model="ir.ui.view">
+        <field name="name">hospital.postop.note.form</field>
+        <field name="model">hospital.postop.note</field>
+        <field name="arch" type="xml">
+            <form string="Post-op Note">
+                <header>
+                    <button name="action_submit" string="Submit" type="object"
+                        class="btn-primary" invisible="state != 'draft'"/>
+                    <button name="action_review" string="Mark Reviewed" type="object"
+                        class="btn-primary" invisible="state != 'submitted'"
+                        groups="hospital_management.group_hospital_doctor,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"/>
+                    <button name="action_cancel" string="Cancel" type="object"
+                        invisible="state == 'cancelled'"/>
+                    <button name="action_reset_to_draft" string="Reset to Draft" type="object"
+                        invisible="state != 'cancelled'"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,submitted,reviewed"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1>
+                            <field name="name" readonly="1"/>
+                        </h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="surgery_id" readonly="state != 'draft'" options="{'no_create': True}"/>
+                            <field name="patient_id" readonly="1"/>
+                            <field name="note_date"/>
+                            <field name="recorded_by" readonly="1"/>
+                        </group>
+                        <group>
+                            <field name="recovery_status"/>
+                            <field name="pain_score"/>
+                        </group>
+                    </group>
+                    <group string="Clinical">
+                        <field name="vitals_summary"/>
+                        <field name="wound_condition"/>
+                        <field name="bleeding_status"/>
+                        <field name="medication_orders"/>
+                        <field name="nursing_instructions"/>
+                        <field name="surgeon_instructions"/>
+                        <field name="follow_up_plan"/>
+                    </group>
+                    <group string="Notes">
+                        <field name="notes" nolabel="1"/>
+                    </group>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_hospital_postop_note_search" model="ir.ui.view">
+        <field name="name">hospital.postop.note.search</field>
+        <field name="model">hospital.postop.note</field>
+        <field name="arch" type="xml">
+            <search string="Post-op Notes">
+                <field name="name"/>
+                <field name="surgery_id"/>
+                <field name="patient_id"/>
+                <filter string="Submitted" name="submitted" domain="[('state', '=', 'submitted')]"/>
+                <filter string="Reviewed" name="reviewed" domain="[('state', '=', 'reviewed')]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Surgery" name="group_surgery" context="{'group_by': 'surgery_id'}"/>
+                    <filter string="Recovery Status" name="group_recovery" context="{'group_by': 'recovery_status'}"/>
+                    <filter string="State" name="group_state" context="{'group_by': 'state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hospital_postop_note" model="ir.actions.act_window">
+        <field name="name">Post-op Notes</field>
+        <field name="res_model">hospital.postop.note</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_hospital_postop_note_search"/>
+    </record>
+
+</odoo>

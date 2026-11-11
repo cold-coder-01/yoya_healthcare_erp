@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="1">
+
+        <record id="shift_morning" model="hospital.hr.shift.template">
+            <field name="name">Morning Shift</field>
+            <field name="code">MORNING</field>
+            <field name="start_time">8.0</field>
+            <field name="end_time">14.0</field>
+            <field name="shift_type">regular</field>
+            <field name="sequence">10</field>
+            <field name="color">10</field>
+        </record>
+
+        <record id="shift_afternoon" model="hospital.hr.shift.template">
+            <field name="name">Afternoon Shift</field>
+            <field name="code">AFTERNOON</field>
+            <field name="start_time">14.0</field>
+            <field name="end_time">22.0</field>
+            <field name="shift_type">regular</field>
+            <field name="sequence">20</field>
+            <field name="color">4</field>
+        </record>
+
+        <record id="shift_night" model="hospital.hr.shift.template">
+            <field name="name">Night Shift</field>
+            <field name="code">NIGHT</field>
+            <field name="start_time">22.0</field>
+            <field name="end_time">6.0</field>
+            <field name="shift_type">regular</field>
+            <field name="is_night_shift" eval="True"/>
+            <field name="sequence">30</field>
+            <field name="color">5</field>
+        </record>
+
+        <record id="shift_on_call" model="hospital.hr.shift.template">
+            <field name="name">On Call</field>
+            <field name="code">ON_CALL</field>
+            <field name="start_time">18.0</field>
+            <field name="end_time">8.0</field>
+            <field name="shift_type">on_call</field>
+            <field name="is_night_shift" eval="True"/>
+            <field name="sequence">40</field>
+            <field name="color">3</field>
+        </record>
+
+        <record id="shift_emergency" model="hospital.hr.shift.template">
+            <field name="name">Emergency Duty</field>
+            <field name="code">EMERGENCY</field>
+            <field name="start_time">0.0</field>
+            <field name="end_time">8.0</field>
+            <field name="shift_type">emergency</field>
+            <field name="sequence">50</field>
+            <field name="color">1</field>
+        </record>
+
+        <record id="shift_ot_duty" model="hospital.hr.shift.template">
+            <field name="name">Operation Theatre Duty</field>
+            <field name="code">OT_DUTY</field>
+            <field name="start_time">8.0</field>
+            <field name="end_time">16.0</field>
+            <field name="shift_type">ot</field>
+            <field name="sequence">60</field>
+            <field name="color">6</field>
+        </record>
+
+        <record id="shift_ward_duty" model="hospital.hr.shift.template">
+            <field name="name">Ward Duty</field>
+            <field name="code">WARD_DUTY</field>
+            <field name="start_time">8.0</field>
+            <field name="end_time">20.0</field>
+            <field name="shift_type">ward</field>
+            <field name="sequence">70</field>
+            <field name="color">7</field>
+        </record>
+
+    </data>
+</odoo>

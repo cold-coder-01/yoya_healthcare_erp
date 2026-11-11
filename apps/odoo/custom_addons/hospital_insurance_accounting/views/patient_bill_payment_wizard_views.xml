@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_patient_bill_payment_wizard_form_insurance" model="ir.ui.view">
+        <field name="name">hospital.patient.bill.payment.wizard.form.insurance</field>
+        <field name="model">hospital.patient.bill.payment.wizard</field>
+        <field name="inherit_id" ref="hospital_billing.view_hospital_patient_bill_payment_wizard_form"/>
+        <field name="arch" type="xml">
+
+            <!-- Hide the raw full-bill "Remaining Due" for insurance bills and
+                 expose the split due amounts instead. -->
+            <xpath expr="//field[@name='amount_due']" position="attributes">
+                <attribute name="invisible">is_direct_payer_bill</attribute>
+            </xpath>
+
+            <xpath expr="//field[@name='amount_due']" position="after">
+                <field name="is_direct_payer_bill" invisible="1"/>
+                <field name="bill_total" string="Total Bill Due"
+                       invisible="not is_direct_payer_bill"/>
+                <field name="patient_responsibility_amount"
+                       invisible="not is_direct_payer_bill"/>
+                <field name="patient_amount_paid"
+                       invisible="not is_direct_payer_bill"/>
+                <field name="patient_amount_due" string="Patient Remaining Due"
+                       invisible="not is_direct_payer_bill"/>
+                <field name="payer_responsibility_amount"
+                       invisible="not is_direct_payer_bill"/>
+                <field name="payer_amount_paid"
+                       invisible="not is_direct_payer_bill"/>
+                <field name="payer_amount_due" string="Payer Remaining Due"
+                       invisible="not is_direct_payer_bill"/>
+            </xpath>
+
+            <!-- Payment Party selector (visible/required for insurance bills). -->
+            <xpath expr="//field[@name='amount']" position="before">
+                <field name="payment_party"
+                       invisible="not is_direct_payer_bill"/>
+            </xpath>
+
+            <!-- Help text for insurance bills. -->
+            <xpath expr="//field[@name='notes']" position="before">
+                <div class="alert alert-info" role="alert"
+                     invisible="not is_direct_payer_bill or payment_party == 'payer'">
+                    This bill has a payer responsibility. Patient payments can
+                    only cover the patient responsibility amount. Payer payments
+                    must be posted from the insurance claim.
+                </div>
+                <div class="alert alert-warning" role="alert"
+                     invisible="not is_direct_payer_bill or payment_party != 'payer'">
+                    Payer amount is shown for reference only. To post payer
+                    payment, open the insurance claim and use Post Payer Payment.
+                </div>
+            </xpath>
+        </field>
+    </record>
+</odoo>

@@ -1,0 +1,19 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_hospital_hr_role_employee,hospital.hr.role internal user,model_hospital_hr_role,base.group_user,1,0,0,0
+access_hospital_hr_role_hr_user,hospital.hr.role hospital hr user,model_hospital_hr_role,group_hospital_hr_user,1,0,0,0
+access_hospital_hr_role_hr_manager,hospital.hr.role hospital hr manager,model_hospital_hr_role,group_hospital_hr_manager,1,1,1,1
+access_hospital_department_hr_user,hospital.department odoo hr user,hospital_management.model_hospital_department,hr.group_hr_user,1,0,0,0
+access_hospital_department_hospital_hr_user,hospital.department hospital hr user,hospital_management.model_hospital_department,group_hospital_hr_user,1,0,0,0
+access_hospital_hr_credential_employee,hospital.hr.credential internal user own,model_hospital_hr_credential,base.group_user,1,0,0,0
+access_hospital_hr_credential_hr_user,hospital.hr.credential hospital hr user,model_hospital_hr_credential,group_hospital_hr_user,1,1,1,0
+access_hospital_hr_credential_hr_manager,hospital.hr.credential hospital hr manager,model_hospital_hr_credential,group_hospital_hr_manager,1,1,1,1
+access_hospital_hr_shift_template_employee,hospital.hr.shift.template internal user,model_hospital_hr_shift_template,base.group_user,1,0,0,0
+access_hospital_hr_shift_template_hr_manager,hospital.hr.shift.template hospital hr manager,model_hospital_hr_shift_template,group_hospital_hr_manager,1,1,1,1
+access_hospital_hr_duty_schedule_hr_user,hospital.hr.duty.schedule hospital hr user,model_hospital_hr_duty_schedule,group_hospital_hr_user,1,1,1,0
+access_hospital_hr_duty_schedule_hr_manager,hospital.hr.duty.schedule hospital hr manager,model_hospital_hr_duty_schedule,group_hospital_hr_manager,1,1,1,1
+access_hospital_hr_duty_line_employee,hospital.hr.duty.line internal user own,model_hospital_hr_duty_line,base.group_user,1,0,0,0
+access_hospital_hr_duty_line_hr_user,hospital.hr.duty.line hospital hr user,model_hospital_hr_duty_line,group_hospital_hr_user,1,1,1,0
+access_hospital_hr_duty_line_hr_manager,hospital.hr.duty.line hospital hr manager,model_hospital_hr_duty_line,group_hospital_hr_manager,1,1,1,1
+access_hospital_hr_attendance_log_employee,hospital.hr.attendance.log internal user own,model_hospital_hr_attendance_log,base.group_user,1,0,0,0
+access_hospital_hr_attendance_log_hr_user,hospital.hr.attendance.log hospital hr user,model_hospital_hr_attendance_log,group_hospital_hr_user,1,1,1,0
+access_hospital_hr_attendance_log_hr_manager,hospital.hr.attendance.log hospital hr manager,model_hospital_hr_attendance_log,group_hospital_hr_manager,1,1,1,1

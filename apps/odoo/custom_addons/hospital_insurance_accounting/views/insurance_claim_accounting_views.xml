@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hospital_insurance_claim_form_accounting" model="ir.ui.view">
+        <field name="name">hospital.insurance.claim.form.accounting</field>
+        <field name="model">hospital.insurance.claim</field>
+        <field name="inherit_id" ref="hospital_insurance.view_hospital_insurance_claim_form"/>
+        <field name="arch" type="xml">
+
+            <!-- Hide the legacy silent payer-payment button; the accounting
+                 bridge replaces it with the Post Payer Payment wizard. -->
+            <xpath expr="//header/button[@name='action_register_payer_payment']"
+                   position="attributes">
+                <attribute name="invisible">1</attribute>
+            </xpath>
+
+            <!-- Header buttons -->
+            <xpath expr="//header" position="inside">
+                <button
+                    name="action_mark_ready_for_accounting"
+                    string="Mark Ready for Accounting"
+                    type="object"
+                    class="btn-secondary"
+                    groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"
+                    invisible="accounting_state not in ('not_posted', 'error')"
+                />
+                <button
+                    name="action_reclassify_payer_receivable"
+                    string="Reclassify Payer Receivable"
+                    type="object"
+                    class="btn-primary"
+                    groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"
+                    invisible="accounting_state not in ('ready', 'error') or accounting_move_id"
+                />
+                <button
+                    name="action_open_payer_payment_wizard"
+                    string="Post Payer Payment"
+                    type="object"
+                    class="btn-primary"
+                    groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"
+                    invisible="accounting_state not in ('receivable_reclassified', 'partially_paid') or amount_due_from_payer &lt;= 0"
+                />
+                <button
+                    name="action_view_accounting_entry"
+                    string="View Accounting Entry"
+                    type="object"
+                    class="btn-secondary"
+                    invisible="not accounting_move_id"
+                />
+                <button
+                    name="action_view_payer_payment_moves"
+                    string="View Payer Payment Moves"
+                    type="object"
+                    class="btn-secondary"
+                    groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"
+                    invisible="payer_payment_move_count == 0"
+                />
+                <button
+                    name="action_open_rejection_resolution_wizard"
+                    string="Resolve Rejected Amount"
+                    type="object"
+                    class="btn-primary"
+                    groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"
+                    invisible="rejected_amount_unresolved &lt;= 0 or accounting_state not in ('receivable_reclassified', 'partially_paid', 'paid', 'rejected', 'error')"
+                />
+                <button
+                    name="action_view_rejection_transfer_entries"
+                    string="View Rejection Transfer Entries"
+                    type="object"
+                    class="btn-secondary"
+                    groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"
+                    invisible="rejection_transfer_move_count == 0"
+                />
+                <button
+                    name="action_view_writeoff_entries"
+                    string="View Write-off Entries"
+                    type="object"
+                    class="btn-secondary"
+                    groups="hospital_management.group_hospital_accountant,hospital_management.group_hospital_manager,hospital_management.group_hospital_system_administrator"
+                    invisible="writeoff_move_count == 0"
+                />
+                <button
+                    name="action_view_accounting_logs"
+                    string="View Accounting Logs"
+                    type="object"
+                    class="btn-secondary"
+                    invisible="accounting_log_count == 0"
+                />
+            </xpath>
+
+            <!-- Payer payment help on the Payment / Approval tab -->
+            <xpath expr="//page[@name='payment_approval']//field[@name='amount_due_from_payer']"
+                   position="after">
+                <div class="text-muted" colspan="2">
+                    Payer payment accounting is posted using
+                    <b>Post Payer Payment</b> after receivable reclassification.
+                </div>
+            </xpath>
+
+            <!-- Accounting tab -->
+            <xpath expr="//notebook" position="inside">
+                <page string="Accounting" name="insurance_accounting">
+                    <group>
+                        <group string="Accounting Status">
+                            <field name="accounting_state" readonly="1"/>
+                            <field name="accounting_move_id" readonly="1"/>
+                            <field name="accounting_posted_date" readonly="1"/>
+                            <field name="accounting_log_count" readonly="1"/>
+                            <field name="payer_payment_move_count" readonly="1"/>
+                        </group>
+                        <group string="Last Error">
+                            <field name="accounting_error" nolabel="1" readonly="1"/>
+                        </group>
+                    </group>
+                    <field name="accounting_log_ids" readonly="1">
+                        <list>
+                            <field name="name"/>
+                            <field name="performed_date"/>
+                            <field name="action_type"/>
+                            <field name="state" widget="badge"
+                                   decoration-success="state == 'success'"
+                                   decoration-danger="state == 'error'"/>
+                            <field name="move_id"/>
+                            <field name="message"/>
+                        </list>
+                    </field>
+                </page>
+                <page string="Rejection Resolution" name="rejection_resolution">
+                    <group>
+                        <group string="Amounts">
+                            <field name="claim_amount" readonly="1"/>
+                            <field name="approved_amount" readonly="1"/>
+                            <field name="rejected_amount_total" readonly="1"/>
+                        </group>
+                        <group string="Resolution">
+                            <field name="rejected_amount_transferred_to_patient" readonly="1"/>
+                            <field name="rejected_amount_written_off" readonly="1"/>
+                            <field name="rejected_amount_unresolved" readonly="1"/>
+                            <field name="rejection_resolution_state" readonly="1"
+                                   widget="badge"
+                                   decoration-success="rejection_resolution_state in ('transferred_to_patient', 'written_off')"
+                                   decoration-warning="rejection_resolution_state in ('pending', 'partially_resolved')"/>
+                            <field name="rejection_transfer_move_count" readonly="1"/>
+                            <field name="writeoff_move_count" readonly="1"/>
+                        </group>
+                    </group>
+                    <div class="text-muted" colspan="2">
+                        Rejected claim amounts must be resolved either by
+                        transferring the balance to patient responsibility or by
+                        writing it off. This does not create additional revenue.
+                    </div>
+                </page>
+            </xpath>
+        </field>
+    </record>
+</odoo>
