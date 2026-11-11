@@ -9,8 +9,23 @@ from odoo.tests import TransactionCase, tagged
 class TestTask32B3PaymentAccounting(TransactionCase):
     @classmethod
     def setUpClass(cls):
+        """Pin payer_responsibility_mode to 'off' for the whole suite.
+
+        These tests cover legacy advance/credit accounting, including
+        deliberate over-collection on self-pay charges. Under 'enforce',
+        charge_receipt._check_within_patient_responsibility refuses any
+        allocation above the patient residual, so the suite used to fail on
+        whatever mode the database happened to carry. Same fix and rationale
+        as test_account_method_manager_overpayment_requires_note in
+        hospital_billing/tests/test_payment_authorization_boundary.py.
+
+        The enforce-side refusal is covered here by
+        test_enforce_mode_refuses_self_pay_over_allocation. The class-level
+        write is rolled back with the rest of setUpClass.
+        """
         super().setUpClass()
         cls.company = cls.env.company
+        cls.company.sudo().write({"payer_responsibility_mode": "off"})
         cls.currency = cls.company.currency_id
         cls.cashier = cls._make_user("task32b3_cashier", "hospital_billing.group_hospital_cashier")
         cls.accountant = cls._make_user("task32b3_accountant", "hospital_management.group_hospital_accountant")
@@ -574,7 +589,8 @@ class TestTask32B3PaymentAccounting(TransactionCase):
     def test_cross_patient_and_duplicate_external_reference_block(self):
         account, charge = self._make_case(price=500.0)
         other_account, other_charge = self._make_case(price=500.0)
-        self._receipt(account, charge, 500.0, method="bank_transfer", reference="BANK-%s" % uuid.uuid4().hex)
+        # 490 + the 10 below stays within the 500 charge, independent of mode.
+        self._receipt(account, charge, 490.0, method="bank_transfer", reference="BANK-%s" % uuid.uuid4().hex)
         invoice = self._invoice(other_account)
         with self.assertRaises(UserError):
             self.env["hospital.billing.engine"].with_user(self.accountant).apply_patient_advance_to_invoice(invoice)
@@ -582,6 +598,17 @@ class TestTask32B3PaymentAccounting(TransactionCase):
         self._receipt(account, charge, 10.0, method="mobile_money", reference=reference)
         with self.assertRaises(ValidationError):
             self._receipt(other_account, other_charge, 10.0, method="mobile_money", reference=reference)
+
+    def test_enforce_mode_refuses_self_pay_over_allocation(self):
+        self.company.sudo().write({"payer_responsibility_mode": "enforce"})
+        account, charge = self._make_case(price=500.0)
+        self._confirmed_operational_receipt(account, charge, 500.0)
+        with self.assertRaises(ValidationError) as caught:
+            self._confirmed_operational_receipt(account, charge, 10.0)
+        self.assertIn("patient is responsible for only 500.00", str(caught.exception))
+        self.assertAlmostEqual(
+            sum(charge.allocation_ids.filtered(lambda a: a.receipt_state != "cancelled").mapped("amount")), 500.0, places=2
+        )
 
     def test_cross_company_patient_advance_application_is_blocked(self):
         account, charge = self._make_case(price=500.0)
@@ -618,7 +645,8 @@ class TestTask32B3PaymentAccounting(TransactionCase):
         receipt = self.env["hospital.charge.receipt"].sudo().create(
             {"payment_method": "cash", "received_at": fields.Datetime.now(), "received_by_id": self.accountant.id, "state": "draft", "intake_token": uuid.uuid4().hex}
         )
-        self.env["hospital.charge.receipt.allocation"].sudo().create({"receipt_id": receipt.id, "charge_line_id": charge.id, "amount": 500.0})
+        # 250 here + 250 below stays within the 500 charge, independent of mode.
+        self.env["hospital.charge.receipt.allocation"].sudo().create({"receipt_id": receipt.id, "charge_line_id": charge.id, "amount": 250.0})
         receipt.sudo().write({"state": "confirmed"})
         before_moves = self.env["account.move"].search_count([])
         self.config.sudo().write({"cash_account_id": False})
@@ -628,7 +656,7 @@ class TestTask32B3PaymentAccounting(TransactionCase):
         self.assertFalse(receipt.accounting_move_id)
         self.config.sudo().write({"cash_account_id": self.cash_account.id})
 
-        self._receipt(account, charge, 500.0)
+        self._receipt(account, charge, 250.0)
         invoice = self._invoice(account)
         before_moves = self.env["account.move"].search_count([])
         before_apps = self.env["hospital.patient.advance.application"].search_count([])

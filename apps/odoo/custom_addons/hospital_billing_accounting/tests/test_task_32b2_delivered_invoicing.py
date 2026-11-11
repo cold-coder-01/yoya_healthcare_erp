@@ -384,9 +384,9 @@ class TestTask32B2DeliveredInvoicing(TransactionCase):
         if not patient or not account:
             self.skipTest("Almaz UAT fixture is not present.")
         charges = account.charge_line_ids.filtered(lambda charge: charge.charge_state == "active")
-        self.assertEqual(len(charges), 3)
         if round(sum(charges.mapped("amount_delivered")), 2) != 1200.0:
             self.skipTest("The exact 1,200 ETB Almaz UAT regression fixture is not present in this disposable DB.")
+        self.assertEqual(len(charges), 3)
         self.assertAlmostEqual(sum(charges.mapped("amount_delivered")), 1200.0, places=2)
         self.assertEqual(set(charges.mapped("operational_funding_state")), {"funded"})
         self.assertAlmostEqual(account.amount_prepayment_held, 1200.0, places=2)
