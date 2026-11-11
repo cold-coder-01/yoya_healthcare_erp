@@ -1,5 +1,6 @@
 ﻿# -*- coding: utf-8 -*-
 import uuid
+from unittest import SkipTest
 
 from odoo import fields
 from odoo.exceptions import AccessError, UserError, ValidationError
@@ -11,6 +12,11 @@ class TestHospitalBankReconciliationBridge(TransactionCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
+        # models/bank_reconciliation_bridge.py is deliberately not imported yet
+        # (README: "No bank reconciliation import yet"). Same field check as the
+        # 32B3 suite; Odoo's suite reports this as a skip and runs class cleanups.
+        if "bank_statement_journal_id" not in cls.env["hospital.billing.accounting.config"]._fields:
+            raise SkipTest("bank reconciliation bridge not enabled: bank_statement_journal_id missing")
         cls.company = cls.env.company
         cls.currency = cls.company.currency_id
         cls.accountant = cls._make_user('bank_bridge_accountant', 'hospital_management.group_hospital_accountant')
