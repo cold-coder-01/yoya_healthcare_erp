@@ -40,6 +40,9 @@ DESK_STATUS = {
     "admission_financial_review_required": 409,
     # The estimate lock: well formed, but medical discharge has begun.
     "admission_estimate_locked": 409,
+    # Decision 3: the visit's consultation is still open. The error body adds a
+    # structured `consultation` (reference, doctor_name, started_at, archived).
+    "admission_consultation_open": 409,
     # The one code the HTTP layer owns: an unexpected failure, rolled back.
     "admission_mutation_failed": 500,
 }
@@ -58,9 +61,15 @@ FINALIZE_DISCHARGE_KEYS = frozenset({"operation_token", "expected_revision"})
 ESTIMATE_KEYS = frozenset({"operation_token", "expected_revision", "amount", "reason"})
 
 
-def desk_error(code):
+# The structured context a desk refusal may carry into the error body. Only
+# these keys pass; the message itself is always the fixed sentence.
+DESK_ERROR_EXTRA_KEYS = frozenset({"consultation"})
+
+
+def desk_error(code, extra=None):
     message = DESK_ERROR_MESSAGES.get(code, MUTATION_FAILED_MESSAGE)
-    return ApiError(code, message, DESK_STATUS.get(code, 500))
+    extra = {key: value for key, value in (extra or {}).items() if key in DESK_ERROR_EXTRA_KEYS}
+    return ApiError(code, message, DESK_STATUS.get(code, 500), extra=extra)
 
 
 def mutation_body(required_keys):

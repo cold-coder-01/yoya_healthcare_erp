@@ -39,3 +39,4 @@ from . import test_doctor_consultation_note_admission
 from . import test_pharmacy_inpatient_credit_api
 from . import test_inpatient_service_credit_api
 from . import test_accountant_api
+from . import test_admission_consultation_discharge_gate

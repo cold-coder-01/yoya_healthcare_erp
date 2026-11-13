@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 
 import { formatHospitalDateTime } from "@/lib/clinical-format";
+import { CONSULTATION_OPEN_CHECK, admissionsDeskHoldText } from "@/lib/consultation-discharge-gate";
 import {
   ageSexLabel,
   clearanceLabel,
@@ -328,7 +329,11 @@ export default function AdmissionDetailPanel({
             {detail.discharge.blocking.length ? (
               <ul className="mt-1 list-disc pl-5 cl-meta text-red-800">
                 {detail.discharge.blocking.map((check) => (
-                  <li key={check.code}>{check.message}</li>
+                  <li key={check.code}>
+                    {check.code === CONSULTATION_OPEN_CHECK
+                      ? admissionsDeskHoldText(check.consultation ?? null)
+                      : check.message}
+                  </li>
                 ))}
               </ul>
             ) : null}

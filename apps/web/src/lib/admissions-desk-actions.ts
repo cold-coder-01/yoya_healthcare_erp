@@ -162,7 +162,9 @@ export function needsReload(code: string | null): boolean {
     // Slice 4: the discharge gates -- the financial / medical state shown is stale.
     code === "admission_not_medically_ready" ||
     code === "admission_settlement_required" ||
-    code === "admission_financial_review_required"
+    code === "admission_financial_review_required" ||
+    // Decision 3: the consultation shown as completed was not; reload to see its holder.
+    code === "admission_consultation_open"
   );
 }
 
