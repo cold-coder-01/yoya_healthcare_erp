@@ -8,3 +8,5 @@ from . import patient_diagnosis
 from . import laboratory_request
 from . import radiology_request
 from . import prescription
+# Decision 3: an open consultation blocks discharge (hooks hospital_admission).
+from . import admission_consultation_gate

@@ -224,7 +224,21 @@ export type AdmissionFinancial = {
 };
 
 /** The model's discharge checks (Slice 4). Fixed sentences; never an amount. */
-export type DischargeCheck = { code: string; message: string };
+/** Decision 3: who holds the open consultation that blocks discharge. */
+export type ConsultationHold = {
+  reference: string | null;
+  doctor_name: string | null;
+  started_at: string | null;
+  /** Archived but not completed: an administrator must restore it first. */
+  archived: boolean;
+};
+
+export type DischargeCheck = {
+  code: string;
+  message: string;
+  /** Present on the `consultation_open` blocking check. */
+  consultation?: ConsultationHold | null;
+};
 
 export type AdmissionDischarge = {
   medical_ready: boolean;
@@ -424,6 +438,7 @@ export type AdmissionMutationErrorCode =
   | "admission_settlement_required"
   | "admission_financial_review_required"
   | "admission_estimate_locked"
+  | "admission_consultation_open"
   | "admission_mutation_failed";
 
 /* ------------------------------------------------------------------ *
@@ -468,6 +483,8 @@ export type DoctorAdmissionSummary = {
   can_request_discharge: boolean;
   /** Unfinished work to review before requesting discharge. Never blocks. */
   discharge_warnings: DischargeCheck[];
+  /** Decision 3: why "Request discharge" is not offered (an open consultation). */
+  discharge_blocking?: DischargeCheck[];
   request_blocked_reason: DoctorAdmissionBlock | null;
   request_blocked_message: string | null;
 };

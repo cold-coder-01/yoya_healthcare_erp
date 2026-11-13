@@ -666,7 +666,7 @@ def _run_desk_mutation(
     except AdmissionDeskError as error:
         if on_refusal:
             on_refusal(error.code)
-        raise desk_error(error.code) from None
+        raise desk_error(error.code, getattr(error, "extra", None)) from None
     except IntegrityError as error:
         raise desk_error(integrity_code(error)) from None
     except AccessError:

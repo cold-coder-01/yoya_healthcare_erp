@@ -1939,7 +1939,46 @@ class HospitalAdmission(models.Model):
         "not_medically_ready": "The doctor has not declared the patient medically ready.",
         "bed_not_owned": "The admission's bed records a different admission.",
         "encounter_not_completable": "The linked visit is not in a state that can be completed.",
+        "consultation_open": (
+            "The visit's consultation is still open. The doctor must complete it "
+            "before discharge."
+        ),
     }
+
+    # ------------------------------------------------------------------
+    # Decision 3: an open consultation blocks discharge
+    # ------------------------------------------------------------------
+    def _discharge_open_consultation(self, lock=False):
+        """The visit's consultation that is still OPEN (not completed), or an
+        empty value. lock=True (the mutation gates) also serializes against a
+        consultation being opened for the same visit concurrently.
+
+        Extension hook: hospital.consultation lives in yoya_clinical_bridge,
+        which sits above this module and overrides this.
+
+        The system never completes a consultation to let a discharge through;
+        this only reads. No consultation at all (no appointment, never started,
+        an emergency stay without one) means nothing blocks.
+        """
+        self.ensure_one()
+        return False
+
+    def _discharge_consultation_detail(self, consultation):
+        """Amount-free description of the blocking consultation for the API
+        layer: reference, holding doctor, start time, archived flag. Hook; the
+        base module knows no consultation."""
+        return {}
+
+    def _assert_no_open_consultation(self, error_class):
+        """Raise error_class('admission_consultation_open', extra=...) when the
+        visit's consultation is still open. Used by every discharge gate."""
+        self.ensure_one()
+        consultation = self._discharge_open_consultation(lock=True)
+        if consultation:
+            raise error_class(
+                "admission_consultation_open",
+                extra={"consultation": self._discharge_consultation_detail(consultation)},
+            )
 
     def _count_open(self, model, domain):
         if model not in self.env:
@@ -1973,6 +2012,8 @@ class HospitalAdmission(models.Model):
         encounter = admission.encounter_id
         if encounter and encounter.state != "active":
             blocking.append("encounter_not_completable")
+        if self._discharge_open_consultation():
+            blocking.append("consultation_open")
 
         if encounter:
             open_by_visit = (
@@ -2040,6 +2081,8 @@ class HospitalAdmission(models.Model):
             raise AdmissionDeskError("admission_revision_conflict")
         if self.state not in ADMISSION_ACTIVE_STATES or self.medical_discharge_ready:
             raise AdmissionDeskError("admission_invalid_state")
+        # Decision 3: before anything is written.
+        self._assert_no_open_consultation(AdmissionDeskError)
 
         now = fields.Datetime.now()
         with medical_discharge_capability():
@@ -2101,6 +2144,9 @@ class HospitalAdmission(models.Model):
         encounter = self.sudo().encounter_id
         if encounter and encounter.state != "active":
             raise AdmissionWorkflowError("admission_encounter_not_completable")
+        # Decision 3: before the stay is posted or anything else is written.
+        # Every user path (desk, back-office button, RPC) passes through here.
+        self._assert_no_open_consultation(AdmissionWorkflowError)
 
         # ONE instant for the whole act: the stay is posted through it, the
         # gate is judged at it, and the discharge is stamped with it -- so the
@@ -2196,7 +2242,9 @@ class HospitalAdmission(models.Model):
         try:
             self._finalize_discharge()
         except AdmissionWorkflowError as error:
-            raise AdmissionDeskError(desk_code_for(error.code)) from None
+            raise AdmissionDeskError(
+                desk_code_for(error.code), extra=getattr(error, "extra", None)
+            ) from None
 
         self.env.flush_all()
         self.env.invalidate_all()

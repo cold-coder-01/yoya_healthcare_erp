@@ -425,6 +425,12 @@ ADMISSION_ERROR_MESSAGES = {
         "This stay is billed on the visit's billing account; a separate legacy "
         "admission bill would bill it twice."
     ),
+    # Decision 3 (docs/business-decisions.md): discharge waits for the doctor
+    # to complete the visit's consultation. Never completed automatically.
+    "admission_consultation_open": (
+        "This visit's consultation is still open. The doctor must complete it "
+        "before the patient can be discharged. Nothing was changed."
+    ),
 }
 
 
@@ -435,10 +441,14 @@ class AdmissionWorkflowError(UserError):
     keeps doing so -- including the Odoo web client, which shows the message and
     discards the transaction. Its message is always the fixed sentence for its
     code: nothing from a deeper layer can ride along into it.
+
+    `extra` is structured, amount-free context for the API layer (for example
+    which consultation blocks a discharge). It never enters the message.
     """
 
-    def __init__(self, code):
+    def __init__(self, code, extra=None):
         self.code = code
+        self.extra = extra or {}
         super().__init__(ADMISSION_ERROR_MESSAGES[code])
 
 
@@ -752,6 +762,13 @@ DESK_ERROR_MESSAGES = {
         "The inpatient estimate is locked: medical discharge has begun, and final "
         "settlement now uses actual delivered care. Nothing was changed."
     ),
+    # Decision 3: the consultation must be completed by the doctor first. The
+    # holding doctor travels in the error's structured `consultation` field,
+    # never in this sentence.
+    "admission_consultation_open": (
+        "This visit's consultation is still open. The doctor must complete it "
+        "before the patient can be discharged."
+    ),
 }
 
 
@@ -759,11 +776,14 @@ class AdmissionDeskError(UserError):
     """A desk mutation refusal with a FIXED code and FIXED wording.
 
     A UserError, so every caller that already rolls back on UserError keeps
-    doing so. Its message is always the fixed sentence for its code.
+    doing so. Its message is always the fixed sentence for its code. `extra`
+    is structured, amount-free context the HTTP layer may add to the error
+    body; it never enters the message.
     """
 
-    def __init__(self, code):
+    def __init__(self, code, extra=None):
         self.code = code
+        self.extra = extra or {}
         super().__init__(DESK_ERROR_MESSAGES[code])
 
 
@@ -789,6 +809,7 @@ SLICE0_TO_DESK = {
     "admission_financial_review_required": "admission_financial_review_required",
     "admission_encounter_not_completable": "admission_encounter_mismatch",
     "admission_bed_not_owned": "admission_integrity_error",
+    "admission_consultation_open": "admission_consultation_open",
 }
 
 

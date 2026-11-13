@@ -1833,7 +1833,7 @@ class YoyaEmrDoctorController(http.Controller):
         except PG_CONCURRENCY_EXCEPTIONS_TO_RETRY:
             raise
         except AdmissionDeskError as error:
-            raise admission_desk_error(error.code) from None
+            raise admission_desk_error(error.code, getattr(error, "extra", None)) from None
         except IntegrityError as error:
             raise admission_desk_error(admission_integrity_code(error)) from None
         except AccessError:
@@ -1901,7 +1901,7 @@ class YoyaEmrDoctorController(http.Controller):
         except PG_CONCURRENCY_EXCEPTIONS_TO_RETRY:
             raise
         except AdmissionDeskError as error:
-            raise admission_desk_error(error.code) from None
+            raise admission_desk_error(error.code, getattr(error, "extra", None)) from None
         except IntegrityError as error:
             raise admission_desk_error(admission_integrity_code(error)) from None
         except AccessError:
@@ -1976,7 +1976,7 @@ class YoyaEmrDoctorController(http.Controller):
         except PG_CONCURRENCY_EXCEPTIONS_TO_RETRY:
             raise
         except AdmissionDeskError as error:
-            raise admission_desk_error(error.code) from None
+            raise admission_desk_error(error.code, getattr(error, "extra", None)) from None
         except AccessError:
             raise admission_desk_error("admission_not_authorized") from None
         except (UserError, ValidationError):

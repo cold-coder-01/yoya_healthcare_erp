@@ -23,7 +23,12 @@ import { formatLengthOfStay } from "@/lib/admissions-desk-format";
 import { buildDischargeReview } from "@/lib/doctor-discharge-review";
 import DoctorDischargeReviewDialog from "./doctor-discharge-review-dialog";
 import DoctorInpatientEstimate from "./doctor-inpatient-estimate";
-import { messageFromPayload } from "@/lib/api-error";
+import { codeFromPayload, messageFromPayload } from "@/lib/api-error";
+import {
+  CONSULTATION_OPEN_CODE,
+  consultationHoldFromPayload,
+  doctorDeskHoldText,
+} from "@/lib/consultation-discharge-gate";
 import { formatHospitalDateTime } from "@/lib/clinical-format";
 import type {
   AdmissionCancelRequestResponse,
@@ -212,7 +217,10 @@ export default function DoctorAdmissionCard({
     }
     setNotice({
       tone: "red",
-      text: messageFromPayload(payload, "The discharge request could not be sent. Nothing was changed."),
+      text:
+        codeFromPayload(payload) === CONSULTATION_OPEN_CODE
+          ? doctorDeskHoldText(consultationHoldFromPayload(payload))
+          : messageFromPayload(payload, "The discharge request could not be sent. Nothing was changed."),
     });
     setStep("discharge_write");
   }
@@ -335,6 +343,14 @@ export default function DoctorAdmissionCard({
           </button>
         ) : null}
       </div>
+
+      {summary?.discharge_blocking?.length && step === "idle" ? (
+        // Decision 3: "Request discharge" is not offered while the visit's
+        // consultation is open. The doctor completes it; nothing does it for them.
+        <p className="cl-meta text-amber-900">
+          {doctorDeskHoldText(summary.discharge_blocking[0].consultation ?? null)}
+        </p>
+      ) : null}
 
       {step === "discharge_write" && admission ? (
         <div className="flex flex-col gap-1.5">

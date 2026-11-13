@@ -476,6 +476,25 @@ def _checks(codes, messages):
     return [{"code": code, "message": messages.get(code, code)} for code in codes]
 
 
+def _consultation_detail(admission):
+    """Decision 3: which consultation holds the discharge, and by whom
+    (reference, doctor_name, started_at, archived). The model's own hook; None
+    when nothing is open or it cannot be read."""
+    consultation = _safe(admission._discharge_open_consultation, default=False)
+    if not consultation:
+        return None
+    return _safe(lambda: admission._discharge_consultation_detail(consultation), default=None)
+
+
+def _blocking_checks(admission, codes):
+    """Blocking checks; the open-consultation check also names its holder."""
+    checks = _checks(codes, type(admission).DISCHARGE_BLOCKING_MESSAGES)
+    for check in checks:
+        if check["code"] == "consultation_open":
+            check["consultation"] = _consultation_detail(admission)
+    return checks
+
+
 def serialize_discharge(admission, lane, may_finalize=False, financial=None):
     """The discharge block (Slice 4): medical readiness, the model's blocking
     checks and warnings, and whether the clerk may TRY to finalize.
@@ -494,9 +513,8 @@ def serialize_discharge(admission, lane, may_finalize=False, financial=None):
         "medical_ready": bool(admission.medical_discharge_ready),
         "medical_ready_at": datetime_value(admission.medical_discharge_at),
         "medical_ready_by": admission.medical_discharge_by_id.name if admission.medical_discharge_by_id else None,
-        "blocking": _checks(
-            [code for code in blocking if code != "not_medically_ready"],
-            Admission.DISCHARGE_BLOCKING_MESSAGES,
+        "blocking": _blocking_checks(
+            admission, [code for code in blocking if code != "not_medically_ready"]
         ),
         "warnings": _checks(warnings, Admission.DISCHARGE_WARNING_MESSAGES),
         "can_finalize_discharge": bool(
@@ -1055,9 +1073,15 @@ def serialize_doctor_admission(appointment, now=None):
         and _safe(admission._desk_may_request_medical_discharge, default=False)
     )
     warnings = []
+    discharge_blocking = []
     if can_request_discharge:
         _blocking, codes = _safe(admission._discharge_checks, default=([], []))
         warnings = _checks(codes, type(admission).DISCHARGE_WARNING_MESSAGES)
+        # Decision 3: an open consultation must be completed by the doctor
+        # first. The request is not offered; the block says why and whose.
+        if "consultation_open" in _blocking:
+            discharge_blocking = _blocking_checks(admission, ["consultation_open"])
+            can_request_discharge = False
 
     # Slice 3: the doctor may withdraw their OWN request while it is still a
     # draft. Affordance only; the model decides again under its lock.
@@ -1073,6 +1097,7 @@ def serialize_doctor_admission(appointment, now=None):
         "can_cancel_request": can_cancel,
         "can_request_discharge": can_request_discharge,
         "discharge_warnings": warnings,
+        "discharge_blocking": discharge_blocking,
         "admission": (
             {
                 "id": admission.id,

@@ -24,6 +24,11 @@ import {
 } from "@/lib/admissions-desk-actions";
 import { codeFromPayload, messageFromPayload } from "@/lib/api-error";
 import {
+  CONSULTATION_OPEN_CODE,
+  admissionsDeskHoldText,
+  consultationHoldFromPayload,
+} from "@/lib/consultation-discharge-gate";
+import {
   ACTIVE_LANE_KEY,
   ADMISSIONS_SESSION_PATH,
   ADMISSIONS_WARDS_PATH,
@@ -663,7 +668,10 @@ export default function AdmissionsWorkstation() {
 
     setFinalizeMessage({
       tone: "red",
-      text: messageFromPayload(payload, "The discharge could not be completed. Nothing was changed."),
+      text:
+        codeFromPayload(payload) === CONSULTATION_OPEN_CODE
+          ? admissionsDeskHoldText(consultationHoldFromPayload(payload))
+          : messageFromPayload(payload, "The discharge could not be completed. Nothing was changed."),
     });
     if (needsReload(codeFromPayload(payload))) {
       setRefreshToken((value) => value + 1);
