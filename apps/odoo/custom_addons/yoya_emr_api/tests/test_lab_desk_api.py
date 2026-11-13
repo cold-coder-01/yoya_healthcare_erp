@@ -305,12 +305,26 @@ class LabDeskCase(DoctorDeskCase):
         return {row["id"]: row for row in payload["data"]["rows"]}
 
     def _row_for(self, record, **params):
-        """The queue row for one request, asked for by its own status."""
+        """The queue row for one request, asked for by its own status.
+
+        Searched by its own name: the queue is oldest first and bounded, so on
+        a database with real bench work a fresh request is beyond the page.
+        """
         status = params.pop("status", None)
+        params.setdefault("q", record.name)
         _response, payload = self._lab_get(
             WORKLIST, status=status or ALL_STATUSES, **params
         )
         return self._rows_by_id(payload).get(record.id)
+
+    def _own_day(self, record):
+        """The `date` filter that scopes the queue to this test's requests.
+
+        request_date is a Date fixed at creation (context_today) and the
+        endpoint compares it by plain equality, so the stored value is exactly
+        the day the filter matches -- no clock or timezone is consulted here.
+        """
+        return str(record.request_date)
 
 
 @tagged("post_install", "-at_install", "lab_desk")
@@ -326,7 +340,7 @@ class TestLabDeskAuthorization(LabDeskCase):
 
     def test_02_lab_technician_may_list_the_worklist(self):
         record = self._lab_request()
-        response, payload = self._lab_get(WORKLIST)
+        response, payload = self._lab_get(WORKLIST, date=self._own_day(record))
         self.assertEqual(response.status_code, 200)
         self.assertIn(record.id, self._rows_by_id(payload))
 
@@ -595,7 +609,7 @@ class TestLabDeskQueue(LabDeskCase):
         done = self._completed()
         cancelled = self._cancelled()
 
-        _response, payload = self._lab_get(WORKLIST)
+        _response, payload = self._lab_get(WORKLIST, date=self._own_day(ready))
         rows = self._rows_by_id(payload)
 
         for record in (ready, blocked, collected, progressing):
@@ -615,7 +629,7 @@ class TestLabDeskQueue(LabDeskCase):
     def test_41_awaiting_clearance_is_never_silently_dropped(self):
         """The bench is the person the patient asks, so a blocked order shows."""
         blocked = self._lab_request(tests=[self.prepaid_test])
-        _response, payload = self._lab_get(WORKLIST)
+        _response, payload = self._lab_get(WORKLIST, date=self._own_day(blocked))
         row = self._rows_by_id(payload).get(blocked.id)
         self.assertIsNotNone(row, "A blocked order is still bench business.")
         self.assertEqual(row["status"], "awaiting_clearance")
@@ -713,7 +727,7 @@ class TestLabDeskQueue(LabDeskCase):
     def test_52_the_queue_is_ordered_oldest_first(self):
         first = self._lab_request()
         second = self._lab_request()
-        _response, payload = self._lab_get(WORKLIST)
+        _response, payload = self._lab_get(WORKLIST, date=self._own_day(first))
         ids = [row["id"] for row in payload["data"]["rows"]]
         self.assertLess(
             ids.index(first.id), ids.index(second.id),
@@ -725,13 +739,14 @@ class TestLabDeskQueue(LabDeskCase):
     def test_53_clearance_filter_reports_unexamined_candidates(self):
         self._lab_request()
         blocked = self._lab_request(tests=[self.prepaid_test])
+        day = self._own_day(blocked)
         _response, payload = self._lab_get(
-            WORKLIST, status="awaiting_clearance", limit=1,
+            WORKLIST, status="awaiting_clearance", limit=1, date=day,
         )
         self.assertEqual(payload["data"]["rows"], [])
         self.assertTrue(payload["data"]["meta"]["truncated"])
         _response, narrowed = self._lab_get(
-            WORKLIST, status="awaiting_clearance", limit=1, q=blocked.name,
+            WORKLIST, status="awaiting_clearance", limit=1, q=blocked.name, date=day,
         )
         self.assertIn(blocked.id, self._rows_by_id(narrowed))
         self.assertFalse(narrowed["data"]["meta"]["truncated"])
@@ -3861,7 +3876,8 @@ class TestLabDeskResultRelease(LabResultCase):
         self.assertEqual(after["completed"], before["completed"] + 1)
         self.assertEqual(after["active_bench"], before["active_bench"] - 1)
         self.assertEqual(self._row_for(record)["status"], "completed")
-        self.assertNotIn(record.id, self._rows_by_id(payload), "it has left the active queue")
+        _response, own_day = self._lab_get(WORKLIST, date=self._own_day(record))
+        self.assertNotIn(record.id, self._rows_by_id(own_day), "it has left the active queue")
 
     # ==================================================================
     # Atomicity
