@@ -9,12 +9,25 @@ import {
   isConsultationVisible,
 } from "@/lib/consultation-format";
 import type { ConsultationSection } from "@/lib/diagnosis-format";
-import { bucketCounts, bucketOf, type DoctorBucket } from "@/lib/doctor-format";
+import { bucketCounts, bucketOf } from "@/lib/doctor-format";
+import {
+  INPATIENTS_LANE,
+  INPATIENTS_PATH,
+  emptyQueueText,
+  inpatientsByVisit,
+  matchesSearch,
+  truncatedText,
+  visitSource,
+  type DoctorLane,
+} from "@/lib/doctor-inpatients";
 import type {
   ApiEnvelope,
+  DoctorInpatientRow,
+  DoctorInpatientsResponse,
   DoctorQueueResponse,
   DoctorQueueRow,
   DoctorVisitResponse,
+  DoctorVisitSearchResponse,
 } from "@/types/doctor";
 
 import ConsultationWorkspace from "./consultation/consultation-workspace";
@@ -36,8 +49,10 @@ import DoctorQueue from "./doctor-queue";
  * plus the clinical scope domain before it returns a row.
  */
 export default function DoctorWorkstation() {
+  // Starts on today and is never blank while a day's queue is shown. Clearing
+  // it switches the desk to "search all my visits".
   const [date, setDate] = useState(hospitalToday());
-  const [bucket, setBucket] = useState<DoctorBucket>("all");
+  const [lane, setLane] = useState<DoctorLane>("all");
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
 
@@ -52,23 +67,46 @@ export default function DoctorWorkstation() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
 
+  // The Inpatients lane: its own source, independent of the date.
+  const [inpatientRows, setInpatientRows] = useState<DoctorInpatientRow[]>([]);
+  const [inpatientsLoaded, setInpatientsLoaded] = useState(false);
+  const [inpatientTruncated, setInpatientTruncated] = useState(false);
+  const [inpatientLoading, setInpatientLoading] = useState(true);
+  const [inpatientError, setInpatientError] = useState<string | null>(null);
+  const [inpatientToken, setInpatientToken] = useState(0);
+
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search.trim().toLowerCase()), 200);
     return () => clearTimeout(timer);
   }, [search]);
 
+  /*
+    WHERE THE VISIT LIST COMES FROM. A date set: that day's queue, exactly as
+    before. Date cleared: the server searches every date once the term is two
+    letters long; shorter, nothing is fetched and the prompt shows. The
+    browser never sends an empty date.
+  */
+  const source = useMemo(() => visitSource(date, debouncedSearch), [date, debouncedSearch]);
+  const sourcePath = source.kind === "prompt" ? null : source.path;
+
   /* ---------------- queue ---------------- */
   useEffect(() => {
+    if (!sourcePath) {
+      return;
+    }
+    const path = sourcePath;
     const controller = new AbortController();
 
     async function loadQueue() {
       setQueueLoading(true);
       try {
-        const response = await fetch(`/api/doctor/queue?date=${date}`, {
+        const response = await fetch(path, {
           cache: "no-store",
           signal: controller.signal,
         });
-        const payload = (await response.json()) as ApiEnvelope<DoctorQueueResponse>;
+        const payload = (await response.json()) as ApiEnvelope<
+          DoctorQueueResponse | DoctorVisitSearchResponse
+        >;
         if (controller.signal.aborted) return;
 
         if (!response.ok || !payload.success) {
@@ -80,13 +118,11 @@ export default function DoctorWorkstation() {
         setRows(nextRows);
         setTruncated(payload.data.meta.truncated);
         setQueueError(null);
-        // Keep the current patient selected across refreshes; fall back to the
-        // top of the queue only when they are genuinely gone from it.
-        setSelectedId((current) =>
-          current && nextRows.some((row) => row.appointment_id === current)
-            ? current
-            : (nextRows[0]?.appointment_id ?? null),
-        );
+        // Keep the doctor's chosen patient across refreshes. The selection in
+        // force is DERIVED below from the visible rows, so a patient who is gone
+        // from this list already falls back to its top -- and one chosen in the
+        // Inpatients lane is not discarded by a reload of the day's queue.
+        setSelectedId((current) => current ?? nextRows[0]?.appointment_id ?? null);
       } catch {
         if (!controller.signal.aborted) {
           setQueueError("Unable to reach the doctor queue service.");
@@ -98,22 +134,66 @@ export default function DoctorWorkstation() {
 
     void loadQueue();
     return () => controller.abort();
-  }, [date, refreshToken]);
+  }, [sourcePath, refreshToken]);
+
+  /* ---------------- inpatients (independent of the date) ---------------- */
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function loadInpatients() {
+      setInpatientLoading(true);
+      try {
+        const response = await fetch(INPATIENTS_PATH, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const payload = (await response.json()) as ApiEnvelope<DoctorInpatientsResponse>;
+        if (controller.signal.aborted) return;
+
+        if (!response.ok || !payload.success) {
+          setInpatientError(messageFromPayload(payload, "Unable to load your inpatients."));
+          return;
+        }
+        setInpatientRows(payload.data.rows ?? []);
+        setInpatientTruncated(payload.data.meta.truncated);
+        setInpatientsLoaded(true);
+        setInpatientError(null);
+      } catch {
+        if (!controller.signal.aborted) {
+          setInpatientError("Unable to reach the inpatient service.");
+        }
+      } finally {
+        if (!controller.signal.aborted) setInpatientLoading(false);
+      }
+    }
+
+    void loadInpatients();
+    return () => controller.abort();
+  }, [refreshToken, inpatientToken]);
+
+  const inpatientLane = lane === INPATIENTS_LANE;
+  const inpatientMap = useMemo(() => inpatientsByVisit(inpatientRows), [inpatientRows]);
+  // In prompt mode nothing was fetched for this search: show no stale day.
+  const sourceRows = useMemo(() => (sourcePath ? rows : []), [sourcePath, rows]);
+  const listSource = inpatientLane ? INPATIENTS_LANE : source.kind;
 
   /**
    * Bucket and text filtering happen in the browser, over rows Odoo already
    * scoped and returned. This narrows a visible list; it can never widen it.
    */
   const visibleRows = useMemo(() => {
-    return rows.filter((row) => {
-      if (bucket !== "all" && bucketOf(row) !== bucket) return false;
-      if (!debouncedSearch) return true;
-      const haystack = `${row.patient.name} ${row.patient.mrn ?? ""} ${
-        row.appointment_code ?? ""
-      }`.toLowerCase();
-      return haystack.includes(debouncedSearch);
+    if (inpatientLane) {
+      return inpatientRows
+        .map((row) => row.visit)
+        .filter((row) =>
+          matchesSearch(row, debouncedSearch, INPATIENTS_LANE, inpatientMap.get(row.appointment_id)),
+        );
+    }
+    return sourceRows.filter((row) => {
+      if (lane !== "all" && bucketOf(row) !== lane) return false;
+      return matchesSearch(row, debouncedSearch, source.kind);
     });
-  }, [rows, bucket, debouncedSearch]);
+  }, [inpatientLane, inpatientRows, inpatientMap, sourceRows, lane, debouncedSearch, source.kind]);
 
   /**
    * The selection actually in force, DERIVED rather than synchronised.
@@ -177,7 +257,9 @@ export default function DoctorWorkstation() {
 
   // Counts describe the whole day, not the filtered slice: a doctor filtering
   // to "Wait" still needs to see how many are ready for review.
-  const counts = useMemo(() => bucketCounts(rows), [rows]);
+  const counts = useMemo(() => bucketCounts(sourceRows), [sourceRows]);
+  const reloadInpatients = useCallback(() => setInpatientToken((token) => token + 1), []);
+  const empty = emptyQueueText(listSource);
 
   /*
     Matching the loaded detail against the ACTIVE id is what stops the panel
@@ -249,7 +331,12 @@ export default function DoctorWorkstation() {
       chrome offset that had to be kept in sync with the header by hand.
     */
     <div className="flex min-h-[640px] flex-col gap-2 min-[1100px]:h-full min-[1100px]:min-h-0">
-      <DoctorBucketBar counts={counts} active={bucket} onChange={setBucket} />
+      <DoctorBucketBar
+        counts={counts}
+        active={lane}
+        onChange={setLane}
+        inpatientCount={inpatientsLoaded ? inpatientRows.length : null}
+      />
       <DoctorFilters
         date={date}
         search={search}
@@ -263,10 +350,18 @@ export default function DoctorWorkstation() {
         <DoctorQueue
           rows={visibleRows}
           selectedId={activeId}
-          loading={queueLoading}
-          error={queueError}
-          truncated={truncated}
+          loading={inpatientLane ? inpatientLoading : Boolean(sourcePath) && queueLoading}
+          error={inpatientLane ? inpatientError : queueError}
+          truncated={inpatientLane ? inpatientTruncated : Boolean(sourcePath) && truncated}
           onSelect={setSelectedId}
+          title={
+            inpatientLane ? "Inpatients" : source.kind === "search" ? "All My Visits" : "Patient Queue"
+          }
+          inpatients={inpatientLane ? inpatientMap : null}
+          showDate={inpatientLane || source.kind === "search"}
+          emptyTitle={empty.title}
+          emptyBody={empty.body}
+          truncatedMessage={truncatedText(listSource)}
         />
         {consultationVisible && detailForSelection ? (
           /*
@@ -292,6 +387,7 @@ export default function DoctorWorkstation() {
               recovery path is worth more than saving a round trip.
             */
             onCompleted={refresh}
+            onAdmissionChanged={reloadInpatients}
           />
         ) : (
           <DoctorPatientPanel
@@ -302,6 +398,7 @@ export default function DoctorWorkstation() {
             // the two can never disagree about the visit's state after a start.
             // That refetch is also what swaps this panel for the workspace.
             onStarted={refresh}
+            onAdmissionChanged={reloadInpatients}
           />
         )}
         <div className="hidden min-h-0 min-[1100px]:flex min-[1100px]:flex-col">

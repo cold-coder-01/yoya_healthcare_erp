@@ -120,6 +120,7 @@ export default function ConsultationWorkspace({
   section,
   onSectionChange,
   onCompleted,
+  onAdmissionChanged,
 }: {
   detail: DoctorVisitDetail;
   loading: boolean;
@@ -147,6 +148,8 @@ export default function ConsultationWorkspace({
     race a concurrent write.
   */
   onCompleted?: (detail: DoctorVisitDetail) => void;
+  /** An admission request on this visit succeeded (Inpatients lane reload). */
+  onAdmissionChanged?: () => void;
 }) {
   const appointmentId = detail.visit.appointment_id;
 
@@ -682,6 +685,7 @@ export default function ConsultationWorkspace({
             encounterName={detail.encounter?.name ?? null}
             physicianName={detail.visit.doctor?.name ?? null}
             compact
+            onChanged={onAdmissionChanged}
           />
         </div>
       ) : null}

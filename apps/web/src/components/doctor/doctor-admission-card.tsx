@@ -84,6 +84,7 @@ export default function DoctorAdmissionCard({
   patientMrn = null,
   encounterName = null,
   physicianName = null,
+  onChanged,
 }: {
   appointmentId: number;
   summary: DoctorAdmissionSummary | undefined;
@@ -95,6 +96,8 @@ export default function DoctorAdmissionCard({
   physicianName?: string | null;
   /** One-line strip for the consultation workspace. */
   compact?: boolean;
+  /** Told after a request succeeds, so the Inpatients lane can reload. */
+  onChanged?: () => void;
 }) {
   /** The server's answer to OUR request, valid only while the visit summary it
    *  replaced is still the one passed in; a visit reload supersedes it. */
@@ -153,6 +156,7 @@ export default function DoctorAdmissionCard({
     pendingRef.current = null;
 
     if (payload && payload.success) {
+      onChanged?.();
       setReturned({ basis: initial, value: payload.data.admission });
       setStep("idle");
       setReason("");
@@ -204,6 +208,7 @@ export default function DoctorAdmissionCard({
     pendingRef.current = null;
 
     if (payload && payload.success) {
+      onChanged?.();
       setReturned({ basis: initial, value: payload.data.admission });
       setStep("idle");
       setDischargeSummary("");
@@ -256,6 +261,7 @@ export default function DoctorAdmissionCard({
     pendingRef.current = null;
 
     if (payload && payload.success) {
+      onChanged?.();
       if (payload.data.doctor_admission) {
         setReturned({ basis: initial, value: payload.data.doctor_admission });
       }

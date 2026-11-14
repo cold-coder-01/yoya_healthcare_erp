@@ -102,11 +102,14 @@ export default function DoctorPatientPanel({
   loading,
   error,
   onStarted,
+  onAdmissionChanged,
 }: {
   detail: DoctorVisitDetail | null;
   loading: boolean;
   error: string | null;
   onStarted: () => void;
+  /** An admission request on this visit succeeded (Inpatients lane reload). */
+  onAdmissionChanged?: () => void;
 }) {
   const [starting, setStarting] = useState(false);
   /**
@@ -432,6 +435,7 @@ export default function DoctorPatientPanel({
             patientMrn={patient.mrn}
             encounterName={encounter?.name ?? null}
             physicianName={visit.doctor?.name ?? null}
+            onChanged={onAdmissionChanged}
           />
         ) : null}
 

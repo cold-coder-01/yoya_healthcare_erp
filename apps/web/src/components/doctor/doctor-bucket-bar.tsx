@@ -1,6 +1,7 @@
 "use client";
 
 import { DOCTOR_BUCKETS, type DoctorBucket } from "@/lib/doctor-format";
+import { INPATIENTS_LANE, type DoctorLane } from "@/lib/doctor-inpatients";
 
 /**
  * The All / Wait / Review / Open / Finished strip.
@@ -67,6 +68,7 @@ export default function DoctorBucketBar({
   counts,
   active,
   onChange,
+  inpatientCount,
 }: {
   counts: {
     all: number;
@@ -75,10 +77,13 @@ export default function DoctorBucketBar({
     open: number;
     finished: number;
   };
-  active: DoctorBucket;
-  onChange: (bucket: DoctorBucket) => void;
+  active: DoctorLane;
+  onChange: (lane: DoctorLane) => void;
+  /** The Inpatients lane badge; null while it has not loaded. */
+  inpatientCount: number | null;
 }) {
   const total = counts.all;
+  const inpatientsSelected = active === INPATIENTS_LANE;
 
   return (
     <section className="flex shrink-0 flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-white px-2 py-1.5 shadow-sm">
@@ -96,7 +101,7 @@ export default function DoctorBucketBar({
             <button
               key={bucket.key}
               type="button"
-              onClick={() => onChange(bucket.key)}
+              onClick={() => onChange(bucket.key as DoctorBucket)}
               aria-pressed={selected}
               className={`relative flex min-w-[56px] flex-col items-center justify-center rounded px-2.5 py-1 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-emerald-600 ${
                 selected
@@ -129,6 +134,40 @@ export default function DoctorBucketBar({
           );
         })}
       </div>
+
+      {/*
+        THE INPATIENTS LANE. Beside the day's buckets but not one of them: it
+        ignores the date and lists the doctor's current inpatients, so an
+        admitted patient whose visit began weeks ago is one click away.
+      */}
+      <button
+        type="button"
+        onClick={() => onChange(INPATIENTS_LANE)}
+        aria-pressed={inpatientsSelected}
+        className={`relative flex min-w-[72px] flex-col items-center justify-center rounded-md border px-2.5 py-1 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-emerald-600 ${
+          inpatientsSelected
+            ? "border-violet-300 bg-white shadow-sm"
+            : "border-slate-200 bg-slate-100 text-slate-500 hover:bg-white/60 hover:text-slate-700"
+        }`}
+      >
+        <span
+          className={`cl-micro font-bold uppercase tracking-[0.08em] ${
+            inpatientsSelected ? "text-violet-800" : ""
+          }`}
+        >
+          Inpatients
+        </span>
+        <span
+          className={`cl-head font-bold leading-none tabular-nums ${
+            inpatientsSelected ? "text-violet-800" : "text-slate-600"
+          }`}
+        >
+          {inpatientCount ?? "–"}
+        </span>
+        {inpatientsSelected ? (
+          <span aria-hidden className="absolute inset-x-1.5 bottom-0 h-0.5 rounded-full bg-violet-600" />
+        ) : null}
+      </button>
 
       {total > 0 ? (
         <div className="flex min-w-[160px] flex-1 flex-col gap-1">

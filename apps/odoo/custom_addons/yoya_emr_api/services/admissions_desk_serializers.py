@@ -1122,3 +1122,42 @@ def serialize_doctor_admission(appointment, now=None):
         "request_blocked_reason": block,
         "request_blocked_message": DOCTOR_REQUEST_BLOCKS.get(block) if block else None,
     }
+
+
+def serialize_doctor_inpatient(admission, now=None):
+    """One row of the Doctor Desk Inpatients lane: where the patient is, how
+    long they have stayed, whether the visit's consultation is still open, and
+    where discharge stands.
+
+    Read under the caller's own record rules; the controller has already
+    intersected the admission with the visits the caller may open. Carries no
+    money: the discharge checks are clinical and structural only.
+    """
+    blocking_codes, warning_codes = _safe(admission._discharge_checks, default=([], []))
+    ready = bool(admission.medical_discharge_ready)
+    # Affordance only, the same test serialize_doctor_admission applies: the
+    # admitting physician (or oversight) may declare readiness once the
+    # consultation is completed. _desk_request_medical_discharge() decides again.
+    can_request_discharge = bool(
+        not ready
+        and "consultation_open" not in blocking_codes
+        and _safe(admission._desk_may_request_medical_discharge, default=False)
+    )
+    return {
+        "admission_id": admission.id,
+        "reference": admission.name,
+        "state": admission.state,
+        "state_label": _selection_label(admission, "state"),
+        "patient": serialize_patient_identity(admission.patient_id),
+        "admitted_at": datetime_value(admission.admission_date),
+        "location": serialize_location(admission),
+        "length_of_stay": length_of_stay(admission, now),
+        "consultation": _consultation_detail(admission),
+        "discharge": {
+            "medically_ready": ready,
+            "medical_ready_at": datetime_value(admission.medical_discharge_at),
+            "blocking": _blocking_checks(admission, blocking_codes),
+            "warnings": _checks(warning_codes, type(admission).DISCHARGE_WARNING_MESSAGES),
+            "can_request_discharge": can_request_discharge,
+        },
+    }

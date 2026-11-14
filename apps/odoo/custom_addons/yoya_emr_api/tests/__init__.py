@@ -40,3 +40,4 @@ from . import test_pharmacy_inpatient_credit_api
 from . import test_inpatient_service_credit_api
 from . import test_accountant_api
 from . import test_admission_consultation_discharge_gate
+from . import test_doctor_inpatients_and_search_api
