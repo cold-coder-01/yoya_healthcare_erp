@@ -2,9 +2,14 @@
 
 import { useEffect, useRef } from "react";
 
-import { formatHospitalTime } from "@/lib/clinical-format";
+import { formatHospitalDate, formatHospitalTime } from "@/lib/clinical-format";
 import { compactGender, doctorLabel, statLabel } from "@/lib/doctor-format";
-import type { DoctorQueueRow } from "@/types/doctor";
+import {
+  inpatientConsultationText,
+  inpatientDischargeText,
+  inpatientWhereText,
+} from "@/lib/doctor-inpatients";
+import type { DoctorInpatient, DoctorQueueRow } from "@/types/doctor";
 
 import { stageTone } from "./doctor-badges";
 
@@ -22,6 +27,8 @@ import { stageTone } from "./doctor-badges";
  * breathe at 52px without the panel needing more width.
  */
 const GRID = "grid grid-cols-[52px_minmax(0,1fr)_46px_58px] items-center gap-x-2";
+/** Same columns, with room for a date: search results and inpatients span days. */
+const GRID_DATED = "grid grid-cols-[76px_minmax(0,1fr)_46px_58px] items-center gap-x-2";
 
 /**
  * Stat tones. Emerald is reserved for Rev -- the ONE cell that means the
@@ -36,15 +43,45 @@ const STAT_TONE: Record<string, string> = {
   Done: "border-slate-200 bg-white text-slate-500",
 };
 
+/** The stay under the identity: where, how long, consultation, discharge. */
+function InpatientLine({ inpatient }: { inpatient: DoctorInpatient }) {
+  const consultation = inpatientConsultationText(inpatient);
+  const discharge = inpatientDischargeText(inpatient);
+  return (
+    <span className="flex min-w-0 flex-col gap-0.5 cl-meta leading-tight">
+      <span className="truncate text-slate-600">
+        <span className="font-mono font-semibold">{inpatient.reference}</span>
+        <span aria-hidden className="text-slate-300"> · </span>
+        {inpatientWhereText(inpatient)}
+      </span>
+      {consultation ? (
+        <span className="truncate font-semibold text-indigo-800">{consultation}</span>
+      ) : null}
+      <span
+        className={`truncate font-semibold ${discharge.ready ? "text-emerald-800" : "text-amber-800"}`}
+        title={discharge.reasons.join("\n") || undefined}
+      >
+        {discharge.label}
+        {discharge.reasons.length ? ` · ${discharge.reasons.length} blocking` : ""}
+      </span>
+    </span>
+  );
+}
+
 function QueueRow({
   row,
   selected,
   onSelect,
+  inpatient,
+  showDate,
 }: {
   row: DoctorQueueRow;
   selected: boolean;
   onSelect: () => void;
+  inpatient: DoctorInpatient | null;
+  showDate: boolean;
 }) {
+  const grid = showDate ? GRID_DATED : GRID;
   const ref = useRef<HTMLButtonElement>(null);
   const stat = statLabel(row);
   const tone = stageTone(row.queue_stage);
@@ -70,7 +107,7 @@ function QueueRow({
         // arrow keys move within it, which is the roving-tabindex pattern a
         // dense worklist needs. Tabbing through 40 buttons is not navigation.
         tabIndex={selected ? 0 : -1}
-        className={`${GRID} relative min-h-[52px] w-full border-b border-slate-100 py-1.5 pl-3 pr-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-600 ${
+        className={`${grid} relative min-h-[52px] w-full border-b border-slate-100 py-1.5 pl-3 pr-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-600 ${
           selected ? "bg-emerald-50/60" : "bg-white hover:bg-slate-50"
         }`}
       >
@@ -87,7 +124,7 @@ function QueueRow({
         />
 
         <span className="cl-secondary font-bold leading-tight tabular-nums text-slate-500">
-          {formatHospitalTime(row.appointment_date)}
+          {showDate ? formatHospitalDate(row.appointment_date) : formatHospitalTime(row.appointment_date)}
         </span>
 
         {/* Identity: name on top at full weight, chart number and remark
@@ -117,6 +154,7 @@ function QueueRow({
               </>
             ) : null}
           </span>
+          {inpatient ? <InpatientLine inpatient={inpatient} /> : null}
         </span>
 
         <span className="cl-secondary leading-tight tabular-nums text-slate-600">
@@ -153,6 +191,12 @@ export default function DoctorQueue({
   error,
   truncated,
   onSelect,
+  title = "Patient Queue",
+  inpatients = null,
+  showDate = false,
+  emptyTitle = "No patients here",
+  emptyBody = "Nothing matches the current filters.",
+  truncatedMessage = "Queue limit reached. Narrow the filters to see every patient.",
 }: {
   rows: DoctorQueueRow[];
   selectedId: number | null;
@@ -160,7 +204,16 @@ export default function DoctorQueue({
   error: string | null;
   truncated: boolean;
   onSelect: (appointmentId: number) => void;
+  title?: string;
+  /** appointment_id -> stay, in the Inpatients lane. */
+  inpatients?: Map<number, DoctorInpatient> | null;
+  /** Rows span days (search results, inpatients): show the date, not the time. */
+  showDate?: boolean;
+  emptyTitle?: string;
+  emptyBody?: string;
+  truncatedMessage?: string;
 }) {
+  const grid = showDate ? GRID_DATED : GRID;
   const listRef = useRef<HTMLUListElement>(null);
 
   /**
@@ -197,7 +250,7 @@ export default function DoctorQueue({
     <section className="flex min-h-[340px] min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm min-[1100px]:min-h-0">
       <header className="flex h-9 shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50 px-3">
         <h2 className="flex items-baseline gap-1.5 cl-secondary font-bold uppercase tracking-[0.08em] text-slate-700">
-          Patient Queue
+          {title}
           <span className="rounded bg-slate-200 px-1.5 py-px cl-meta tabular-nums text-slate-700">
             {rows.length}
           </span>
@@ -208,9 +261,9 @@ export default function DoctorQueue({
       </header>
 
       <div
-        className={`${GRID} shrink-0 border-b border-slate-200 bg-slate-50 py-1 pl-3 pr-2 cl-micro font-bold uppercase tracking-[0.06em] text-slate-400`}
+        className={`${grid} shrink-0 border-b border-slate-200 bg-slate-50 py-1 pl-3 pr-2 cl-micro font-bold uppercase tracking-[0.06em] text-slate-400`}
       >
-        <span>Time</span>
+        <span>{showDate ? "Date" : "Time"}</span>
         <span>Patient · Chart no.</span>
         <span>Age/Sex</span>
         <span className="text-right">Stat</span>
@@ -223,7 +276,7 @@ export default function DoctorQueue({
       ) : null}
       {truncated ? (
         <div className="border-b border-amber-200 bg-amber-50 px-3 py-1.5 cl-secondary text-amber-900">
-          Queue limit reached. Narrow the filters to see every patient.
+          {truncatedMessage}
         </div>
       ) : null}
 
@@ -246,10 +299,8 @@ export default function DoctorQueue({
           </div>
         ) : rows.length === 0 ? (
           <div className="flex h-full min-h-32 flex-col items-center justify-center gap-1 px-6 text-center">
-            <p className="cl-body font-semibold text-slate-600">No patients here</p>
-            <p className="cl-secondary text-slate-500">
-              Nothing matches the current filters.
-            </p>
+            <p className="cl-body font-semibold text-slate-600">{emptyTitle}</p>
+            <p className="cl-secondary text-slate-500">{emptyBody}</p>
           </div>
         ) : (
           <ul
@@ -263,6 +314,8 @@ export default function DoctorQueue({
                 row={row}
                 selected={selectedId === row.appointment_id}
                 onSelect={() => onSelect(row.appointment_id)}
+                inpatient={inpatients?.get(row.appointment_id) ?? null}
+                showDate={showDate}
               />
             ))}
           </ul>

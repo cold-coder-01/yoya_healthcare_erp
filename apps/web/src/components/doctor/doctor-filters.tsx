@@ -2,6 +2,9 @@
 
 import { useEffect, useRef } from "react";
 
+import { hospitalToday } from "@/lib/clinical-format";
+import { DATELESS_SEARCH_PROMPT } from "@/lib/doctor-inpatients";
+
 /**
  * ONE control height (32px) and one focus treatment across the row, so the
  * date field, the search box and the refresh button line up on both edges
@@ -34,6 +37,9 @@ export default function DoctorFilters({
   onRefresh: () => void;
 }) {
   const searchRef = useRef<HTMLInputElement>(null);
+  // A cleared date switches the desk to "search all my visits". The field is
+  // never blank while a day's queue is shown: the date starts on today.
+  const allVisits = !date;
 
   // "/" focuses search, the convention every dense worklist tool shares.
   // Ignored while typing so it can still be entered into a field.
@@ -65,13 +71,24 @@ export default function DoctorFilters({
           className={`${CONTROL} px-2 tabular-nums`}
         />
       </label>
+      {allVisits ? (
+        <button
+          type="button"
+          onClick={() => onDateChange(hospitalToday())}
+          className="inline-flex h-8 items-center rounded-md border border-slate-300 bg-white px-2.5 cl-secondary font-bold uppercase tracking-wide text-slate-700 outline-none transition-colors hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-emerald-600"
+        >
+          Today
+        </button>
+      ) : null}
 
       {/* The search box owns the free space on the row, which is what marks it
           as the control a doctor is meant to reach for. The icon sits inside
           the field rather than beside it so the row keeps two clean edges. */}
       <div className="relative flex min-w-[200px] flex-1 items-center">
         <label htmlFor="doctor-queue-search" className="sr-only">
-          Search this queue by patient name or chart number
+          {allVisits
+            ? "Search all your visits by patient name, chart number, appointment or consultation reference"
+            : "Search this queue by patient name or chart number"}
         </label>
         <svg
           aria-hidden
@@ -89,7 +106,7 @@ export default function DoctorFilters({
           ref={searchRef}
           type="search"
           value={search}
-          placeholder="Search name or chart no."
+          placeholder={allVisits ? DATELESS_SEARCH_PROMPT : "Search name or chart no."}
           onChange={(event) => onSearchChange(event.target.value)}
           className={`${CONTROL} w-full pl-8 pr-9`}
         />

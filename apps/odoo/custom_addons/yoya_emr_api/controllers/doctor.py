@@ -99,7 +99,10 @@ from ..services.admission_mutations import (
     integrity_code as admission_integrity_code,
     mutation_body as admission_mutation_body,
 )
-from ..services.admissions_desk_serializers import serialize_doctor_admission
+from ..services.admissions_desk_serializers import (
+    serialize_doctor_admission,
+    serialize_doctor_inpatient,
+)
 from ..services.api_response import (
     ApiError,
     api_error_response,
@@ -188,6 +191,18 @@ MAX_LIMIT = 500
 # Finished bucket. 'draft' and 'cancelled' are excluded: neither is a visit the
 # doctor can work, and a cancelled row in a clinical queue is noise.
 WORKLIST_STATES = ("confirmed", "in_consultation", "done")
+
+# The Inpatients lane: every current stay whose visit the caller may open. A
+# ward holds a bounded number of beds, so this is generous; the cap is a guard,
+# not a page size.
+INPATIENTS_DEFAULT_LIMIT = 200
+INPATIENTS_MAX_LIMIT = 500
+
+# "Search all my visits" (no date). Newest first and deliberately short: a
+# doctor refines the term rather than paging through history.
+VISIT_SEARCH_DEFAULT_LIMIT = 50
+VISIT_SEARCH_MAX_LIMIT = 100
+VISIT_SEARCH_MIN_LENGTH = 2
 
 # Field names the consultation save endpoint refuses BY NAME rather than
 # ignoring. Every one of them is authoritative ownership or workflow state
@@ -1479,13 +1494,72 @@ def _build_diagnosis_values(body, require_type):
     return {key: body[key] for key in provided}
 
 
-def _limit_param(raw):
+def _limit_param(raw, default=DEFAULT_LIMIT, maximum=MAX_LIMIT):
     if raw in (None, "", False):
-        return DEFAULT_LIMIT
+        return default
     limit = parse_int_param("limit", raw)
     if limit <= 0:
         raise ApiError("invalid_parameter", "'limit' must be positive.", 400)
-    return min(limit, MAX_LIMIT)
+    return min(limit, maximum)
+
+
+def _inpatient_admissions(env, limit):
+    """Current stays (admitted / transferred) whose visit the caller may open.
+
+    TWO SCOPES, BOTH APPLIED, NEITHER WIDENED:
+      * the admission is read under the caller's own record rules
+        (rule_hospital_admission_doctor for a doctor; unrestricted for a
+        manager or system administrator);
+      * its visit must be inside the Doctor Desk scope
+        (scoped_appointment_domain: the visit is booked to the caller).
+
+    Business decision (docs/business-decisions.md): an admitting physician who
+    is not the visit's booked doctor does not see the patient here -- the
+    centre panel could not open that visit. A stay with no visit is not listed
+    for the same reason.
+    """
+    Admission = env["hospital.admission"]
+    domain = [
+        ("state", "in", list(ADMISSION_ACTIVE_STATES)),
+        ("appointment_id", "!=", False),
+    ]
+    # Bounded by the beds: one active stay per bed and per patient.
+    candidate_visit_ids = Admission.search(domain).mapped("appointment_id").ids
+    in_scope_visit_ids = env["hospital.appointment"].search(
+        scoped_appointment_domain(env, [("id", "in", candidate_visit_ids)])
+    ).ids
+    admissions = Admission.search(
+        domain + [("appointment_id", "in", in_scope_visit_ids)],
+        order="admission_date asc, id asc",
+        limit=limit + 1,
+    )
+    truncated = len(admissions) > limit
+    return admissions[:limit], truncated
+
+
+def _visit_search_domain(env, search):
+    """Any date, the doctor's workable visit states, four identifiers.
+
+    The consultation reference is matched through a SUBQUERY read under the
+    caller's own consultation rules, and only ever adds candidate visits: the
+    Doctor Desk scope is ANDed over the whole result by the caller.
+    """
+    consultation_visits = (
+        env["hospital.consultation"]
+        .with_context(active_test=False)
+        ._search([("name", "ilike", search), ("appointment_id", "!=", False)])
+        .subselect("appointment_id")
+    )
+    return [
+        ("state", "in", list(WORKLIST_STATES)),
+        "|",
+        "|",
+        "|",
+        ("patient_id.name", "ilike", search),
+        ("patient_id.identification_code", "ilike", search),
+        ("appointment_code", "ilike", search),
+        ("id", "in", consultation_visits),
+    ]
 
 
 def _worklist_domain(env, day, department_id, search):
@@ -1772,6 +1846,106 @@ class YoyaEmrDoctorController(http.Controller):
                     "truncated": truncated,
                     "states": list(WORKLIST_STATES),
                     "stages": list(STAGE_KEYS),
+                },
+            }
+        )
+
+    # ------------------------------------------------------------------
+    # 2a. Inpatients lane (independent of the date)
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/inpatients",
+        type="http", auth="user", methods=["GET"], csrf=False,
+    )
+    @doctor_endpoint
+    def inpatients(self, **params):
+        """The caller's current inpatients, whatever day the visit began.
+
+        Each row carries the ordinary queue row for the visit (so the queue and
+        the centre panel open it exactly as they open any visit) plus the stay:
+        bed, length of stay, the open consultation and the discharge status.
+        There is no date and no doctor parameter.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+        limit = _limit_param(
+            params.get("limit"), INPATIENTS_DEFAULT_LIMIT, INPATIENTS_MAX_LIMIT
+        )
+
+        admissions, truncated = _inpatient_admissions(env, limit)
+        prefetch_worklist(admissions.mapped("appointment_id"))
+        capabilities = doctor_capability_flags(env)
+        now = fields.Datetime.now()
+        rows = [
+            {
+                "visit": serialize_queue_row(admission.appointment_id, capabilities),
+                "inpatient": serialize_doctor_inpatient(admission, now),
+            }
+            for admission in admissions
+        ]
+        return success_response(
+            {
+                "rows": rows,
+                "count": len(rows),
+                "capabilities": capabilities,
+                "filters": {"limit": limit},
+                "meta": {"row_count": len(rows), "truncated": truncated},
+            }
+        )
+
+    # ------------------------------------------------------------------
+    # 2b. Search all my visits (no date)
+    # ------------------------------------------------------------------
+    @http.route(
+        "/yoya-emr/api/v1/doctor/visit-search",
+        type="http", auth="user", methods=["GET"], csrf=False,
+    )
+    @doctor_endpoint
+    def visit_search(self, **params):
+        """The caller's visits on ANY date matching a term, newest first.
+
+        Patient name, chart number, appointment code or consultation reference.
+        Same states as the worklist (draft and cancelled excluded), same scope
+        ANDed outside the filters, same row shape. The dated worklist is
+        unchanged; the desk calls this only when the date field is cleared.
+        """
+        env = request.env
+        _require_doctor_desk(env)
+        search = (params.get("q") or "").strip()
+        if len(search) < VISIT_SEARCH_MIN_LENGTH:
+            raise ApiError(
+                "invalid_parameter",
+                "Type at least %d letters to search all your visits."
+                % VISIT_SEARCH_MIN_LENGTH,
+                400,
+            )
+        limit = _limit_param(
+            params.get("limit"), VISIT_SEARCH_DEFAULT_LIMIT, VISIT_SEARCH_MAX_LIMIT
+        )
+
+        domain = scoped_appointment_domain(env, _visit_search_domain(env, search))
+        appointments = env["hospital.appointment"].search(
+            domain, order="appointment_date desc, id desc", limit=limit + 1
+        )
+        truncated = len(appointments) > limit
+        if truncated:
+            appointments = appointments[:limit]
+
+        prefetch_worklist(appointments)
+        capabilities = doctor_capability_flags(env)
+        rows = [
+            serialize_queue_row(appointment, capabilities)
+            for appointment in appointments
+        ]
+        return success_response(
+            {
+                "rows": rows,
+                "capabilities": capabilities,
+                "filters": {"q": search, "limit": limit},
+                "meta": {
+                    "row_count": len(rows),
+                    "truncated": truncated,
+                    "states": list(WORKLIST_STATES),
                 },
             }
         )

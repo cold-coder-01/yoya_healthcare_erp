@@ -1,4 +1,11 @@
-import type { DoctorAdmissionSummary } from "./admissions-desk";
+import type {
+  AdmissionLocation,
+  AdmissionPatient,
+  ConsultationHold,
+  DischargeCheck,
+  DoctorAdmissionSummary,
+  LengthOfStay,
+} from "./admissions-desk";
 /**
  * THE Doctor Desk wire contract.
  *
@@ -254,6 +261,61 @@ export type DoctorQueueResponse = {
 };
 
 export type DoctorVisitResponse = DoctorVisitDetail;
+
+/**
+ * GET /api/doctor/inpatients -- the Inpatients lane (decision 8).
+ *
+ * Current stays whose visit is booked to the caller (managers: every stay),
+ * whatever day the visit began. `visit` is the ordinary queue row, so the queue
+ * and the centre panel open it exactly as any visit; `inpatient` is the stay.
+ * No date and no doctor parameter exist upstream.
+ */
+export type DoctorInpatient = {
+  admission_id: number;
+  reference: string;
+  /** admitted | transferred. */
+  state: string;
+  state_label: string | null;
+  patient: AdmissionPatient | null;
+  admitted_at: string | null;
+  location: AdmissionLocation;
+  length_of_stay: LengthOfStay | null;
+  /** The visit's consultation that is still open, or null. */
+  consultation: ConsultationHold | null;
+  discharge: {
+    medically_ready: boolean;
+    medical_ready_at: string | null;
+    /** The existing discharge checks; never money. */
+    blocking: DischargeCheck[];
+    warnings: DischargeCheck[];
+    /** Affordance only; the discharge request decides again. */
+    can_request_discharge: boolean;
+  };
+};
+
+export type DoctorInpatientRow = {
+  visit: DoctorQueueRow;
+  inpatient: DoctorInpatient;
+};
+
+export type DoctorInpatientsResponse = {
+  rows: DoctorInpatientRow[];
+  count: number;
+  capabilities: DoctorCapabilities;
+  filters: { limit: number };
+  meta: { row_count: number; truncated: boolean };
+};
+
+/**
+ * GET /api/doctor/visit-search?q= -- "search all my visits" when the date is
+ * cleared. Any date, newest first; draft and cancelled visits excluded.
+ */
+export type DoctorVisitSearchResponse = {
+  rows: DoctorQueueRow[];
+  capabilities: DoctorCapabilities;
+  filters: { q: string; limit: number };
+  meta: { row_count: number; truncated: boolean; states: string[] };
+};
 
 export type DoctorCapabilities = {
   doctor_desk: boolean;
